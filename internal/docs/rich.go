@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -298,3 +299,119 @@ func sheetDrawingRels() string {
 }
 
 var _ = strconv.Itoa
+
+// --- structure recovery -----------------------------------------------------
+
+// Reconstruct infers document structure from flat extracted text.
+//
+// This exists because PDF cannot be converted to Word by any converter on this
+// machine — LibreOffice imports PDF into Draw, which has no Word export filter,
+// and the attempt fails outright with "no export filter found". The workable
+// route is to take the text and rebuild a document from it.
+//
+// The result is an honest approximation. A PDF's text layer records words and
+// positions, not intent: nothing in it says "this line is a heading". These
+// heuristics recover the structure that survives, and no more.
+func Reconstruct(text string) []Block {
+	lines := strings.Split(text, "\n")
+
+	var blocks []Block
+	var para []string
+
+	flushPara := func() {
+		if len(para) == 0 {
+			return
+		}
+		// Rejoin wrapped lines: a PDF breaks a paragraph at the page width,
+		// which is a rendering artefact rather than the author's structure.
+		blocks = append(blocks, Paragraph(strings.Join(para, " ")))
+		para = nil
+	}
+
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+
+		if line == "" {
+			flushPara()
+			continue
+		}
+
+		switch {
+		case bulletLine.MatchString(line):
+			flushPara()
+			blocks = append(blocks, Bullet(bulletLine.ReplaceAllString(line, "")))
+
+		case numberedItem.MatchString(line):
+			flushPara()
+			blocks = append(blocks, Numbered(numberedItem.ReplaceAllString(line, "")))
+
+		case looksLikeHeading(line, lines, i):
+			flushPara()
+			// The first heading in a document is almost always its title.
+			if len(blocks) == 0 {
+				blocks = append(blocks, Title(line))
+			} else {
+				blocks = append(blocks, Heading(headingLevel(line), line))
+			}
+
+		default:
+			para = append(para, line)
+		}
+	}
+	flushPara()
+	return blocks
+}
+
+var bulletLine = regexp.MustCompile(`^\s*[•·▪◦‣*\-–]\s+`)
+
+// headingWords are short and title-cased; a heading rarely ends in a full stop.
+var endsInSentencePunctuation = regexp.MustCompile(`[.,;:!?]$`)
+
+// looksLikeHeading judges a line by shape and by what surrounds it.
+//
+// A heading is short, does not end in sentence punctuation, and sits alone —
+// blank space above or below. Any one signal is weak; together they are
+// reasonable.
+func looksLikeHeading(line string, lines []string, i int) bool {
+	words := strings.Fields(line)
+	if len(words) == 0 || len(words) > 9 {
+		return false
+	}
+	if endsInSentencePunctuation.MatchString(line) {
+		return false
+	}
+	if len(line) > 70 {
+		return false
+	}
+
+	blankBefore := i == 0 || strings.TrimSpace(lines[i-1]) == ""
+	blankAfter := i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == ""
+	if !blankBefore && !blankAfter {
+		return false
+	}
+
+	// ALL CAPS, or Title Case across most words, reads as a heading.
+	upper := strings.ToUpper(line) == line && strings.ContainsAny(line, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	capitalised := 0
+	for _, w := range words {
+		if w != "" && w[0] >= 'A' && w[0] <= 'Z' {
+			capitalised++
+		}
+	}
+	titleCase := float64(capitalised)/float64(len(words)) >= 0.6
+
+	return upper || titleCase
+}
+
+// headingLevel guesses depth: shorter and louder means higher.
+func headingLevel(line string) int {
+	words := len(strings.Fields(line))
+	switch {
+	case strings.ToUpper(line) == line && words <= 5:
+		return 1
+	case words <= 4:
+		return 2
+	default:
+		return 3
+	}
+}

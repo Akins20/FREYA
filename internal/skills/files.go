@@ -942,6 +942,36 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			action := guard.Action{Kind: guard.KindWrite, Paths: []string{target},
 				Reason: fmt.Sprintf("convert %s to %s", filepath.Base(src), format)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				// PDF is a dead end for every converter on this machine:
+				// LibreOffice imports it into Draw, which has no Word export
+				// filter, and the attempt fails with "no export filter found".
+				// Extracting the text and rebuilding a document is the route
+				// that actually produces something usable.
+				if strings.EqualFold(filepath.Ext(src), ".pdf") &&
+					(format == "docx" || format == "odt") {
+					doc, err := docs.Extract(src)
+					if err != nil {
+						return "", err
+					}
+					if strings.TrimSpace(doc.Text) == "" {
+						return "", fmt.Errorf("%s has no text layer — it is probably "+
+							"scanned images and would need OCR", filepath.Base(src))
+					}
+					blocks := docs.Reconstruct(doc.Text)
+					if err := docs.WriteDOCX(target, blocks); err != nil {
+						return "", err
+					}
+					info, _ := os.Stat(target)
+					var size int64
+					if info != nil {
+						size = info.Size()
+					}
+					return fmt.Sprintf("Rebuilt %s as %s — %d blocks, %s. "+
+						"Structure is inferred from the text layer, since PDF records "+
+						"words rather than intent; check the headings.",
+						filepath.Base(src), target, len(blocks), humanBytes(size)), nil
+				}
+
 				if !have("soffice") {
 					return "", fmt.Errorf("conversion needs LibreOffice (soffice)")
 				}

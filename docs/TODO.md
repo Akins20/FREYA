@@ -468,7 +468,53 @@ file unopenable:
 The lesson worth keeping: assertions on our own XML prove structure, not
 validity. Every generated file is reopened in LibreOffice before it is trusted.
 
-## Phase 13 — remaining
+## Phase 13 — PDF conversion and terminal control ✅
+
+### PDF to Word actually works now
+
+`document_convert` would have failed on the conversion most likely to be asked
+for. LibreOffice imports PDF into Draw, which has no Word export filter, and
+the attempt dies with "no export filter found" — confirmed by trying it.
+
+The working route is extract-then-rebuild: pull the text layer, infer structure,
+and generate a fresh styled document.
+
+- [x] `docs.Reconstruct` — headings, bullets, numbered items and paragraphs
+      inferred from flat text, with wrapped lines rejoined
+- [x] `document_convert` routes PDF sources through it automatically
+- [x] Refuses scanned PDFs with a clear explanation rather than an empty file
+
+Verified: a 1-page PDF became 14 blocks (1 title, 3 headings, 3 bullets,
+4 paragraphs) with all content preserved, and the result opens in LibreOffice.
+It is an honest approximation — a PDF records words and positions, not intent,
+so nothing in it says "this line is a heading".
+
+### Terminal control
+
+- [x] `internal/term` — pseudo-terminals via /dev/ptmx and three ioctls
+- [x] Persistent named sessions that outlive the turn that created them
+- [x] `terminal_open`, `run`, `read`, `send`, `list`, `close`
+- [x] 12 tests: state persistence, working directory, interactive prompts,
+      Python REPL with state, Ctrl-C recovery, bounded buffer, escape stripping
+
+**A pty rather than pipes**, because a program on a pipe knows it is not talking
+to a person: it block-buffers, drops colour, and never prompts. A Python REPL
+over pipes emits no `>>>`, `sudo` will not ask for a password. Verified that
+`read -p` shows its prompt and that Ctrl-C interrupts a running `sleep` —
+neither is possible without a controlling terminal.
+
+This also closes the background-work gap: a command keeps running while the
+conversation continues, and `terminal_read` collects the rest later.
+
+### Bug found
+
+**The pty echoed input back into its own output.** A test searching for
+"FINISHED" matched the `echo FINISHED` command rather than its result, and
+concluded a one-and-a-half second loop had finished instantly. Any output
+parsing would have been contaminated the same way. Echo is now disabled via
+termios while canonical mode is kept, so line editing and signals still work.
+
+## Phase 14 — remaining
 
 - [ ] Terminal control: interactive sessions, typing into a running shell
 - [ ] Chrome control via DevTools Protocol on 9222 (needs a minimal WebSocket

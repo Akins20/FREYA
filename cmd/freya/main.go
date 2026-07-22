@@ -21,6 +21,7 @@ import (
 	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
+	"github.com/akins/jarvis/internal/term"
 )
 
 // ANSI styling, disabled when output is not a terminal or NO_COLOR is set.
@@ -127,6 +128,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	}
 	skills.RegisterFiles(reg, g, places)
 	skills.RegisterDocWriting(reg, g)
+
+	// Terminal sessions outlive the turn that created them, which is what makes
+	// long-running work possible.
+	terminals := term.NewManager()
+	defer terminals.CloseAll()
+	skills.RegisterTerminal(reg, g, terminals)
 	if seer, ok := provider.(llm.VisionAnalyzer); ok {
 		skills.RegisterVision(reg, seer)
 	}
