@@ -834,11 +834,19 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			Name: "docx_write",
 			Description: "Create a Word document. Supply the body as markdown — " +
 				"# headings, - bullets, | pipe tables | and blank-line-separated " +
-				"paragraphs are all converted to real Word formatting.",
+				"paragraphs are all converted to real Word formatting. A picture " +
+				"already on disk is embedded by putting ![caption](/path/to/image.png) " +
+				"on a line of its own.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"path":    {Type: "string", Description: "Where to write the .docx."},
 				"content": {Type: "string", Description: "Document body as markdown."},
-				"reason":  {Type: "string", Description: "Why, shown when confirming."},
+				"header": {Type: "string", Description: "Optional text repeated at the top " +
+					"of every page, such as a course code or client name."},
+				"footer": {Type: "string", Description: "Optional text repeated at the foot " +
+					"of every page, such as an author name."},
+				"page_numbers": {Type: "boolean", Description: "Add 'Page N of M' to the " +
+					"footer. Worth setting for anything printed or handed in."},
+				"reason": {Type: "string", Description: "Why, shown when confirming."},
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -855,7 +863,15 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 				Reason: argString(args, "reason")}
 			return g.Run(ctx, action, func(context.Context) (string, error) {
 				blocks := docs.ParseBlocks(content)
-				if err := docs.WriteDOCX(path, blocks); err != nil {
+				// A zero DocOptions is what WriteDOCX passes anyway, so omitting
+				// every furniture argument yields byte-for-byte the file this
+				// skill has always written.
+				opts := docs.DocOptions{PageSetup: docs.PageSetup{
+					Header:      argString(args, "header"),
+					Footer:      argString(args, "footer"),
+					PageNumbers: argBool(args, "page_numbers"),
+				}}
+				if err := docs.WriteDOCXWith(path, blocks, opts); err != nil {
 					return "", err
 				}
 				info, _ := os.Stat(path)

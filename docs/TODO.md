@@ -452,6 +452,11 @@ exact throughput figure.
       value, since a stale cached figure is worse than none
 - [x] Excel charts — bar, line and pie, with all four coordinated parts
 - [x] `pdf_write` and `document_convert`
+- [x] Both of the above reached from `docx_write`. The header, footer, images and
+      page numbers were written, tested and unreachable: the skill only ever
+      called the plain `WriteDOCX` with no options, so nothing in a conversation
+      could trigger them. `ParseBlocks` now recognises `![alt](path)` on a line
+      of its own, and the skill takes `header`, `footer` and `page_numbers`.
 
 ### Two bugs only LibreOffice caught
 

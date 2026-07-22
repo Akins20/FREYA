@@ -636,6 +636,8 @@ func ParseBlocks(md string) []Block {
 			blocks = append(blocks, Bullet(strings.TrimSpace(trimmed[2:])))
 		case numberedItem.MatchString(trimmed):
 			blocks = append(blocks, Numbered(numberedItem.ReplaceAllString(trimmed, "")))
+		case markdownImage.MatchString(trimmed):
+			blocks = append(blocks, Image(markdownImage.FindStringSubmatch(trimmed)[1]))
 		default:
 			// Strip emphasis markers: they would otherwise be read aloud as
 			// asterisks and printed literally in the document.
@@ -648,6 +650,19 @@ func ParseBlocks(md string) []Block {
 
 // numberedItem matches "1. ", "2) " and similar list markers.
 var numberedItem = regexp.MustCompile(`^\d+[.)]\s+`)
+
+// markdownImage matches ![alt](path) occupying a whole line.
+//
+// Anchored at both ends deliberately. An image mentioned inside a sentence
+// cannot become a block without throwing away the sentence around it, and
+// silently losing a paragraph of prose is a far worse failure than rendering
+// one picture as text. The leading bang is the whole difference from a link:
+// [text](url) stays prose, because a document cannot follow a hyperlink.
+//
+// The path is captured lazily so a trailing ")" closes the form rather than
+// being absorbed, while paths containing spaces or their own parentheses still
+// survive intact.
+var markdownImage = regexp.MustCompile(`^!\[[^\]]*\]\(\s*(.+?)\s*\)$`)
 
 func stripEmphasis(s string) string {
 	for _, marker := range []string{"**", "__", "*", "_", "`"} {

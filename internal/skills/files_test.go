@@ -1,7 +1,13 @@
 package skills
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,4 +441,140 @@ func TestContentIsNotTrimmed(t *testing.T) {
 	if string(b) != "line\n\n" {
 		t.Errorf("trailing newlines lost: %q", b)
 	}
+}
+
+// TestDocxWriteEmbedsImageAndFurniture is the end-to-end proof that the writer's
+// richer features are actually reachable. Both existed, both were tested inside
+// the docs package, and neither could be triggered from a conversation because
+// the skill only ever called the plain writer with no options.
+func TestDocxWriteEmbedsImageAndFurniture(t *testing.T) {
+	dir := t.TempDir()
+	img := filepath.Join(dir, "bench.png")
+	pixels := writeTestPNG(t, img)
+
+	r := New()
+	RegisterDocWriting(r, approveAll())
+	path := filepath.Join(dir, "report.docx")
+
+	out, err := r.Execute(context.Background(), "docx_write", map[string]any{
+		"path": path,
+		"content": "# Findings\n\n![the bench](" + img +
+			")\n\nThe run completed in twelve seconds.",
+		"header":       "CS401 Coursework",
+		"footer":       "A. Akins",
+		"page_numbers": true,
+	})
+	if err != nil {
+		t.Fatalf("docx_write failed: %v", err)
+	}
+	t.Logf("%s", out)
+
+	parts := unzip(t, path)
+
+	// The picture must arrive byte-identical: a media part that merely exists
+	// can still be a truncated or re-encoded file that Word refuses to draw.
+	var media string
+	for name := range parts {
+		if strings.HasPrefix(name, "word/media/") {
+			media = name
+		}
+	}
+	if media == "" {
+		t.Fatal("no word/media entry — the markdown image never reached the writer")
+	}
+	if parts[media] != string(pixels) {
+		t.Errorf("%s is %d bytes, want the original %d", media, len(parts[media]), len(pixels))
+	}
+	// Without the Default the package is malformed and Word calls it corrupt.
+	if !strings.Contains(parts["[Content_Types].xml"], `Extension="png"`) {
+		t.Errorf("png content type not declared:\n%s", parts["[Content_Types].xml"])
+	}
+	if !strings.Contains(parts["word/document.xml"], "r:embed=") {
+		t.Error("document body has no picture reference")
+	}
+
+	if !strings.Contains(parts["word/header1.xml"], "CS401 Coursework") {
+		t.Error("header text did not reach the header part")
+	}
+	footer := parts["word/footer1.xml"]
+	if !strings.Contains(footer, "A. Akins") {
+		t.Error("footer text did not reach the footer part")
+	}
+	// Field codes, not literal text, so the numbering survives editing.
+	if !strings.Contains(footer, "PAGE") || !strings.Contains(footer, "NUMPAGES") {
+		t.Errorf("page numbers are not field codes:\n%s", footer)
+	}
+}
+
+// TestDocxWriteWithoutOptionsIsUnchanged pins the compatibility half of the
+// change: adding the furniture arguments must not start emitting header and
+// footer parts for every document that never asked for them.
+func TestDocxWriteWithoutOptionsIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plain.docx")
+
+	r := New()
+	RegisterDocWriting(r, approveAll())
+	if _, err := r.Execute(context.Background(), "docx_write", map[string]any{
+		"path": path, "content": "# Plain\n\nNothing special here.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := unzip(t, path)
+	for _, unwanted := range []string{"word/header1.xml", "word/footer1.xml"} {
+		if _, ok := parts[unwanted]; ok {
+			t.Errorf("%s written for a document that requested no furniture", unwanted)
+		}
+	}
+	if strings.Contains(parts["word/document.xml"], "headerReference") {
+		t.Error("sectPr references a header that was never asked for")
+	}
+}
+
+// writeTestPNG puts a real image on disk and returns its bytes, so an embedding
+// test can assert the file arrived intact rather than merely that something
+// image-shaped was zipped.
+func writeTestPNG(t *testing.T, path string) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 16, 9))
+	for y := range 9 {
+		for x := range 16 {
+			img.Set(x, y, color.RGBA{200, 80, 40, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// unzip reads a container into a name->content map. The parts are compressed,
+// so the raw file bytes contain nothing readable.
+func unzip(t *testing.T, path string) map[string]string {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+
+	out := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[f.Name] = string(b)
+	}
+	return out
 }

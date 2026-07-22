@@ -283,6 +283,66 @@ Closing **bold** paragraph.`
 	}
 }
 
+// TestParseBlocksRecognisesImages covers the step that makes embedding
+// reachable at all. The writer could always place a picture, but nothing turned
+// what a model actually writes — markdown — into an image block, so the feature
+// existed and could never be used.
+func TestParseBlocksRecognisesImages(t *testing.T) {
+	md := `# Report
+
+![the rig](/home/akins/pictures/rig.png)
+
+The bench is shown in ![this one](inline.png) above, mid-run.
+
+[the datasheet](https://example.com/part.png)
+
+![spaced](/home/akins/My Pictures/run 3.png)`
+
+	var images, prose []string
+	for _, b := range ParseBlocks(md) {
+		switch b.Kind {
+		case "image":
+			images = append(images, b.Text)
+		case "paragraph":
+			if b.Text != "" {
+				prose = append(prose, b.Text)
+			}
+		}
+	}
+
+	want := []string{
+		"/home/akins/pictures/rig.png",
+		"/home/akins/My Pictures/run 3.png", // spaces in a path are ordinary
+	}
+	if len(images) != len(want) {
+		t.Fatalf("got %d image blocks %q, want %d", len(images), images, len(want))
+	}
+	for i, w := range want {
+		if images[i] != w {
+			t.Errorf("image %d = %q, want %q", i, images[i], w)
+		}
+	}
+
+	// An image inside a sentence must leave the sentence alone: turning the
+	// whole line into a picture would silently delete the prose around it.
+	var sawSentence bool
+	for _, p := range prose {
+		if strings.Contains(p, "mid-run") {
+			sawSentence = true
+		}
+	}
+	if !sawSentence {
+		t.Errorf("the sentence containing an inline image was swallowed: %q", prose)
+	}
+	// A link is not an image; a document cannot follow a hyperlink.
+	for _, p := range prose {
+		if strings.Contains(p, "example.com/part.png") {
+			return
+		}
+	}
+	t.Errorf("a plain link did not survive as prose: %q", prose)
+}
+
 func TestWriteToNestedPathCreatesParents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c", "deep.docx")
 	if err := WriteDOCX(path, []Block{Paragraph("hi")}); err != nil {
