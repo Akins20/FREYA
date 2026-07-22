@@ -412,7 +412,63 @@ somewhere else; without it the snapshots are unrecoverable.**
 Still the same physical disk as the data it protects. Guards against deletion
 and bad commands, not against drive failure.
 
-## Phase 12 — remaining
+## Phase 12 — vision and rich documents ✅
+
+### She can see
+
+- [x] `llm.VisionAnalyzer` capability, implemented by Gemini
+- [x] `internal/vision` — pure-Go decode, box-filter downscale, JPEG re-encode
+- [x] `image_view` (one or several images) and `screen_read` (capture then read)
+
+Images are downscaled to 1024px on the long edge before upload, for the same
+reason audio is encoded to Ogg: **6080 KB PNG becomes 338 KB, an 18x reduction**,
+and nobody reads a screenshot at native resolution to answer "what does this
+error say". A box filter rather than nearest-neighbour, because the common case
+is reading text and nearest-neighbour aliases it badly.
+
+Two refinements the tests forced:
+- **Transparent PNGs are composited onto white** before JPEG encoding, or every
+  rounded window corner turns black.
+- **Re-encoding is skipped when it would make the upload larger.** Flat or
+  synthetic images compress better as lossless PNG; converting them defeats the
+  purpose.
+
+Verified live: she read a rendered document image and returned the title and the
+exact throughput figure.
+
+### Documents are now properly styled
+
+- [x] Word: real named styles with `w:outlineLvl` (navigation pane and TOC work),
+      Title style, genuine bullet and numbered lists via `numbering.xml`,
+      shaded table headers that repeat across pages
+- [x] Word furniture: running header, footer, and page numbers as **field codes**
+      (PAGE / NUMPAGES), so they stay correct as the document is edited
+- [x] Word images: embedded with dimensions read from the file header and scaled
+      to the printable width; a missing image degrades to a note rather than
+      failing the document
+- [x] Excel: bold header band, borders, thousands separators, decimal formats,
+      content-measured column widths, frozen header row
+- [x] Excel formulas — `=SUM(B2:B5)` is written as a live formula with no cached
+      value, since a stale cached figure is worse than none
+- [x] Excel charts — bar, line and pie, with all four coordinated parts
+- [x] `pdf_write` and `document_convert`
+
+### Two bugs only LibreOffice caught
+
+Both passed every structural assertion and our own reader, and both made the
+file unopenable:
+
+1. **Content-types ordering.** OPC requires every `<Default>` to precede every
+   `<Override>`. Appending image and header parts to one buffer put a Default
+   last, and LibreOffice refused the document outright.
+2. **Stored media entries.** Storing already-compressed PNGs uncompressed looked
+   like a free optimisation, but Go emits a data descriptor for stored entries
+   and strict readers cannot then find where the stream ends. Deflate now.
+
+The lesson worth keeping: assertions on our own XML prove structure, not
+validity. Every generated file is reopened in LibreOffice before it is trusted.
+
+## Phase 13 — remaining
 
 - [ ] Terminal control: interactive sessions, typing into a running shell
 - [ ] Chrome control via DevTools Protocol on 9222 (needs a minimal WebSocket

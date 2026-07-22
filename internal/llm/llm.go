@@ -131,3 +131,12 @@ type SpeechSynthesizer interface {
 	// Returns the audio bytes and their MIME type.
 	SynthesizeSpeech(ctx context.Context, text, voice, style string) (audio []byte, mimeType string, err error)
 }
+
+// VisionAnalyzer is an optional capability: a Provider whose model can look at
+// images. Separate from Provider for the same reason as the audio interfaces —
+// a text-only backend need not know images exist.
+type VisionAnalyzer interface {
+	// AnalyzeImage answers a question about one or more images.
+	// mimeTypes[i] describes images[i].
+	AnalyzeImage(ctx context.Context, prompt string, images [][]byte, mimeTypes []string) (string, error)
+}

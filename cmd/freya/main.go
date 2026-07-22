@@ -127,6 +127,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	}
 	skills.RegisterFiles(reg, g, places)
 	skills.RegisterDocWriting(reg, g)
+	if seer, ok := provider.(llm.VisionAnalyzer); ok {
+		skills.RegisterVision(reg, seer)
+	}
 	if err := skills.RegisterNotes(reg, cfg.DataDir); err != nil {
 		return err
 	}

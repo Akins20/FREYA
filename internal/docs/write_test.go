@@ -2,6 +2,9 @@ package docs
 
 import (
 	"archive/zip"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -426,4 +429,202 @@ func readParts(t *testing.T, path string) map[string]string {
 		out[f.Name] = string(b)
 	}
 	return out
+}
+
+// TestContentTypesOrdering is a regression test. The OPC schema requires every
+// <Default> to precede every <Override>; appending both to one buffer put a
+// Default last and LibreOffice refused to open the file at all.
+func TestContentTypesOrdering(t *testing.T) {
+	dir := t.TempDir()
+	img := filepath.Join(dir, "pic.png")
+	writeTinyPNG(t, img)
+
+	path := filepath.Join(dir, "withimage.docx")
+	if err := WriteDOCXWith(path, []Block{Paragraph("text"), Image(img)},
+		DocOptions{PageSetup: PageSetup{Header: "H", Footer: "F", PageNumbers: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := readParts(t, path)
+	ct := parts["[Content_Types].xml"]
+
+	lastDefault := strings.LastIndex(ct, "<Default ")
+	firstOverride := strings.Index(ct, "<Override ")
+	if lastDefault == -1 || firstOverride == -1 {
+		t.Fatalf("content types malformed: %s", ct)
+	}
+	if lastDefault > firstOverride {
+		t.Errorf("a <Default> follows an <Override>, which the OPC schema forbids:\n%s", ct)
+	}
+	if !strings.Contains(ct, `Extension="png"`) {
+		t.Error("image content type not declared")
+	}
+	for _, want := range []string{"header1.xml", "footer1.xml"} {
+		if !strings.Contains(ct, want) {
+			t.Errorf("%s not declared in content types", want)
+		}
+	}
+}
+
+// TestDocumentFurniture covers header, footer, page-number fields and images.
+func TestDocumentFurniture(t *testing.T) {
+	dir := t.TempDir()
+	img := filepath.Join(dir, "pic.png")
+	writeTinyPNG(t, img)
+
+	path := filepath.Join(dir, "furnished.docx")
+	if err := WriteDOCXWith(path, []Block{Paragraph("body"), Image(img)},
+		DocOptions{PageSetup: PageSetup{
+			Header: "CS401", Footer: "A. Akins", PageNumbers: true,
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	parts := readParts(t, path)
+
+	if !strings.Contains(parts["word/header1.xml"], "CS401") {
+		t.Error("header text missing")
+	}
+	footer := parts["word/footer1.xml"]
+	// Page numbers must be field codes, not literal text, so they stay correct
+	// as the document is edited.
+	if !strings.Contains(footer, "PAGE") || !strings.Contains(footer, "NUMPAGES") {
+		t.Error("page numbers are not field codes")
+	}
+	doc := parts["word/document.xml"]
+	if !strings.Contains(doc, "headerReference") || !strings.Contains(doc, "footerReference") {
+		t.Error("sectPr does not reference the header and footer parts")
+	}
+	if !strings.Contains(doc, "<w:drawing>") || !strings.Contains(doc, "r:embed=") {
+		t.Error("image drawing missing from the document body")
+	}
+	if _, ok := parts["word/media/image1.png"]; !ok {
+		t.Error("image bytes not embedded")
+	}
+}
+
+func TestMissingImageDegradesGracefully(t *testing.T) {
+	// A missing picture must not sink the whole document.
+	path := filepath.Join(t.TempDir(), "broken.docx")
+	if err := WriteDOCXWith(path,
+		[]Block{Paragraph("before"), Image("/nonexistent/nope.png"), Paragraph("after")},
+		DocOptions{}); err != nil {
+		t.Fatalf("a missing image failed the whole write: %v", err)
+	}
+	doc, err := Extract(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"before", "after", "unavailable"} {
+		if !strings.Contains(doc.Text, want) {
+			t.Errorf("expected %q in output, got: %s", want, doc.Text)
+		}
+	}
+}
+
+func TestFormulasAndCharts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calc.xlsx")
+	if err := WriteXLSX(path, []Sheet{{
+		Name: "Data",
+		Rows: [][]string{
+			{"Item", "Value"},
+			{"a", "10"},
+			{"b", "20"},
+			{"total", "=SUM(B2:B3)"},
+		},
+		Chart: &Chart{Kind: "bar", Title: "Values", CategoryColumn: 0, ValueColumns: []int{1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	parts := readParts(t, path)
+
+	sheet := parts["xl/worksheets/sheet1.xml"]
+	if !strings.Contains(sheet, "<f>SUM(B2:B3)</f>") {
+		t.Error("formula not written as a formula")
+	}
+	// A cached value would be shown stale before recalculation.
+	if strings.Contains(sheet, "<f>SUM(B2:B3)</f><v>") {
+		t.Error("a cached value was written alongside the formula")
+	}
+	if !strings.Contains(sheet, "<drawing") {
+		t.Error("sheet does not reference the drawing")
+	}
+
+	// All four chart pieces must be present, or the file opens with no chart.
+	for _, part := range []string{
+		"xl/charts/chart1.xml",
+		"xl/drawings/drawing1.xml",
+		"xl/drawings/_rels/drawing1.xml.rels",
+		"xl/worksheets/_rels/sheet1.xml.rels",
+	} {
+		if _, ok := parts[part]; !ok {
+			t.Errorf("missing chart part: %s", part)
+		}
+	}
+	if !strings.Contains(parts["[Content_Types].xml"], "chart+xml") {
+		t.Error("chart content type not declared")
+	}
+	if !strings.Contains(parts["xl/charts/chart1.xml"], "Values") {
+		t.Error("chart title missing")
+	}
+}
+
+// writeTinyPNG creates a minimal valid PNG for embedding tests.
+func writeTinyPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 20, 10))
+	for y := range 10 {
+		for x := range 20 {
+			img.Set(x, y, color.RGBA{100, 150, 200, 255})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEmbeddedMediaIsDeflated is a regression test for a subtle container bug.
+// Storing already-compressed images uncompressed seemed like a free
+// optimisation, but Go emits a data descriptor for stored entries, leaving
+// strict readers unable to find where the stream ends. LibreOffice refused the
+// entire document — while our own reader, and every structural assertion,
+// passed happily.
+func TestEmbeddedMediaIsDeflated(t *testing.T) {
+	dir := t.TempDir()
+	img := filepath.Join(dir, "pic.png")
+	writeTinyPNG(t, img)
+
+	path := filepath.Join(dir, "withimage.docx")
+	if err := WriteDOCXWith(path, []Block{Image(img)}, DocOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	found := false
+	for _, f := range r.File {
+		if !strings.Contains(f.Name, "media/") {
+			continue
+		}
+		found = true
+		if f.Method != zip.Deflate {
+			t.Errorf("%s uses compression method %d; must be Deflate (%d) so readers "+
+				"can locate the end of the stream", f.Name, f.Method, zip.Deflate)
+		}
+		// A data descriptor is signalled by bit 3 of the general purpose flag.
+		if f.Flags&0x8 != 0 && f.Method == zip.Store {
+			t.Errorf("%s is stored with a data descriptor, which strict readers reject", f.Name)
+		}
+	}
+	if !found {
+		t.Fatal("no media part was embedded")
+	}
 }

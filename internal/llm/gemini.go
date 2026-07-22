@@ -480,3 +480,79 @@ func (g *Gemini) SynthesizeSpeech(ctx context.Context, text, voice, style string
 	}
 	return nil, "", fmt.Errorf("gemini: response contained no audio")
 }
+
+// --- vision -----------------------------------------------------------------
+
+// AnalyzeImage implements VisionAnalyzer.
+//
+// Several images can be sent at once, which matters for "compare these two
+// screenshots" and for multi-page documents rendered to pictures — asking about
+// them one at a time loses the comparison the question was about.
+func (g *Gemini) AnalyzeImage(ctx context.Context, prompt string, images [][]byte, mimeTypes []string) (string, error) {
+	if len(images) == 0 {
+		return "", fmt.Errorf("gemini: no images supplied")
+	}
+
+	parts := []map[string]any{{"text": prompt}}
+	for i, img := range images {
+		mime := "image/jpeg"
+		if i < len(mimeTypes) && mimeTypes[i] != "" {
+			mime = mimeTypes[i]
+		}
+		parts = append(parts, map[string]any{
+			"inline_data": map[string]any{
+				"mime_type": mime,
+				"data":      base64.StdEncoding.EncodeToString(img),
+			},
+		})
+	}
+
+	body := map[string]any{
+		"safetySettings": safetySettings(),
+		"contents":       []map[string]any{{"role": "user", "parts": parts}},
+	}
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("gemini: encode vision request: %w", err)
+	}
+
+	url := fmt.Sprintf(geminiEndpoint, g.Model)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return "", fmt.Errorf("gemini: build vision request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", g.APIKey)
+
+	resp, err := g.HTTP.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini: vision request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", fmt.Errorf("gemini: read vision response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", &APIError{Provider: "gemini-vision", Status: resp.StatusCode, Body: string(payload)}
+	}
+
+	var decoded geminiResponse
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return "", fmt.Errorf("gemini: decode vision response: %w", err)
+	}
+	if decoded.Error != nil {
+		return "", fmt.Errorf("gemini: %s", decoded.Error.Message)
+	}
+	if len(decoded.Candidates) == 0 {
+		return "", fmt.Errorf("gemini: no description returned")
+	}
+
+	var text strings.Builder
+	for _, p := range decoded.Candidates[0].Content.Parts {
+		text.WriteString(p.Text)
+	}
+	return strings.TrimSpace(text.String()), nil
+}

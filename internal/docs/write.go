@@ -101,9 +101,26 @@ const docxRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
 
+// DocOptions carries page furniture: running header, footer and page numbers.
+type DocOptions struct {
+	PageSetup
+	// Images maps a placeholder block's Text to a file path. Blocks of kind
+	// "image" whose Text names a key here are embedded.
+	Images map[string]string
+}
+
 // WriteDOCX creates a Word document from blocks.
 func WriteDOCX(path string, blocks []Block) error {
+	return WriteDOCXWith(path, blocks, DocOptions{})
+}
+
+// Image builds an image block. Text is the path to embed.
+func Image(path string) Block { return Block{Kind: "image", Text: path} }
+
+// WriteDOCXWith creates a Word document with page furniture and images.
+func WriteDOCXWith(path string, blocks []Block, opts DocOptions) error {
 	var body strings.Builder
+	var imagePaths []string
 
 	for _, b := range blocks {
 		switch b.Kind {
@@ -141,6 +158,11 @@ func WriteDOCX(path string, blocks []Block) error {
 					`<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>`,
 				esc(b.Text))
 
+		case "image":
+			// Handled after the loop, where the relationship ids are known.
+			body.WriteString(fmt.Sprintf("<!--IMAGE:%d-->", len(imagePaths)))
+			imagePaths = append(imagePaths, b.Text)
+
 		case "table":
 			body.WriteString(docxTable(b.Rows))
 
@@ -155,20 +177,109 @@ func WriteDOCX(path string, blocks []Block) error {
 		}
 	}
 
+	parts := map[string]string{
+		"_rels/.rels":        docxRels,
+		"word/styles.xml":    docxStyles,
+		"word/numbering.xml": docxNumbering,
+	}
+	binary := map[string][]byte{}
+
+	// Relationship ids beyond the two fixed ones are allocated here, so the
+	// document body, the rels part and the content types all agree.
+	rels := []string{
+		`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`,
+		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>`,
+	}
+	nextRel := 3
+	// The OPC schema requires every <Default> to precede every <Override>.
+	// Appending both to one buffer put a Default after the Overrides and made
+	// LibreOffice reject the file outright — so they are collected separately.
+	var extraDefaults, extraOverrides strings.Builder
+	seenExt := map[string]bool{}
+
+	// Images.
+	rendered := body.String()
+	for i, imgPath := range imagePaths {
+		placeholder := fmt.Sprintf("<!--IMAGE:%d-->", i)
+		w, h, contentType, ext, err := imageInfo(imgPath)
+		if err != nil {
+			// A missing picture must not sink the whole document.
+			rendered = strings.Replace(rendered, placeholder,
+				fmt.Sprintf(`<w:p><w:r><w:rPr><w:i/><w:color w:val="999999"/></w:rPr>`+
+					`<w:t xml:space="preserve">[image unavailable: %s]</w:t></w:r></w:p>`,
+					esc(filepath.Base(imgPath))), 1)
+			continue
+		}
+		data, err := os.ReadFile(imgPath)
+		if err != nil {
+			rendered = strings.Replace(rendered, placeholder, "", 1)
+			continue
+		}
+
+		relID := fmt.Sprintf("rId%d", nextRel)
+		mediaName := fmt.Sprintf("media/image%d.%s", i+1, ext)
+		binary["word/"+mediaName] = data
+		rels = append(rels, fmt.Sprintf(
+			`<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="%s"/>`,
+			relID, mediaName))
+		if !seenExt[ext] {
+			seenExt[ext] = true
+			fmt.Fprintf(&extraDefaults, `<Default Extension="%s" ContentType="%s"/>`, ext, contentType)
+		}
+		fw, fh := fitImage(w, h)
+		rendered = strings.Replace(rendered, placeholder,
+			imageDrawingXML(relID, nextRel, fw, fh, filepath.Base(imgPath)), 1)
+		nextRel++
+	}
+
+	// Header and footer.
+	var sectExtra strings.Builder
+	if opts.Header != "" {
+		relID := fmt.Sprintf("rId%d", nextRel)
+		parts["word/header1.xml"] = headerXML(opts.Header)
+		rels = append(rels, fmt.Sprintf(
+			`<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`, relID))
+		fmt.Fprintf(&sectExtra, `<w:headerReference w:type="default" r:id="%s"/>`, relID)
+		extraOverrides.WriteString(`<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`)
+		nextRel++
+	}
+	if opts.Footer != "" || opts.PageNumbers {
+		relID := fmt.Sprintf("rId%d", nextRel)
+		parts["word/footer1.xml"] = footerXML(opts.Footer, opts.PageNumbers)
+		rels = append(rels, fmt.Sprintf(
+			`<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>`, relID))
+		fmt.Fprintf(&sectExtra, `<w:footerReference w:type="default" r:id="%s"/>`, relID)
+		extraOverrides.WriteString(`<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>`)
+		nextRel++
+	}
+
 	document := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:body>` + body.String() + `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>` +
-		`<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>` +
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<w:body>` + rendered + `<w:sectPr>` + sectExtra.String() +
+		`<w:pgSz w:w="11906" w:h="16838"/>` +
+		`<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"` +
+		` w:header="708" w:footer="708"/></w:sectPr>` +
 		`</w:body></w:document>`
 
-	return writeZip(path, map[string]string{
-		"[Content_Types].xml":          docxContentTypes,
-		"_rels/.rels":                  docxRels,
-		"word/_rels/document.xml.rels": docxDocumentRels,
-		"word/styles.xml":              docxStyles,
-		"word/numbering.xml":           docxNumbering,
-		"word/document.xml":            document,
-	})
+	parts["word/document.xml"] = document
+	parts["word/_rels/document.xml.rels"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+		strings.Join(rels, "") + `</Relationships>`
+	contentTypes := docxContentTypes
+	if extraDefaults.Len() > 0 {
+		// Insert after the last existing Default, before the first Override.
+		contentTypes = strings.Replace(contentTypes,
+			`<Default Extension="xml" ContentType="application/xml"/>`,
+			`<Default Extension="xml" ContentType="application/xml"/>`+extraDefaults.String(), 1)
+	}
+	if extraOverrides.Len() > 0 {
+		contentTypes = strings.Replace(contentTypes,
+			"</Types>", extraOverrides.String()+"</Types>", 1)
+	}
+	parts["[Content_Types].xml"] = contentTypes
+
+	return writeZipMixed(path, parts, binary)
 }
 
 func docxTable(rows [][]string) string {
@@ -227,9 +338,14 @@ const xlsxRootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 type Sheet struct {
 	Name string
 	Rows [][]string
+	// Chart, when set, draws a chart beside the data on this sheet.
+	Chart *Chart
 }
 
 // WriteXLSX creates a spreadsheet from sheets of rows.
+//
+// A cell beginning with "=" is written as a formula, so a totals row is a live
+// calculation rather than a number that silently goes stale.
 //
 // Values that parse as numbers are written as numbers, so the result is
 // something you can sum and chart rather than a grid of text that merely looks
@@ -248,12 +364,6 @@ func WriteXLSX(path string, sheets []Sheet) error {
 	var overrides, workbookSheets, workbookRels strings.Builder
 	for i, s := range sheets {
 		n := i + 1
-		sheetPath := fmt.Sprintf("xl/worksheets/sheet%d.xml", n)
-		parts[sheetPath] = xlsxSheet(s.Rows)
-
-		fmt.Fprintf(&overrides,
-			`<Override PartName="/%s" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
-			sheetPath)
 
 		name := s.Name
 		if name == "" {
@@ -270,6 +380,31 @@ func WriteXLSX(path string, sheets []Sheet) error {
 			name = name[:31]
 		}
 
+		sheetPath := fmt.Sprintf("xl/worksheets/sheet%d.xml", n)
+		hasChart := s.Chart != nil && len(s.Chart.ValueColumns) > 0
+		parts[sheetPath] = xlsxSheetWithDrawing(s.Rows, hasChart)
+
+		// A chart needs four coordinated pieces: the chart part, a drawing that
+		// anchors it, a relationship from the sheet to the drawing, and one from
+		// the drawing to the chart. Miss any and the file opens with no chart.
+		if hasChart {
+			ch := *s.Chart
+			ch.SheetName = name
+			if ch.Rows == 0 {
+				ch.Rows = len(s.Rows) - 1
+			}
+			parts["xl/charts/chart1.xml"] = chartXML(ch)
+			parts["xl/drawings/drawing1.xml"] = chartDrawingXML()
+			parts["xl/drawings/_rels/drawing1.xml.rels"] = chartRels()
+			parts[fmt.Sprintf("xl/worksheets/_rels/sheet%d.xml.rels", n)] = sheetDrawingRels()
+
+			overrides.WriteString(`<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`)
+			overrides.WriteString(`<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`)
+		}
+
+		fmt.Fprintf(&overrides,
+			`<Override PartName="/%s" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+			sheetPath)
 		fmt.Fprintf(&workbookSheets,
 			`<sheet name="%s" sheetId="%d" r:id="rId%d"/>`, esc(name), n, n)
 		fmt.Fprintf(&workbookRels,
@@ -293,6 +428,10 @@ func WriteXLSX(path string, sheets []Sheet) error {
 }
 
 func xlsxSheet(rows [][]string) string {
+	return xlsxSheetWithDrawing(rows, false)
+}
+
+func xlsxSheetWithDrawing(rows [][]string, drawing bool) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
@@ -319,6 +458,10 @@ func xlsxSheet(rows [][]string) string {
 
 			// A value that is genuinely numeric is stored as a number, so the
 			// spreadsheet can actually compute with it.
+			if isFormula(cell) && !isHeader {
+				sb.WriteString(formulaXML(ref, styleText, cell))
+				continue
+			}
 			if isNumeric(cell) && !isHeader {
 				fmt.Fprintf(&sb, `<c r="%s" s="%d"><v>%s</v></c>`,
 					ref, style, strings.TrimSpace(cell))
@@ -330,7 +473,12 @@ func xlsxSheet(rows [][]string) string {
 		}
 		sb.WriteString(`</row>`)
 	}
-	sb.WriteString(`</sheetData></worksheet>`)
+	sb.WriteString(`</sheetData>`)
+	// The drawing reference must follow sheetData; the schema is strict.
+	if drawing {
+		sb.WriteString(`<drawing r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`)
+	}
+	sb.WriteString(`</worksheet>`)
 	return sb.String()
 }
 
@@ -364,8 +512,13 @@ func columnName(n int) string {
 
 // --- shared -----------------------------------------------------------------
 
-// writeZip assembles a container from named parts.
+// writeZip assembles a container from named text parts.
 func writeZip(path string, parts map[string]string) error {
+	return writeZipMixed(path, parts, nil)
+}
+
+// writeZipMixed assembles a container from text and binary parts.
+func writeZipMixed(path string, parts map[string]string, binary map[string][]byte) error {
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create parent: %w", err)
@@ -397,6 +550,19 @@ func writeZip(path string, parts map[string]string) error {
 		}
 		if _, err := f.Write([]byte(content)); err != nil {
 			return fmt.Errorf("write part %s: %w", name, err)
+		}
+	}
+
+	for name, data := range binary {
+		// Deflate, not Store. Storing an already-compressed PNG saves nothing
+		// and made Go emit a data descriptor, which left readers unable to find
+		// where the stream ended — LibreOffice refused the whole document.
+		f, err := w.Create(name)
+		if err != nil {
+			return fmt.Errorf("zip media %s: %w", name, err)
+		}
+		if _, err := f.Write(data); err != nil {
+			return fmt.Errorf("write media %s: %w", name, err)
 		}
 	}
 	if err := w.Close(); err != nil {
