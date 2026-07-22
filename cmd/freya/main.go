@@ -140,6 +140,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	claudeClient := claude.New(cfg.DataDir)
 	skills.RegisterClaude(reg, g, claudeClient)
 	skills.RegisterClaudeAdvice(reg, g, claudeClient)
+
+	browserTabs := skills.NewTabs()
+	defer browserTabs.CloseAll()
+	skills.RegisterBrowser(reg, g, browserTabs)
 	if seer, ok := provider.(llm.VisionAnalyzer); ok {
 		skills.RegisterVision(reg, seer)
 	}
