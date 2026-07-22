@@ -94,6 +94,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 		return err
 	}
 
+	// Voice must be constructed before the agent so its control skill can be
+	// registered alongside the others.
+	vs, voiceErr := setupVoice(cfg, provider)
+	if voiceErr == nil {
+		skills.RegisterVoice(reg, vs)
+	}
+
 	builder := memory.NewContextBuilder(store, index, persona.Prompt(reg.Names()))
 	a := agent.New(provider, reg, store, builder, persona)
 	if cfg.Verbose {
@@ -118,11 +125,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 	}
 
 	// Voice is optional: a missing recorder or synthesiser must not stop a
-	// text session, so failures here are reported and set aside.
-	vs, verr := setupVoice(cfg, provider)
-	if verr != nil {
+	// text session.
+	if voiceErr != nil {
 		if cfg.Voice {
-			fmt.Fprintf(os.Stderr, "%svoice unavailable: %v%s\n", cYellow, verr, cReset)
+			fmt.Fprintf(os.Stderr, "%svoice unavailable: %v%s\n", cYellow, voiceErr, cReset)
 		}
 		vs = nil
 	} else if cfg.Voice {
@@ -263,6 +269,13 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice policy off|warn|enforce
   /voice threshold <0-1>   tune acceptance
   /voice say <text>        speak something
+  /voice style             show delivery settings
+  /voice pace <name>       very slow .. very fast
+  /voice pitch <name>      very low .. very high
+  /voice tone <list>       e.g. casual, dry, amused
+  /voice style voice Kore  pick a voice preset
+  /voice style reset       restore defaults
+  /voice voices            list voices, paces, tones
   /verbose                 toggle tool tracing
   /quit                    exit
 

@@ -144,6 +144,36 @@ to `persona.json`. Default is sassy + friendly + casual + blunt + direct.
 The **anti-sycophancy block is not a trait** — it is unconditional and must survive any
 trait change. A test enforces this. The user has explicitly ruled out sycophancy.
 
+### Voice
+
+`internal/voice`. The pipeline is record (sox, auto-stops on silence) →
+Recognizer → agent → Synthesizer, each an interface.
+
+Two decisions were made by measurement, not preference, and the numbers are in
+the package docs:
+
+- **Speech recognition goes to Gemini, not local Whisper.** On this hardware
+  cloud STT is faster *and* more accurate. Recordings are encoded to Ogg during
+  capture: upload dominates latency (190KB WAV = 8.3s, 31KB Ogg = 1.8s, same
+  transcript). Do not switch the capture format to WAV for convenience.
+- **Synthesis defaults to Gemini's neural voices.** espeak is the offline
+  fallback and sounds like it. Sentences are synthesised one ahead of playback,
+  so only the first is waited on.
+
+`Style` (voice/style.go) holds pace, pitch, tone and voice, persisted to
+`voicestyle.json`. It is expressed in words rather than numbers because Gemini
+takes natural-language delivery direction; `WPM()` and `PitchValue()` convert
+for espeak. The `voice_adjust` skill exposes it so Freya retunes herself when
+asked.
+
+**Speaker verification is implemented but unvalidated.** Measured on real audio
+the nearest impostor scored 0.022 below the owner — no threshold separates them.
+Default policy is `warn`; never change the default to `enforce`. Two fixes
+already landed and matter: cepstral coefficient c0 is excluded (it encodes
+loudness, not identity, and dominates the vector) and embeddings are centred
+before normalising (turning cosine into correlation). Together those widened the
+synthetic margin from 0.016 to 0.480. Do not reintroduce c0.
+
 ## Platform notes
 
 Developed on Linux Lite 8 (Ubuntu 26.04), i7-4600U, no GPU.

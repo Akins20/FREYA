@@ -76,6 +76,32 @@ Default is sassy, friendly, casual, blunt, and direct. Change it whenever:
 Not adjustable: she will not flatter you. No opening compliments, no agreeing to
 be agreeable, no performed enthusiasm. That's wired in, not a setting.
 
+## Voice
+
+```
+/voice on                 spoken mode — Enter is push-to-talk
+/voice enroll             record a voiceprint
+/voice test               score your voice against it
+/voice pace slow          very slow .. very fast
+/voice pitch low          very low .. very high
+/voice tone dry, amused   delivery descriptors
+/voice voices             list voices, paces, tones
+```
+
+She hears through Gemini rather than local Whisper — on modest hardware that is
+both faster and more accurate, and it needs no model download. Recordings are
+encoded to Ogg during capture because upload dominates latency: the same clip
+took 8.3s as WAV and 1.8s as Ogg, with identical transcripts.
+
+She speaks through Gemini's neural voices, which take delivery direction in
+plain English. So you can simply tell her: *"slow down, you sound too cheerful"*
+— and she will retune herself and remember it.
+
+Speaker verification exists but is **not validated**. On real audio the nearest
+impostor scored 0.022 below the enrolled owner, which no threshold separates.
+The default policy is `warn`, never `enforce`. Use `/voice test` with a second
+person before trusting it. See `internal/voice/verify.go` for the measurements.
+
 ## Commands
 
 ```

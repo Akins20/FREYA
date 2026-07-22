@@ -325,3 +325,117 @@ func (g *Gemini) TranscribeAudio(ctx context.Context, audio []byte, mimeType str
 	}
 	return strings.TrimSpace(text.String()), nil
 }
+
+// --- speech synthesis -------------------------------------------------------
+
+// DefaultTTSModel is Gemini's speech model. The conversational model cannot
+// emit audio, so synthesis always targets a dedicated TTS model.
+const DefaultTTSModel = "gemini-3.1-flash-tts-preview"
+
+// DefaultVoice is a warm, mid-range preset that suits a conversational
+// assistant. Gemini offers around thirty; see the API's voice list.
+const DefaultVoice = "Leda"
+
+// TTSModel overrides the speech model. Empty uses DefaultTTSModel.
+var TTSModel string
+
+// SynthesizeSpeech implements SpeechSynthesizer.
+//
+// Delivery is steered by prefixing the text with a style instruction, which is
+// how Gemini's TTS models take direction. This is what lets a persona actually
+// sound like itself rather than being read out flatly.
+func (g *Gemini) SynthesizeSpeech(ctx context.Context, text, voice, style string) ([]byte, string, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, "", nil
+	}
+	if voice == "" {
+		voice = DefaultVoice
+	}
+	model := TTSModel
+	if model == "" {
+		model = DefaultTTSModel
+	}
+
+	prompt := text
+	if style != "" {
+		prompt = style + ": " + text
+	}
+
+	body := map[string]any{
+		"contents": []map[string]any{{
+			"parts": []map[string]any{{"text": prompt}},
+		}},
+		"generationConfig": map[string]any{
+			"responseModalities": []string{"AUDIO"},
+			"speechConfig": map[string]any{
+				"voiceConfig": map[string]any{
+					"prebuiltVoiceConfig": map[string]any{"voiceName": voice},
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, "", fmt.Errorf("gemini: encode speech request: %w", err)
+	}
+
+	url := fmt.Sprintf(geminiEndpoint, model)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, "", fmt.Errorf("gemini: build speech request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", g.APIKey)
+
+	resp, err := g.HTTP.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("gemini: speech request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, "", fmt.Errorf("gemini: read speech response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", &APIError{Provider: "gemini-tts", Status: resp.StatusCode, Body: string(payload)}
+	}
+
+	var decoded struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					InlineData *struct {
+						MimeType string `json:"mimeType"`
+						Data     string `json:"data"`
+					} `json:"inlineData"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil, "", fmt.Errorf("gemini: decode speech response: %w", err)
+	}
+	if decoded.Error != nil {
+		return nil, "", fmt.Errorf("gemini: %s", decoded.Error.Message)
+	}
+	if len(decoded.Candidates) == 0 {
+		return nil, "", fmt.Errorf("gemini: no audio returned")
+	}
+
+	for _, part := range decoded.Candidates[0].Content.Parts {
+		if part.InlineData == nil {
+			continue
+		}
+		audio, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+		if err != nil {
+			return nil, "", fmt.Errorf("gemini: decode audio: %w", err)
+		}
+		return audio, part.InlineData.MimeType, nil
+	}
+	return nil, "", fmt.Errorf("gemini: response contained no audio")
+}

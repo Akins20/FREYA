@@ -93,7 +93,10 @@ Upload dominates latency, so recordings are encoded to Ogg during capture.
 - [x] `llm.AudioTranscriber` — optional provider capability, Gemini implements it
 - [x] `voice/record.go` — sox capture, auto-stops after 1.5s of silence
 - [x] `voice/stt.go` — GeminiSTT (default) + WhisperSTT (offline fallback)
-- [x] `voice/tts.go` — espeak (installed) + piper (optional), sentence streaming
+- [x] `voice/tts.go` — espeak (offline fallback) + piper (optional)
+- [x] `voice/tts_gemini.go` — Gemini neural TTS, **default**, sentence-pipelined
+- [x] `voice/style.go` — pace/pitch/tone/voice profile, persisted
+- [x] `skills/voice.go` — `voice_adjust` so Freya retunes her own delivery
 - [x] `voice/session.go` — listen → think → speak loop
 - [x] `voice/mfcc.go` — pure-Go FFT, mel filterbank, cepstral embedding
 - [x] `voice/verify.go` — speaker profile, enrolment, policy gate
@@ -130,6 +133,28 @@ against a ~1,830 ms STT round trip, under 1% of the pipeline.
 - [ ] Validate with two real human voices via `/voice test`
 - [ ] If it fails there too: neural speaker embedding (ECAPA-TDNN via ONNX).
       The `Verifier` interface exists so this drops in without touching the loop.
+### Voice quality
+
+espeak was the first cut and sounded it: male, monotone, deaf to punctuation.
+Gemini's speech models are now the default. They take delivery direction in
+plain English, which means the persona can drive how she *sounds*, not just
+what she writes.
+
+| engine | latency | quality |
+|---|---|---|
+| espeak | instant | male, monotone, ignores punctuation |
+| **gemini** | **3.5-4.0s** | natural prosody, 26 voices, style-steerable |
+| piper | ~0.5s (est.) | good neural, needs a 60MB download |
+
+Latency is mitigated by pipelining: sentence N+1 synthesises while sentence N
+plays, so only the first sentence is waited on.
+
+Delivery is a persisted profile — voice, pace (120-240 wpm), pitch, tone — and
+`voice_adjust` exposes it as a tool, so "slow down, you sound too cheerful"
+retunes her mid-conversation. Verified: she called
+`voice_adjust tone=calm,professional pace=slow` unprompted and it persisted.
+
+- [ ] Consider piper as a low-latency offline option (needs a download)
 - [ ] Barge-in: stop speaking when the user starts talking
 - [ ] Wake word ("Hey Freya") once push-to-talk is proven
 

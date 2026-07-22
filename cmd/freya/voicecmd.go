@@ -22,6 +22,19 @@ type voiceState struct {
 	policy   voice.Policy
 	enabled  bool
 	dataDir  string
+	style    voice.Style
+}
+
+// Style implements skills.VoiceController.
+func (v *voiceState) Style() voice.Style { return v.style }
+
+// SetStyle applies new delivery settings to the live synthesiser and persists
+// them, so a change Freya makes mid-conversation takes effect on her next
+// sentence rather than after a restart.
+func (v *voiceState) SetStyle(s voice.Style) error {
+	v.style = s
+	voice.Restyle(v.session.Synth, s)
+	return voice.SaveStyle(v.dataDir, s)
 }
 
 // setupVoice builds the voice stack, reporting clearly when a piece is missing
@@ -35,12 +48,26 @@ func setupVoice(cfg *config.Config, provider llm.Provider) (*voiceState, error) 
 	if err != nil {
 		return nil, err
 	}
-	synth, err := voice.NewSynthesizer(cfg.TTS, cfg.VoiceName, cfg.PiperModel)
+
+	style := voice.LoadStyle(cfg.DataDir)
+	if cfg.VoiceName != "" {
+		style.Voice = cfg.VoiceName
+	}
+
+	// Gemini synthesis is only offered when the active provider can do it.
+	speech, _ := provider.(llm.SpeechSynthesizer)
+	synth, err := voice.NewSynthesizerWith(voice.SynthOptions{
+		Preference: cfg.TTS,
+		Style:      style,
+		PiperModel: cfg.PiperModel,
+		Speech:     speech,
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	return &voiceState{
+		style: style,
 		session: &voice.Session{
 			Recorder:   recorder,
 			Recognizer: recognizer,
@@ -93,6 +120,32 @@ func voiceCommand(ctx context.Context, rest string, v *voiceState, a *agent.Agen
 
 	case "test":
 		return false, v.test(ctx)
+
+	case "style":
+		if arg == "" {
+			fmt.Printf("  %s\n", v.style.Describe())
+			return false, nil
+		}
+		return false, v.setStyleField(arg)
+
+	case "pace", "speed":
+		return false, v.setStyleField("pace " + arg)
+
+	case "pitch":
+		return false, v.setStyleField("pitch " + arg)
+
+	case "tone":
+		return false, v.setStyleField("tone " + arg)
+
+	case "voices":
+		fmt.Printf("  %space:%s  %s\n", cDim, cReset, strings.Join(voice.PaceNames(), ", "))
+		fmt.Printf("  %spitch:%s %s\n", cDim, cReset, strings.Join(voice.PitchNames(), ", "))
+		fmt.Printf("  %stone:%s  %s\n", cDim, cReset, strings.Join(voice.ToneNames(), ", "))
+		fmt.Printf("  %svoices:%s\n", cDim, cReset)
+		for _, gv := range voice.GeminiVoices {
+			fmt.Printf("    %-16s %s\n", gv.Name, gv.Character)
+		}
+		return false, nil
 
 	case "forget":
 		if err := v.verifier.Forget(); err != nil {
@@ -231,6 +284,45 @@ func (v *voiceState) gate(ctx context.Context, audioPath string) bool {
 	}
 	fmt.Printf("%s  unrecognised voice (%.3f) — ignoring%s\n", cRed, score, cReset)
 	return false
+}
+
+// setStyleField parses "<field> <value>" and applies it.
+func (v *voiceState) setStyleField(arg string) error {
+	field, value, _ := strings.Cut(strings.TrimSpace(arg), " ")
+	value = strings.TrimSpace(value)
+	style := v.style
+
+	switch strings.ToLower(field) {
+	case "pace", "speed":
+		if _, ok := voice.Paces[strings.ToLower(value)]; !ok {
+			return fmt.Errorf("pace must be one of: %s", strings.Join(voice.PaceNames(), ", "))
+		}
+		style.Pace = strings.ToLower(value)
+	case "pitch":
+		if _, ok := voice.Pitches[strings.ToLower(value)]; !ok {
+			return fmt.Errorf("pitch must be one of: %s", strings.Join(voice.PitchNames(), ", "))
+		}
+		style.Pitch = strings.ToLower(value)
+	case "tone":
+		if unknown := style.SetTone(strings.Split(value, ",")); len(unknown) > 0 {
+			fmt.Printf("%s  passing through unlisted tones: %s%s\n",
+				cDim, strings.Join(unknown, ", "), cReset)
+		}
+	case "voice":
+		style.Voice = value
+	case "custom":
+		style.Custom = value
+	case "reset":
+		style = voice.DefaultStyle()
+	default:
+		return fmt.Errorf("unknown style field %q — try pace, pitch, tone, voice, custom, reset", field)
+	}
+
+	if err := v.SetStyle(style); err != nil {
+		return err
+	}
+	fmt.Printf("  %s\n", style.Describe())
+	return nil
 }
 
 func formatScores(scores []float64) string {

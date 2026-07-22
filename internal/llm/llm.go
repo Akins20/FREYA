@@ -117,3 +117,17 @@ type APIError struct {
 func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: http %d: %s", e.Provider, e.Status, e.Body)
 }
+
+// SpeechSynthesizer is an optional capability: a provider that can render text
+// as spoken audio. Kept separate from Provider for the same reason as
+// AudioTranscriber — text-only backends need not know it exists.
+type SpeechSynthesizer interface {
+	// SynthesizeSpeech renders text as audio.
+	//
+	// voice names a provider-specific preset. style is a natural-language
+	// delivery instruction ("dry and amused, casual") which providers that
+	// support it use to shape prosody; others ignore it.
+	//
+	// Returns the audio bytes and their MIME type.
+	SynthesizeSpeech(ctx context.Context, text, voice, style string) (audio []byte, mimeType string, err error)
+}

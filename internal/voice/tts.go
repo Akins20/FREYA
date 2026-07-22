@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/akins/jarvis/internal/llm"
 )
 
 // EspeakTTS speaks using espeak or espeak-ng.
@@ -22,11 +24,10 @@ type EspeakTTS struct {
 	Binary string
 	// Voice is an espeak voice name such as "en-gb" or "en-us+f3".
 	Voice string
-	// WordsPerMinute controls pace. Zero means 175, slightly above espeak's
-	// default 160, which drags when reading assistant-length replies.
-	WordsPerMinute int
-	// Pitch is 0-99. Zero means espeak's default of 50.
-	Pitch int
+	// Style supplies pace and pitch. espeak cannot act on tone descriptors —
+	// it has no prosody model — so those are silently ignored here. Choose
+	// Gemini TTS when delivery matters.
+	Style Style
 
 	mu      sync.Mutex
 	current *exec.Cmd
@@ -62,21 +63,20 @@ func (e *EspeakTTS) Say(ctx context.Context, text string) error {
 		return fmt.Errorf("%s not found; install espeak-ng", bin)
 	}
 
-	rate := e.WordsPerMinute
-	if rate == 0 {
-		rate = 175
+	rate := e.Style.WPM()
+	pitch := e.Style.PitchValue()
+	voice := e.Voice
+	if voice == "" {
+		voice = e.Style.Voice
 	}
 
 	for _, sentence := range splitSentences(text) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		args := []string{"-s", strconv.Itoa(rate)}
-		if e.Voice != "" {
-			args = append(args, "-v", e.Voice)
-		}
-		if e.Pitch > 0 {
-			args = append(args, "-p", strconv.Itoa(e.Pitch))
+		args := []string{"-s", strconv.Itoa(rate), "-p", strconv.Itoa(pitch)}
+		if voice != "" {
+			args = append(args, "-v", voice)
 		}
 		args = append(args, "--", sentence)
 
@@ -212,25 +212,63 @@ func piperLooksLikeTTS() bool {
 			strings.Contains(help, "output-raw"))
 }
 
-// NewSynthesizer picks the best available voice.
-func NewSynthesizer(preference, voice, piperModel string) (Synthesizer, error) {
-	switch strings.ToLower(strings.TrimSpace(preference)) {
+// SynthOptions configures synthesiser selection.
+type SynthOptions struct {
+	// Preference is "gemini", "piper", "espeak" or "none". Empty auto-selects.
+	Preference string
+	Style      Style
+	PiperModel string
+	// Speech is the provider used for Gemini synthesis, if it supports audio.
+	Speech llm.SpeechSynthesizer
+}
+
+// NewSynthesizerWith picks a voice engine.
+//
+// Gemini leads when available: espeak cannot vary tone at all, and a monotone
+// reading undercuts a personality built on delivery.
+func NewSynthesizerWith(opts SynthOptions) (Synthesizer, error) {
+	switch strings.ToLower(strings.TrimSpace(opts.Preference)) {
+	case "gemini", "neural", "cloud":
+		if opts.Speech == nil {
+			return nil, fmt.Errorf("the active provider cannot synthesise speech; " +
+				"use FREYA_TTS=espeak")
+		}
+		return &GeminiTTS{Synth: opts.Speech, Style: opts.Style}, nil
+
 	case "piper":
-		return &PiperTTS{Model: piperModel}, nil
+		return &PiperTTS{Model: opts.PiperModel}, nil
+
 	case "espeak", "espeak-ng":
-		return &EspeakTTS{Voice: voice}, nil
+		return &EspeakTTS{Style: opts.Style}, nil
+
 	case "none", "off", "silent":
 		return NoopTTS{}, nil
+
 	case "":
-		if have("piper") && piperLooksLikeTTS() && piperModel != "" {
-			return &PiperTTS{Model: piperModel}, nil
+		if opts.Speech != nil {
+			return &GeminiTTS{Synth: opts.Speech, Style: opts.Style}, nil
+		}
+		if have("piper") && piperLooksLikeTTS() && opts.PiperModel != "" {
+			return &PiperTTS{Model: opts.PiperModel}, nil
 		}
 		if have("espeak-ng") || have("espeak") {
-			return &EspeakTTS{Voice: voice}, nil
+			return &EspeakTTS{Style: opts.Style}, nil
 		}
 		return nil, fmt.Errorf("no speech synthesiser found; install espeak-ng")
+
 	default:
-		return nil, fmt.Errorf("unknown synthesiser %q (want piper, espeak or none)", preference)
+		return nil, fmt.Errorf("unknown synthesiser %q (want gemini, piper, espeak or none)",
+			opts.Preference)
+	}
+}
+
+// Restyle updates the delivery settings of a synthesiser that supports them.
+func Restyle(s Synthesizer, style Style) {
+	switch t := s.(type) {
+	case *GeminiTTS:
+		t.Style = style
+	case *EspeakTTS:
+		t.Style = style
 	}
 }
 
