@@ -106,6 +106,25 @@ func argString(args map[string]any, key string) string {
 	}
 }
 
+// argRaw returns a string argument with NO trimming.
+//
+// argString trims whitespace, which is right for paths and names and actively
+// wrong for content. Trailing newlines are meaningful in a file, and leading
+// indentation is meaningful in a code edit: trimming `old_text` would strip the
+// indentation off a match anchor and either miss entirely or, worse, match a
+// differently-indented line elsewhere. Anything that becomes file bytes must
+// come through here.
+func argRaw(args map[string]any, key string) string {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
 func argInt(args map[string]any, key string, fallback int) int {
 	v, ok := args[key]
 	if !ok || v == nil {

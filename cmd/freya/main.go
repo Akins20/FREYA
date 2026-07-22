@@ -121,6 +121,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	skills.RegisterWeb(reg, os.Getenv("SERPER_API_KEY"))
 	skills.RegisterDev(reg, cfg.ProjectsDir)
 	skills.RegisterDesktop(reg, g)
+	skills.RegisterFiles(reg, g)
 	if err := skills.RegisterNotes(reg, cfg.DataDir); err != nil {
 		return err
 	}

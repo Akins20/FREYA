@@ -315,7 +315,38 @@ avoid. Lenses run *after* the reply, never in front of it.
 2. **A lens ran twice.** `New()` installs defaults and the caller added a
    better-configured ConsequenceLens, so both ran. `Add` now replaces by name.
 
-## Phase 9 — later
+## Phase 9 — files, folders and documents ✅
+
+- [x] `internal/docs` — format detection by magic bytes, not extension
+- [x] docx, xlsx, pptx, odt, ods, zip in **pure Go** (archive/zip + encoding/xml)
+- [x] PDF via pdftotext (`-layout`, so tables and columns survive)
+- [x] `internal/skills/files.go` — 12 skills, every mutating one gated
+- [x] Surgical edit requiring a unique anchor; large-file edit verified on 50k lines
+- [x] 13 docs tests against **real LibreOffice output**, 16 file-op tests
+
+Office formats are ZIP containers holding XML, so stdlib reads them directly —
+no LibreOffice process per document, which on this hardware is the difference
+between reading a file and hanging for a minute. PDF is the exception: its text
+layer is a content stream with font-specific encodings, so poppler does it.
+
+### Bugs found and fixed
+
+1. **Content arguments were being whitespace-trimmed.** `argString` calls
+   `TrimSpace`, correct for paths and wrong for file bytes. Trailing newlines
+   vanished on write and append — and far worse, `old_text` lost its leading
+   indentation, so a surgical edit on indented code would miss or match the
+   wrong line. Added `argRaw` for anything that becomes file content. Pinned by
+   `TestContentIsNotTrimmed`.
+2. **Zip-slip was possible.** An archive entry named `../../escaped.txt` would
+   write outside the extraction directory. Every entry is now checked against
+   the destination prefix before writing. Pinned by `TestZipSlipIsRefused`.
+
+## Phase 10 — remaining
+
+- [ ] Terminal control: interactive sessions, typing into a running shell
+- [ ] Chrome control via DevTools Protocol on 9222 (needs a minimal WebSocket
+      client to keep the zero-dependency property)
+- [ ] Harden against the "say ACCESS GRANTED" cosmetic-compliance weakness
 
 - [ ] Model-written episode summaries (replace mechanical distillation)
 - [ ] Streaming responses (needed for low-latency TTS)
