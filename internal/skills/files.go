@@ -45,11 +45,12 @@ const (
 )
 
 // RegisterFiles adds file and folder skills, every mutating one gated.
-func RegisterFiles(r *Registry, g *guard.Guard) {
+// The place book is optional; when supplied, folder paths may be given by name.
+func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 	if g == nil {
 		return
 	}
-	f := &fileSkills{guard: g}
+	f := &fileSkills{guard: g, places: places}
 
 	r.Register(Skill{
 		Tool: llm.Tool{
@@ -210,7 +211,10 @@ func RegisterFiles(r *Registry, g *guard.Guard) {
 	})
 }
 
-type fileSkills struct{ guard *guard.Guard }
+type fileSkills struct {
+	guard  *guard.Guard
+	places *PlaceBook
+}
 
 // expand resolves ~ and environment variables in a path.
 func expand(p string) string {
@@ -409,7 +413,7 @@ func (f *fileSkills) info(_ context.Context, args map[string]any) (string, error
 }
 
 func (f *fileSkills) list(_ context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+	path := f.placeAware(argString(args, "path"))
 	if path == "" {
 		path = "."
 	}
@@ -814,4 +818,186 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTP"[exp])
+}
+
+// RegisterDocWriting adds the ability to produce Word and Excel files.
+//
+// Reading was already format-aware; without this, "read my notes and give me a
+// docx" fails at the last step, which is the step that matters to the user.
+func RegisterDocWriting(r *Registry, g *guard.Guard) {
+	if g == nil {
+		return
+	}
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "docx_write",
+			Description: "Create a Word document. Supply the body as markdown — " +
+				"# headings, - bullets, | pipe tables | and blank-line-separated " +
+				"paragraphs are all converted to real Word formatting.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"path":    {Type: "string", Description: "Where to write the .docx."},
+				"content": {Type: "string", Description: "Document body as markdown."},
+				"reason":  {Type: "string", Description: "Why, shown when confirming."},
+			}, "path", "content"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			path := expand(argString(args, "path"))
+			content := argRaw(args, "content")
+			if path == "" || content == "" {
+				return "", fmt.Errorf("path and content are required")
+			}
+			if !strings.HasSuffix(strings.ToLower(path), ".docx") {
+				path += ".docx"
+			}
+
+			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},
+				Reason: argString(args, "reason")}
+			return g.Run(ctx, action, func(context.Context) (string, error) {
+				blocks := docs.ParseBlocks(content)
+				if err := docs.WriteDOCX(path, blocks); err != nil {
+					return "", err
+				}
+				info, _ := os.Stat(path)
+				var size int64
+				if info != nil {
+					size = info.Size()
+				}
+				return fmt.Sprintf("Wrote %s — %d blocks, %d words, %s.",
+					path, len(blocks), len(strings.Fields(content)), humanBytes(size)), nil
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "xlsx_write",
+			Description: "Create an Excel spreadsheet. Supply rows as CSV text; use " +
+				"'---SHEET: Name---' on its own line to start a new sheet. Values that " +
+				"look numeric are stored as real numbers so they can be summed and charted.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"path": {Type: "string", Description: "Where to write the .xlsx."},
+				"content": {Type: "string", Description: "CSV rows, optionally split " +
+					"into sheets with '---SHEET: Name---' separators."},
+				"reason": {Type: "string", Description: "Why, shown when confirming."},
+			}, "path", "content"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			path := expand(argString(args, "path"))
+			content := argRaw(args, "content")
+			if path == "" || content == "" {
+				return "", fmt.Errorf("path and content are required")
+			}
+			if !strings.HasSuffix(strings.ToLower(path), ".xlsx") {
+				path += ".xlsx"
+			}
+
+			sheets := parseSheets(content)
+			if len(sheets) == 0 {
+				return "", fmt.Errorf("no rows found in content")
+			}
+
+			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},
+				Reason: argString(args, "reason")}
+			return g.Run(ctx, action, func(context.Context) (string, error) {
+				if err := docs.WriteXLSX(path, sheets); err != nil {
+					return "", err
+				}
+				rows := 0
+				for _, s := range sheets {
+					rows += len(s.Rows)
+				}
+				info, _ := os.Stat(path)
+				var size int64
+				if info != nil {
+					size = info.Size()
+				}
+				return fmt.Sprintf("Wrote %s — %d sheet(s), %d rows, %s.",
+					path, len(sheets), rows, humanBytes(size)), nil
+			})
+		},
+	})
+}
+
+// parseSheets splits CSV text into sheets, honouring ---SHEET: Name--- markers.
+func parseSheets(content string) []docs.Sheet {
+	var sheets []docs.Sheet
+	current := docs.Sheet{Name: "Sheet1"}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "---SHEET:") {
+			if len(current.Rows) > 0 {
+				sheets = append(sheets, current)
+			}
+			name := strings.TrimSpace(strings.TrimSuffix(
+				strings.TrimPrefix(trimmed, "---SHEET:"), "---"))
+			current = docs.Sheet{Name: name}
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		current.Rows = append(current.Rows, splitCSVLine(trimmed))
+	}
+	if len(current.Rows) > 0 {
+		sheets = append(sheets, current)
+	}
+	return sheets
+}
+
+// splitCSVLine splits a CSV row, honouring quoted fields so a comma inside a
+// quoted cell does not silently create an extra column.
+func splitCSVLine(line string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote := false
+
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case c == '"':
+			// A doubled quote inside a quoted field is a literal quote.
+			if inQuote && i+1 < len(line) && line[i+1] == '"' {
+				cur.WriteByte('"')
+				i++
+				continue
+			}
+			inQuote = !inQuote
+		case c == ',' && !inQuote:
+			out = append(out, strings.TrimSpace(cur.String()))
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	out = append(out, strings.TrimSpace(cur.String()))
+	return out
+}
+
+// ResolvePlaces lets file paths accept remembered names.
+//
+// Real paths always win. A place called "documents" must never hijack an actual
+// ./documents directory, so the lookup only runs when the literal path does not
+// exist.
+func (f *fileSkills) ResolvePlaces(pb *PlaceBook) { f.places = pb }
+
+// placeAware resolves a path, falling back to the place book by name.
+func (f *fileSkills) placeAware(path string) string {
+	resolved := expand(path)
+	if _, err := os.Stat(resolved); err == nil {
+		return resolved
+	}
+	if f.places == nil {
+		return resolved
+	}
+	// Only a bare name can be a place; anything with a separator is a path
+	// the user got wrong, and silently redirecting it would be worse.
+	if strings.ContainsRune(path, os.PathSeparator) {
+		return resolved
+	}
+	if p, ok := f.places.Resolve(path); ok {
+		return p.Path
+	}
+	return resolved
 }

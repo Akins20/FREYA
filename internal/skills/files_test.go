@@ -19,7 +19,7 @@ func approveAll() *guard.Guard {
 func fileReg(t *testing.T) *Registry {
 	t.Helper()
 	r := New()
-	RegisterFiles(r, approveAll())
+	RegisterFiles(r, approveAll(), nil)
 	return r
 }
 

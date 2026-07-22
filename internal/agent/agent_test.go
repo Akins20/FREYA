@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
@@ -302,5 +303,105 @@ func TestPersonaPersistence(t *testing.T) {
 	// A missing or corrupt file must fall back to the default, not crash.
 	if got := LoadPersona(t.TempDir()); got.Name != "Freya" {
 		t.Fatalf("missing file did not fall back to default: %+v", got)
+	}
+}
+
+// TestInterimTextIsSurfaced is a regression test. Text arriving alongside tool
+// calls was stored in history and never shown, so a fifteen-second web search
+// played as silence.
+func TestInterimTextIsSurfaced(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{
+		{Text: "hang on, looking that up", ToolCalls: []llm.ToolCall{{ID: "c1", Name: "ping"}}},
+		{Text: "here's the answer"},
+	}}
+	a, _ := newTestAgent(t, p)
+	a.Skills.Register(skills.Skill{
+		Tool:    llm.Tool{Name: "ping", Params: llm.ObjectSchema(nil)},
+		Handler: func(context.Context, map[string]any) (string, error) { return "pong", nil },
+	})
+
+	var interim []string
+	a.OnInterim = func(s string) { interim = append(interim, s) }
+
+	res, err := a.Ask(context.Background(), "look something up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interim) != 1 || interim[0] != "hang on, looking that up" {
+		t.Fatalf("interim text not surfaced: %v", interim)
+	}
+	if res.Reply != "here's the answer" {
+		t.Errorf("final reply = %q", res.Reply)
+	}
+}
+
+// TestToolsRunConcurrently proves independent lookups no longer serialise.
+func TestToolsRunConcurrently(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{
+			{ID: "a", Name: "slow"}, {ID: "b", Name: "slow"}, {ID: "c", Name: "slow"},
+		}},
+		{Text: "done"},
+	}}
+	a, _ := newTestAgent(t, p)
+	a.Skills.Register(skills.Skill{
+		Tool: llm.Tool{Name: "slow", Params: llm.ObjectSchema(nil)},
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+			time.Sleep(150 * time.Millisecond)
+			return "ok", nil
+		},
+	})
+
+	start := time.Now()
+	if _, err := a.Ask(context.Background(), "do three things"); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+
+	// Serial would be ~450ms; concurrent should land near 150ms.
+	if elapsed > 350*time.Millisecond {
+		t.Errorf("three 150ms tools took %v — they ran in series", elapsed)
+	}
+	t.Logf("three 150ms tools completed in %v", elapsed)
+}
+
+// TestConcurrentToolResultsKeepOrder guards the subtle risk of parallelism:
+// the model must see results in the order it requested them, not the order
+// they happened to finish.
+func TestConcurrentToolResultsKeepOrder(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "slow"}, {ID: "2", Name: "fast"},
+		}},
+		{Text: "done"},
+	}}
+	a, _ := newTestAgent(t, p)
+	a.Skills.Register(skills.Skill{
+		Tool: llm.Tool{Name: "slow", Params: llm.ObjectSchema(nil)},
+		Handler: func(context.Context, map[string]any) (string, error) {
+			time.Sleep(120 * time.Millisecond)
+			return "SLOW-RESULT", nil
+		},
+	})
+	a.Skills.Register(skills.Skill{
+		Tool:    llm.Tool{Name: "fast", Params: llm.ObjectSchema(nil)},
+		Handler: func(context.Context, map[string]any) (string, error) { return "FAST-RESULT", nil },
+	})
+
+	if _, err := a.Ask(context.Background(), "two things"); err != nil {
+		t.Fatal(err)
+	}
+
+	var toolMsgs []string
+	for _, m := range p.lastReq.Messages {
+		if m.Role == llm.RoleTool {
+			toolMsgs = append(toolMsgs, m.Text)
+		}
+	}
+	if len(toolMsgs) != 2 {
+		t.Fatalf("got %d tool results, want 2", len(toolMsgs))
+	}
+	if toolMsgs[0] != "SLOW-RESULT" || toolMsgs[1] != "FAST-RESULT" {
+		t.Errorf("results reordered by completion time: %v", toolMsgs)
 	}
 }

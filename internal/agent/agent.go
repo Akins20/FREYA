@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akins/jarvis/internal/guard"
@@ -38,6 +39,10 @@ type Agent struct {
 
 	// OnTool is called before and after each tool execution, for tracing.
 	OnTool func(event, name, detail string)
+	// OnInterim receives text the model produced *alongside* tool calls —
+	// "hang on, let me look that up". Surfacing it is what lets her speak
+	// mid-action instead of going silent for the length of a web search.
+	OnInterim func(text string)
 }
 
 // Result is the outcome of one user exchange.
@@ -119,6 +124,13 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			return result, nil
 		}
 
+		// Text arriving alongside tool calls is the model talking while it
+		// works. Say it now rather than after: a web search takes seconds, and
+		// silence for that long reads as a hang.
+		if interim := strings.TrimSpace(resp.Text); interim != "" && a.OnInterim != nil {
+			a.OnInterim(interim)
+		}
+
 		// Record the assistant's tool-call turn so the model sees its own
 		// request on the next round. Signatures ride along untouched.
 		msgs = append(msgs, llm.Message{
@@ -127,31 +139,45 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			ToolCalls: resp.ToolCalls,
 		})
 
-		for _, call := range resp.ToolCalls {
+		// Execute concurrently. Models routinely request several independent
+		// lookups at once, and running them in series turns three network calls
+		// into three round trips of waiting. Results are collected by index so
+		// the order the model sees never depends on which finished first.
+		outputs := make([]string, len(resp.ToolCalls))
+		var wg sync.WaitGroup
+		for i, call := range resp.ToolCalls {
 			result.ToolCalls = append(result.ToolCalls, call.Name)
-			a.trace("start", call.Name, formatArgs(call.Args))
+			wg.Add(1)
+			go func(i int, call llm.ToolCall) {
+				defer wg.Done()
+				a.trace("start", call.Name, formatArgs(call.Args))
 
-			output, err := a.Skills.Execute(ctx, call.Name, call.Args)
-			if err != nil {
-				// Errors go back to the model as text: a failed tool is
-				// information it can act on, not a reason to abort the turn.
-				output = "ERROR: " + err.Error()
-				a.trace("error", call.Name, err.Error())
-			} else {
-				a.trace("ok", call.Name, truncate(output, 200))
-			}
+				output, err := a.Skills.Execute(ctx, call.Name, call.Args)
+				if err != nil {
+					// Errors go back to the model as text: a failed tool is
+					// information it can act on, not a reason to abort the turn.
+					output = "ERROR: " + err.Error()
+					a.trace("error", call.Name, err.Error())
+				} else {
+					a.trace("ok", call.Name, truncate(output, 200))
+				}
+				outputs[i] = output
+			}(i, call)
+		}
+		wg.Wait()
 
+		for i, call := range resp.ToolCalls {
 			// Tool output is archived but deliberately not indexed: it is bulky,
 			// re-derivable by re-running the tool, and would swamp BM25 scores
 			// against the conversation that actually matters.
 			if _, err := a.Store.AppendTurn(memory.Turn{
-				Role: "tool", Text: output, ToolName: call.Name,
+				Role: "tool", Text: outputs[i], ToolName: call.Name,
 			}); err != nil {
 				return nil, fmt.Errorf("archive tool turn: %w", err)
 			}
 			msgs = append(msgs, llm.Message{
 				Role:       llm.RoleTool,
-				Text:       output,
+				Text:       outputs[i],
 				ToolName:   call.Name,
 				ToolCallID: call.ID,
 			})

@@ -33,6 +33,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -137,6 +138,11 @@ type Guard struct {
 	AutoApprove Risk
 	// ProtectedPaths are additional paths to treat as high risk.
 	ProtectedPaths []string
+
+	// confirmMu serialises confirmation prompts. Tool calls now run
+	// concurrently, and two prompts competing for the same terminal would
+	// interleave their questions and read each other's answers.
+	confirmMu sync.Mutex
 }
 
 // New builds a guard with safe defaults.
@@ -203,7 +209,10 @@ func (g *Guard) Run(ctx context.Context, action Action, exec func(context.Contex
 			g.record(record)
 			return "", fmt.Errorf("%w: this action needs confirmation but no prompt is available", ErrDenied)
 		}
-		if !g.Confirm(ctx, action, assessment) {
+		g.confirmMu.Lock()
+		approved := g.Confirm(ctx, action, assessment)
+		g.confirmMu.Unlock()
+		if !approved {
 			record.Outcome = "denied"
 			g.record(record)
 			return "", ErrDenied

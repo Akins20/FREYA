@@ -121,7 +121,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	skills.RegisterWeb(reg, os.Getenv("SERPER_API_KEY"))
 	skills.RegisterDev(reg, cfg.ProjectsDir)
 	skills.RegisterDesktop(reg, g)
-	skills.RegisterFiles(reg, g)
+	places, placesErr := skills.RegisterPlaces(reg, cfg.DataDir)
+	if placesErr != nil {
+		return placesErr
+	}
+	skills.RegisterFiles(reg, g, places)
+	skills.RegisterDocWriting(reg, g)
 	if err := skills.RegisterNotes(reg, cfg.DataDir); err != nil {
 		return err
 	}
@@ -154,6 +159,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 		return out
 	}
 	skills.RegisterReflection(reg, refl)
+	// Interim narration: shown at once, and spoken when voice is on, so a slow
+	// lookup is filled with speech rather than silence.
+	a.OnInterim = func(text string) {
+		fmt.Printf("%s%s%s\n", cDim, text, cReset)
+	}
+
 	if cfg.Verbose {
 		a.OnTool = func(event, name, detail string) {
 			switch event {
@@ -190,6 +201,17 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	} else if cfg.Voice {
 		vs.enabled = true
 	}
+	if vs != nil {
+		// Speak the interim line too, so voice mode has no dead air.
+		spoken := a.OnInterim
+		a.OnInterim = func(text string) {
+			spoken(text)
+			if vs.enabled {
+				go func() { _ = vs.session.Speak(context.Background(), text) }()
+			}
+		}
+	}
+
 	sen.Notify = notifier(vs, true)
 	sen.Start(ctx)
 	defer sen.Stop()

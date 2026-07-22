@@ -341,7 +341,78 @@ layer is a content stream with font-specific encodings, so poppler does it.
    write outside the extraction directory. Every entry is now checked against
    the destination prefix before writing. Pinned by `TestZipSlipIsRefused`.
 
-## Phase 10 — remaining
+## Phase 10 — the gaps that were actually there ✅
+
+Asked directly whether file ops were complete, the honest answer was no. Three
+real holes, all now closed.
+
+### 1. She could not write documents
+
+Reading was format-aware; writing produced plain text only. So "read this, give
+me a docx assignment and an xlsx submission" failed at step two.
+
+- [x] `docs.WriteDOCX` — headings, paragraphs, bullets, bordered tables
+- [x] `docs.WriteXLSX` — multiple sheets, numbers stored as **numbers** so the
+      result can be summed and charted rather than looking numeric
+- [x] `docs.ParseBlocks` — markdown to document blocks, since that is what a
+      model naturally emits
+- [x] `docx_write` / `xlsx_write` skills
+- [x] Round-trip verified through our own reader; XML escaping and control
+      characters covered, because either produces a file Word calls corrupt
+
+### 2. She had no idea where "my assignment folder" was
+
+- [x] `internal/skills/places.go` — named locations, learned once and persisted
+- [x] Name normalisation, so "my assignment folder" and "assignments" agree
+- [x] Resolution order: exact, then prefix, then substring; ties broken by
+      how often a place is actually used
+- [x] A real path always wins, so a place named "documents" cannot hijack an
+      actual ./documents directory
+- [x] Refuses to remember a path that does not exist — a place book that
+      answers confidently and wrongly is worse than an empty one
+- [x] When a name is unknown she is told to **ask**, not to search the disk
+
+### 3. Large transformation was unverified
+
+Tested end to end on a generated 771-word document with known embedded figures:
+
+    read research.docx (in "my assignment folder")
+      -> summary.docx
+      -> results.xlsx with latency, throughput and node count per protocol
+
+**15 of 15 data points correct. Nothing lost, nothing invented.** She resolved
+the folder from memory rather than searching, and chained
+place_resolve → folder_list → file_read → docx_write → xlsx_write in one turn.
+
+## Phase 11 — chaining limits, two of four fixed ✅
+
+Asked whether she was being limited, the honest answer was yes, in four ways.
+
+- [x] **Tool calls now run concurrently.** Three 150ms tools completed in
+      151ms rather than 450ms. Results are collected by index, so the order the
+      model sees never depends on which finished first.
+- [x] **Confirmation prompts serialised.** Concurrency made this necessary:
+      two prompts competing for one terminal would interleave their questions
+      and read each other's answers.
+- [x] **She can speak mid-action.** Text arriving alongside tool calls was
+      stored in history and never shown, so a fifteen-second web search played
+      as silence. It is now surfaced immediately and spoken in voice mode.
+- [x] Persona permits exactly one short interstitial line before slow work —
+      the only preamble allowed, and only because silence reads as a hang.
+- [ ] **Round cap** is still a flat 12; a genuinely long job hits the ceiling
+- [ ] **No background work** — nothing can run while the conversation continues
+
+## Backups ✅
+
+First snapshot completed: **23.9 GiB, 17G on disk** after deduplication.
+Repository at `/run/media/akins/Akins Drive1/restic-repo`, password at
+`~/.config/freya/restic-password` (mode 600) — **that password must be copied
+somewhere else; without it the snapshots are unrecoverable.**
+
+Still the same physical disk as the data it protects. Guards against deletion
+and bad commands, not against drive failure.
+
+## Phase 12 — remaining
 
 - [ ] Terminal control: interactive sessions, typing into a running shell
 - [ ] Chrome control via DevTools Protocol on 9222 (needs a minimal WebSocket
