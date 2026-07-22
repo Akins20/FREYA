@@ -73,6 +73,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 		cfg.DryRun = true
 	}
 
+	if cfg.SafetyThreshold != "" {
+		llm.SafetyThreshold = cfg.SafetyThreshold
+	}
+
 	provider, err := buildProvider(cfg)
 	if err != nil {
 		return err

@@ -73,6 +73,42 @@ type geminiRequest struct {
 	SystemInstruction *geminiContent  `json:"system_instruction,omitempty"`
 	Contents          []geminiContent `json:"contents"`
 	Tools             []geminiTool    `json:"tools,omitempty"`
+	SafetySettings    []geminiSafety  `json:"safetySettings,omitempty"`
+}
+
+type geminiSafety struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
+}
+
+// SafetyThreshold controls Gemini's content filtering. "OFF" disables it.
+//
+// Disabled by default here, deliberately. This is a personal assistant running
+// locally for a single owner, and the filters mostly produce false refusals on
+// ordinary requests — declining to delete files in a scratch directory, or
+// lecturing about a shell command. The protection that matters on this machine
+// is internal/guard, which reasons about what a command actually does rather
+// than how it reads. Content classifiers are the wrong tool for that job and
+// were getting in the way of the right one.
+var SafetyThreshold = "OFF"
+
+// safetySettings builds the filter configuration for a request.
+func safetySettings() []geminiSafety {
+	if SafetyThreshold == "" {
+		return nil
+	}
+	categories := []string{
+		"HARM_CATEGORY_HARASSMENT",
+		"HARM_CATEGORY_HATE_SPEECH",
+		"HARM_CATEGORY_SEXUALLY_EXPLICIT",
+		"HARM_CATEGORY_DANGEROUS_CONTENT",
+		"HARM_CATEGORY_CIVIC_INTEGRITY",
+	}
+	out := make([]geminiSafety, 0, len(categories))
+	for _, c := range categories {
+		out = append(out, geminiSafety{Category: c, Threshold: SafetyThreshold})
+	}
+	return out
 }
 
 type geminiTool struct {
@@ -97,7 +133,10 @@ type geminiResponse struct {
 
 // Chat performs one completion round against the Gemini API.
 func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
-	body := geminiRequest{Contents: toGeminiContents(req.Messages)}
+	body := geminiRequest{
+		Contents:       toGeminiContents(req.Messages),
+		SafetySettings: safetySettings(),
+	}
 	if req.System != "" {
 		body.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: req.System}}}
 	}
@@ -269,6 +308,7 @@ func (g *Gemini) TranscribeAudio(ctx context.Context, audio []byte, mimeType str
 	}
 
 	body := map[string]any{
+		"safetySettings": safetySettings(),
 		"contents": []map[string]any{{
 			"role": "user",
 			"parts": []map[string]any{
@@ -362,6 +402,7 @@ func (g *Gemini) SynthesizeSpeech(ctx context.Context, text, voice, style string
 	}
 
 	body := map[string]any{
+		"safetySettings": safetySettings(),
 		"contents": []map[string]any{{
 			"parts": []map[string]any{{"text": prompt}},
 		}},

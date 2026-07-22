@@ -35,6 +35,10 @@ type Config struct {
 	Verbose bool
 	// DryRun assesses actions and reports them without executing.
 	DryRun bool
+	// SafetyThreshold sets Gemini's content filtering. Empty means the
+	// built-in default of "OFF"; set BLOCK_ONLY_HIGH or BLOCK_MEDIUM_AND_ABOVE
+	// to re-enable filtering.
+	SafetyThreshold string
 
 	// --- voice ---
 
@@ -67,15 +71,16 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Provider:     os.Getenv("FREYA_PROVIDER"),
-		Model:        os.Getenv("FREYA_MODEL"),
-		GeminiKey:    firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GOOGLE_API_KEY")),
-		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
-		DataDir:      os.Getenv("FREYA_DATA_DIR"),
-		ProjectsDir:  os.Getenv("FREYA_PROJECTS_DIR"),
-		Address:      os.Getenv("FREYA_ADDRESS"),
-		Verbose:      isTruthy(os.Getenv("FREYA_VERBOSE")),
-		DryRun:       isTruthy(os.Getenv("FREYA_DRY_RUN")),
+		Provider:        os.Getenv("FREYA_PROVIDER"),
+		Model:           os.Getenv("FREYA_MODEL"),
+		GeminiKey:       firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GOOGLE_API_KEY")),
+		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		DataDir:         os.Getenv("FREYA_DATA_DIR"),
+		ProjectsDir:     os.Getenv("FREYA_PROJECTS_DIR"),
+		Address:         os.Getenv("FREYA_ADDRESS"),
+		Verbose:         isTruthy(os.Getenv("FREYA_VERBOSE")),
+		DryRun:          isTruthy(os.Getenv("FREYA_DRY_RUN")),
+		SafetyThreshold: os.Getenv("FREYA_SAFETY"),
 
 		Voice:        isTruthy(os.Getenv("FREYA_VOICE")),
 		STT:          os.Getenv("FREYA_STT"),
