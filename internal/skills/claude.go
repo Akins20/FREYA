@@ -51,11 +51,11 @@ func RegisterClaude(r *Registry, g *guard.Guard, c *claude.Client) {
 				"dir": {Type: "string", Description: "Project directory to work in."},
 				"mode": {Type: "string", Description: "How much freedom to allow.",
 					Enum: []string{"plan", "read-only", "edit", "full"}},
-				"model": {Type: "string", Description: "Which model. This matters more " +
-					"than it looks: Claude defaults to its most capable model, and two " +
-					"trivial turns measured ~$0.24 equivalent against the usage window. " +
-					"Use haiku for lookups and simple edits, sonnet for ordinary work, " +
-					"and opus only for genuinely hard reasoning.",
+				"model": {Type: "string", Description: "Override the automatic choice. " +
+					"Leave unset unless you have a reason: the model is picked from the " +
+					"shape of the task — haiku for lookups, sonnet for ordinary work, " +
+					"opus for reasoning across a codebase — and a resumed thread stays " +
+					"on whatever it began with.",
 					Enum: []string{"haiku", "sonnet", "opus"}},
 				"effort": {Type: "string", Description: "How hard to think. Higher costs more.",
 					Enum: []string{"low", "medium", "high", "xhigh", "max"}},
@@ -197,20 +197,37 @@ func delegate(ctx context.Context, g *guard.Guard, c *claude.Client,
 
 	mode := argString(args, "mode")
 	permMode, denied := permissionMode(mode)
-	budget := 2.0
+
+	var budget float64
 	if b, ok := args["budget"].(float64); ok && b > 0 {
 		budget = b
+	}
+
+	// Choose a model from the shape of the task unless one was named. Claude
+	// defaults to its most capable model, so without this every lookup runs on
+	// Opus and spends quota a smaller model would have matched.
+	var plan claude.Plan
+	if resume != "" {
+		prior := ""
+		if s, ok := c.Find(resume); ok {
+			prior = s.Model
+		}
+		plan = claude.PlanForResume(prior, task, argString(args, "model"),
+			argString(args, "effort"), budget)
+	} else {
+		plan = claude.PlanFor(task, argString(args, "model"),
+			argString(args, "effort"), budget)
 	}
 
 	opts := claude.Options{
 		Prompt:          task,
 		Resume:          resume,
 		Dir:             expand(argString(args, "dir")),
-		Model:           argString(args, "model"),
-		Effort:          argString(args, "effort"),
+		Model:           plan.Model,
+		Effort:          plan.Effort,
 		PermissionMode:  permMode,
 		DisallowedTools: denied,
-		BudgetUSD:       budget,
+		BudgetUSD:       plan.BudgetUSD,
 		Timeout:         12 * time.Minute,
 	}
 
@@ -224,8 +241,8 @@ func delegate(ctx context.Context, g *guard.Guard, c *claude.Client,
 		Kind:    risk,
 		Command: "claude",
 		Args:    []string{clip(task, 100)},
-		Reason: fmt.Sprintf("delegate to Claude Code (%s mode, ceiling ~$%.2f equivalent)",
-			orDefault(mode, "read-only"), budget),
+		Reason: fmt.Sprintf("delegate to Claude Code — %s, %s mode, %s, ceiling ~$%.2f equiv",
+			plan.Model, orDefault(mode, "read-only"), plan.Reason, plan.BudgetUSD),
 	}
 	if opts.Dir != "" {
 		action.Paths = []string{opts.Dir}
@@ -240,6 +257,58 @@ func delegate(ctx context.Context, g *guard.Guard, c *claude.Client,
 		if strings.TrimSpace(out) == "" {
 			out = "(Claude returned no text)"
 		}
-		return fmt.Sprintf("%s\n\n[%s]", out, res.Describe()), err
+		return fmt.Sprintf("%s\n\n[%s · %s]", out, res.Describe(), plan.Reason), err
+	})
+}
+
+// RegisterClaudeAdvice adds a skill for the case that motivates all of this:
+// Freya knows what needs doing and has no tool that does it.
+func RegisterClaudeAdvice(r *Registry, g *guard.Guard, c *claude.Client) {
+	if g == nil || c == nil || !c.Available() {
+		return
+	}
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "claude_advise",
+			Description: "Ask Claude how to accomplish something you have no tool for, " +
+				"and get back a concrete plan you then carry out yourself. Claude reads " +
+				"the relevant files and reasons about them, but changes nothing.\n\n" +
+				"This is the preferred way to handle work beyond your own skills: you " +
+				"stay the one making the change, so the user still sees exactly what is " +
+				"being done before approving it. Use claude_delegate with edit mode only " +
+				"when the change is genuinely too large to apply by hand.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"goal": {Type: "string", Description: "What the user actually wants — the " +
+					"outcome, not the mechanics."},
+				"context": {Type: "string", Description: "What you already know: files " +
+					"involved, what you have tried, what is failing."},
+				"dir": {Type: "string", Description: "Project directory."},
+			}, "goal"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			goal := argRaw(args, "goal")
+			if strings.TrimSpace(goal) == "" {
+				return "", fmt.Errorf("goal is required")
+			}
+
+			// The framing shapes the answer: asking for steps a caller can carry
+			// out produces something actionable, where "how would you do this"
+			// produces an essay.
+			task := "A local assistant needs to accomplish the following but lacks the " +
+				"capability to do it directly. Read whatever files are relevant and reply " +
+				"with a concrete, ordered plan it can execute using ordinary file edits " +
+				"and shell commands. Be specific: exact paths, exact changes. Do not " +
+				"modify anything yourself.\n\nGOAL: " + goal
+			if extra := argRaw(args, "context"); strings.TrimSpace(extra) != "" {
+				task += "\n\nWHAT THE ASSISTANT ALREADY KNOWS: " + extra
+			}
+
+			return delegate(ctx, g, c, map[string]any{
+				"task": task,
+				"dir":  argString(args, "dir"),
+				"mode": "read-only",
+			}, "")
+		},
 	})
 }

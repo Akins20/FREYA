@@ -612,7 +612,55 @@ agentic loops rather than a spending limit. Model choice is now called out in
 the skill description, since Claude defaults to its most capable model and two
 trivial turns measured ~$0.24 equivalent.
 
-## Phase 16 — remaining
+## Phase 16 — model routing and the capability gap ✅
+
+### Choosing a model from the task
+
+Letting the delegating model pick does not work: models judge their own task
+difficulty poorly and reach for the strongest option when unsure. Claude Code
+already defaults to its most capable model, so "let it decide" collapses to
+"always Opus" — quota spent on work a smaller model would have matched.
+
+A cheap classifier proposes; an explicit choice always wins.
+
+| task | class | model | ceiling |
+|---|---|---|---|
+| what port does the server default to? | simple | haiku | ~$0.50 |
+| add a --verbose flag to the CLI and document it | moderate | sonnet | ~$2.00 |
+| debug the intermittent race condition | hard | opus | ~$5.00 |
+| /security-review | hard | opus | ~$5.00 |
+
+**Resumed threads stay on their original model.** Switching mid-conversation
+hands reasoning produced by one model to another that cannot reconstruct the
+premises behind it — confident nonsense built on foundations it never saw.
+
+Calibration bug worth recording: `"the default port"` matched `port` as a hard
+verb (as in porting a codebase), sending a one-line lookup to the most expensive
+model. Bare "port" removed; only "porting X to" counts now. A twelve-word
+brevity discount was also demoting ordinary engineering tasks to the cheapest
+model, and is now eight.
+
+### Delegating on capability, not difficulty
+
+The rule is deliberately **not** "delegate hard things". It is "delegate what
+you have no tool for". A one-line edit routed through Claude is slower, spends
+the user's allowance, and puts a layer between them and the result — and in
+testing she correctly fixed a Go file herself rather than delegating it.
+
+**Plan mode is the default, for a reason about oversight.** When Freya makes a
+change with her own tools, the confirmation shows the exact edit. When she
+delegates in edit mode, the prompt can only say "Claude may change files" — a
+much worse thing to be asked to approve. So `claude_advise` asks Claude for a
+concrete plan and Freya carries it out through her own gated tools, keeping the
+preview meaningful. Edit mode remains for changes genuinely too large to apply
+by hand, stated plainly when used.
+
+- [x] `internal/claude/complexity.go` — classifier, plans, sticky resume
+- [x] `claude_advise` — capability-gap skill returning an executable plan
+- [x] Persona guidance: capability not difficulty, plan mode by default,
+      never delegate to avoid admitting ignorance
+
+## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222
 - [ ] Trailing shell prompt still appears after command output (cosmetic)

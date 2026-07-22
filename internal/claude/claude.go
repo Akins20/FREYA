@@ -122,6 +122,8 @@ type Session struct {
 	Turns    int       `json:"turns"`
 	CostUSD  float64   `json:"cost_usd"`
 	LastTask string    `json:"last_task"`
+	// Model records what the thread was started on, so resuming stays on it.
+	Model string `json:"model,omitempty"`
 }
 
 // Client runs Claude Code and remembers what it has been asked.
@@ -306,6 +308,11 @@ func (c *Client) record(r *Result, opts Options) {
 	s.Turns += max(r.Turns, 1)
 	s.CostUSD += r.CostUSD
 	s.LastTask = clip(opts.Prompt, 160)
+	if s.Model == "" {
+		if alias := aliasFor(r.Model); alias != "" {
+			s.Model = alias
+		}
+	}
 	if s.Label == "" {
 		s.Label = clip(opts.Prompt, 60)
 	}
