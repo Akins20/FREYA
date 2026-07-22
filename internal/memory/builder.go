@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/sentinel"
 )
 
 // ContextBuilder assembles the tiered prompt sent to the model.
@@ -22,6 +23,13 @@ type ContextBuilder struct {
 	Persona string
 	// RetrieveLimit caps how many archived documents may be pulled back in.
 	RetrieveLimit int
+	// SessionStart is when this run began, for temporal grounding.
+	SessionStart time.Time
+	// LastSeen is when the user was last active, for noticing long gaps.
+	LastSeen time.Time
+	// Insights supplies background observations from the reflection lenses.
+	// Placed in the volatile tail so it never disturbs the cached prefix.
+	Insights func() []string
 }
 
 // NewContextBuilder wires a builder with sensible defaults.
@@ -32,6 +40,7 @@ func NewContextBuilder(store *Store, index *Index, persona string) *ContextBuild
 		Budget:        DefaultBudget(),
 		Persona:       persona,
 		RetrieveLimit: 12,
+		SessionStart:  time.Now(),
 	}
 }
 
@@ -100,6 +109,19 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 		}
 	}
 
+	// --- Tier 6: reflection (most volatile of all) --------------------------
+	// Angles the lenses found that a single retrieval pass would not. Kept
+	// last so a changing insight cannot invalidate anything cached before it.
+	if b.Insights != nil {
+		if notes := b.Insights(); len(notes) > 0 {
+			text := "[Something you noticed while thinking, worth raising only if it " +
+				"genuinely helps — do not force it into the reply]\n- " +
+				strings.Join(notes, "\n- ")
+			msgs = append(msgs, llm.Message{Role: llm.RoleUser, Text: text})
+			snap.RetrievedTokens += EstimateTokens(text)
+		}
+	}
+
 	snap.TotalTokens = snap.IdentityTokens + snap.FactTokens + snap.EpisodeTokens +
 		snap.WorkingTokens + snap.RetrievedTokens
 	return system, msgs, snap
@@ -126,7 +148,12 @@ func (b *ContextBuilder) buildIdentity(budget int) string {
 		sb.WriteString(strings.Join(pinned, "\n"))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n\nCurrent time: %s", time.Now().Format("Mon 2 Jan 2006, 15:04 MST")))
+	// Temporal grounding. Knowing it is Wednesday evening, that the session has
+	// run four hours, or that they were last here a fortnight ago all change
+	// how a reply should read — none of it is worth an interruption, so it
+	// belongs in the prompt rather than in an observation.
+	sb.WriteString("\n\n# Now\n")
+	sb.WriteString(sentinel.TimeContext(time.Now(), b.SessionStart, b.LastSeen))
 	return truncateTokens(sb.String(), budget)
 }
 

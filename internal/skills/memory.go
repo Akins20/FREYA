@@ -7,6 +7,7 @@ import (
 
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/sentinel"
 )
 
 // RegisterMemory exposes Freya's long-term memory to the model itself.
@@ -149,4 +150,26 @@ func clip(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// Commitments scans stored facts for deadlines the user has mentioned.
+//
+// This is what turns memory from a transcript into something that works: the
+// user said once, weeks ago, that a dissertation was due — nobody should have
+// to ask for that to resurface at the right moment. Only facts phrased as
+// obligations qualify, so remembered dates in passing do not become nags.
+func Commitments(store *memory.Store) func() ([]sentinel.Commitment, error) {
+	return func() ([]sentinel.Commitment, error) {
+		var out []sentinel.Commitment
+		for _, f := range store.Facts() {
+			if deadline, ok := sentinel.ExtractDeadline(f.Text); ok {
+				out = append(out, sentinel.Commitment{
+					Key:      f.Key,
+					Text:     f.Text,
+					Deadline: deadline,
+				})
+			}
+		}
+		return out, nil
+	}
 }

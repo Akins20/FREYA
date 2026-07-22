@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/skills"
 )
 
@@ -29,6 +31,10 @@ type Agent struct {
 	// Guard, when set, is exposed for status reporting. Enforcement happens
 	// inside the skills themselves, not here.
 	Guard *guard.Guard
+	// Reflector re-reads memory from several angles after each exchange.
+	// Always run in the background: an assistant that pauses to be insightful
+	// is just slow.
+	Reflector *reflect.Reflector
 
 	// OnTool is called before and after each tool execution, for tracing.
 	OnTool func(event, name, detail string)
@@ -176,6 +182,28 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	}
 	result.Reply = reply
 	return result, nil
+}
+
+// reflectAfter re-examines memory once the reply is already on its way.
+//
+// Detached from the request context on purpose: the exchange is finished, and
+// cancelling the user's turn must not cancel the reflection that informs the
+// next one.
+func (a *Agent) reflectAfter(query, reply string) {
+	if a.Reflector == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		a.Reflector.Reflect(ctx, reflect.Input{
+			Query: query,
+			Reply: reply,
+			Store: a.Store,
+			Index: a.Builder.Index,
+			Now:   time.Now(),
+		})
+	}()
 }
 
 func (a *Agent) trace(event, name, detail string) {

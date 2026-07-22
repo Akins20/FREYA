@@ -18,6 +18,7 @@ import (
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
 )
@@ -119,6 +120,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	skills.RegisterMemory(reg, store, index)
 	skills.RegisterWeb(reg, os.Getenv("SERPER_API_KEY"))
 	skills.RegisterDev(reg, cfg.ProjectsDir)
+	skills.RegisterDesktop(reg, g)
 	if err := skills.RegisterNotes(reg, cfg.DataDir); err != nil {
 		return err
 	}
@@ -131,8 +133,26 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	}
 
 	builder := memory.NewContextBuilder(store, index, persona.Prompt(reg.Names()))
+	// Last activity grounds "you haven't been here in a while".
+	if turns := store.Turns(); len(turns) > 0 {
+		builder.LastSeen = turns[len(turns)-1].Timestamp
+	}
 	a := agent.New(provider, reg, store, builder, persona)
 	a.Guard = g
+
+	// Reflection lenses: several readings of the same memory, so what surfaces
+	// is experience rather than a single lookup.
+	refl := reflect.New()
+	refl.Add(&reflect.ConsequenceLens{Deadlines: deadlinesFrom(store)})
+	a.Reflector = refl
+	builder.Insights = func() []string {
+		var out []string
+		for _, i := range refl.Pending() {
+			out = append(out, i.Summary)
+		}
+		return out
+	}
+	skills.RegisterReflection(reg, refl)
 	if cfg.Verbose {
 		a.OnTool = func(event, name, detail string) {
 			switch event {
@@ -148,7 +168,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 
 	// Proactivity: watchers run in the background and only speak when an
 	// observation clears the salience bar.
-	sen := setupSentinel(cfg, reg)
+	sen := setupSentinel(cfg, reg, store)
 	skills.RegisterProactive(reg, sen)
 
 	// Ctrl-C cancels the in-flight request rather than killing the process.
@@ -314,6 +334,7 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice style voice Kore  pick a voice preset
   /voice style reset       restore defaults
   /voice voices            list voices, paces, tones
+  /reflect                 lenses and queued insights
   /proactive               status and queued observations
   /proactive quiet|balanced|companion
   /proactive check         drain the queue now
@@ -342,6 +363,21 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 	case "/skills":
 		names := a.Skills.Names()
 		fmt.Printf("  %d skills: %s\n", len(names), strings.Join(names, ", "))
+		return false, nil
+
+	case "/reflect":
+		if a.Reflector == nil {
+			return false, fmt.Errorf("reflection is not running")
+		}
+		fmt.Printf("  lenses: %s\n", strings.Join(a.Reflector.Lenses(), ", "))
+		pending := a.Reflector.Peek()
+		if len(pending) == 0 {
+			fmt.Println("  nothing queued")
+			return false, nil
+		}
+		for _, i := range pending {
+			fmt.Printf("  %s\n", i.Describe())
+		}
 		return false, nil
 
 	case "/proactive":

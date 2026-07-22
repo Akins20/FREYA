@@ -262,7 +262,60 @@ Cosmetic compliance rather than a real jailbreak — her values held and she
 refused the substantive parts — but she should not play along with the frame
 at all. Worth hardening.
 
-## Phase 7 — later
+## Phase 7 — situational awareness ✅
+
+- [x] `TemporalWatcher` — late-night working, long unbroken sessions
+- [x] `TimeContext` in the prompt — day, part of day, session length, gap since last seen
+- [x] `ProcessWatcher` — load normalised per core, single-process CPU hogs
+- [x] `IdleWatcher` — away/return detection; xprintidle when present, otherwise
+      input-device interrupt counters from /proc, so no package is required
+- [x] `CommitmentWatcher` + `ExtractDeadline` — scans remembered facts for
+      obligations and escalates as the date nears (30d → 7d → 3d → 1d → overdue)
+
+Deadline extraction only fires on obligation words (due, deadline, submit,
+exam...). Promoting every remembered date into a countdown would turn memory
+into a nag.
+
+## Phase 8 — reflection lenses ✅
+
+The ask was up to 20 background personalities reading memory and offering
+perspectives. Built as six **lenses** instead, and the reasoning is in the
+package doc: agents differing only by persona label, over one model and one
+memory, converge — you get twenty rephrasings of three observations at twenty
+times the cost, with no way to threshold subjective overlapping opinions.
+
+Diversity comes from the **input**, not the costume. Each lens uses a different
+search strategy, and most need no model call at all:
+
+| lens | question it asks |
+|---|---|
+| contradiction | does this reverse something already settled? |
+| precedent | was this tried before, and how did it end? |
+| pattern | is this the Nth time this month? |
+| staleness | is a remembered fact old enough to be wrong? |
+| consequence | is this optional work against a live deadline? |
+| arc | how has this topic been going emotionally? |
+
+Arbitration reuses the sentinel's discipline: weight threshold 0.55, strongest
+finding wins a key collision, nothing repeats within 24h, and **at most one
+insight per exchange** — two competing interjections is the mess this exists to
+avoid. Lenses run *after* the reply, never in front of it.
+
+- [x] `internal/reflect` — Reflector, six lenses, arbitration
+- [x] Injected into the volatile tail of the prompt so the cached prefix survives
+- [x] `recall_perspectives` skill + `/reflect`
+- [x] 18 tests
+
+### Bugs found
+
+1. **Contradiction lens missed the obvious case.** It required matching polarity
+   word-pairs across query and fact, so "never MongoDB" versus "switch to
+   MongoDB" scored nothing. Redesigned around prohibition extraction: what did
+   the fact rule *out*, and does the request propose it?
+2. **A lens ran twice.** `New()` installs defaults and the caller added a
+   better-configured ConsequenceLens, so both ran. `Add` now replaces by name.
+
+## Phase 9 — later
 
 - [ ] Model-written episode summaries (replace mechanical distillation)
 - [ ] Streaming responses (needed for low-latency TTS)

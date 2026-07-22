@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"strings"
 
+	"time"
+
 	"github.com/akins/jarvis/internal/config"
+	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
 )
 
 // setupSentinel builds the proactivity engine and its watchers.
-func setupSentinel(cfg *config.Config, reg *skills.Registry) *sentinel.Sentinel {
+func setupSentinel(cfg *config.Config, reg *skills.Registry, store *memory.Store) *sentinel.Sentinel {
 	s := sentinel.New(sentinel.ParseChattiness(cfg.Chattiness), nil)
 
 	s.Add(sentinel.DiskWatcher{})
@@ -22,6 +26,10 @@ func setupSentinel(cfg *config.Config, reg *skills.Registry) *sentinel.Sentinel 
 		DataDir: cfg.DataDir,
 		Due:     skills.DueReminders(cfg.DataDir),
 	})
+	s.Add(sentinel.TemporalWatcher{SessionStart: time.Now()})
+	s.Add(sentinel.ProcessWatcher{})
+	s.Add(&sentinel.IdleWatcher{})
+	s.Add(sentinel.CommitmentWatcher{Commitments: skills.Commitments(store)})
 	return s
 }
 
@@ -91,5 +99,22 @@ func proactiveCommand(rest string, s *sentinel.Sentinel, cfg *config.Config) err
 
 	default:
 		return fmt.Errorf("unknown option %q — try quiet, balanced, companion, check", sub)
+	}
+}
+
+// deadlinesFrom bridges remembered commitments into the consequence lens,
+// so "let's refactor everything" three days before a submission gets noticed.
+func deadlinesFrom(store *memory.Store) func() ([]reflect.Deadline, error) {
+	commitments := skills.Commitments(store)
+	return func() ([]reflect.Deadline, error) {
+		items, err := commitments()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]reflect.Deadline, 0, len(items))
+		for _, c := range items {
+			out = append(out, reflect.Deadline{Text: c.Text, When: c.Deadline})
+		}
+		return out, nil
 	}
 }

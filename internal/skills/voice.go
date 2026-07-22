@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/voice"
 )
@@ -175,6 +176,44 @@ func RegisterProactive(r *Registry, s ObservationSource) {
 				return "Nothing outstanding. Everything looks normal.", nil
 			}
 			return strings.Join(items, "\n"), nil
+		},
+	})
+}
+
+// InsightSource is the reflector, narrowed to what the skill needs.
+type InsightSource interface {
+	Peek() []reflect.Insight
+	Lenses() []string
+}
+
+// RegisterReflection lets Freya consult her own background reading of memory.
+func RegisterReflection(r *Registry, src InsightSource) {
+	if src == nil {
+		return
+	}
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "recall_perspectives",
+			Description: "Consult the background lenses that re-read memory from " +
+				"different angles — contradictions with past decisions, earlier " +
+				"attempts that failed, recurring patterns, facts that may have gone " +
+				"stale, deadline conflicts, and how the user has been feeling about " +
+				"a topic. Use when a request seems familiar or when you suspect " +
+				"there is context you are missing.",
+			Params: llm.ObjectSchema(nil),
+		},
+		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+			pending := src.Peek()
+			if len(pending) == 0 {
+				return "No additional angles surfaced. Lenses active: " +
+					strings.Join(src.Lenses(), ", "), nil
+			}
+			var sb strings.Builder
+			for _, i := range pending {
+				sb.WriteString(i.Describe())
+				sb.WriteString("\n")
+			}
+			return strings.TrimSpace(sb.String()), nil
 		},
 	})
 }
