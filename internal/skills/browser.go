@@ -87,6 +87,12 @@ func (t *Tabs) list() []*openTab {
 
 // RegisterBrowser adds browser skills.
 func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
+	// History and page interaction live in their own files; they are part of the
+	// same capability and are registered together so a caller cannot get one
+	// without the other.
+	RegisterBrowserHistory(r)
+	RegisterBrowserInteract(r, g, tabs)
+
 	if g == nil || tabs == nil {
 		return
 	}
