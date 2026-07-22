@@ -116,7 +116,19 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 	if oneShot != "" {
 		return ask(ctx, a, cfg, oneShot)
 	}
-	return repl(ctx, a, cfg, store, index, persona)
+
+	// Voice is optional: a missing recorder or synthesiser must not stop a
+	// text session, so failures here are reported and set aside.
+	vs, verr := setupVoice(cfg, provider)
+	if verr != nil {
+		if cfg.Voice {
+			fmt.Fprintf(os.Stderr, "%svoice unavailable: %v%s\n", cYellow, verr, cReset)
+		}
+		vs = nil
+	} else if cfg.Voice {
+		vs.enabled = true
+	}
+	return repl(ctx, a, cfg, store, index, persona, vs)
 }
 
 func buildProvider(cfg *config.Config) (llm.Provider, error) {
@@ -161,10 +173,14 @@ func ask(ctx context.Context, a *agent.Agent, cfg *config.Config, input string) 
 }
 
 func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
-	store *memory.Store, index *memory.Index, persona agent.Persona) error {
+	store *memory.Store, index *memory.Index, persona agent.Persona,
+	vs *voiceState) error {
 
 	fmt.Printf("%s%s%s — %s, %d skills, %d turns remembered\n",
 		cBold, persona.Name, cReset, a.Provider.Name(), len(a.Skills.Names()), store.TurnCount())
+	if vs != nil {
+		fmt.Printf("%svoice: %s%s\n", cDim, vs.describe(), cReset)
+	}
 	fmt.Printf("%stype /help for commands, /quit to leave%s\n\n", cDim, cReset)
 
 	in := bufio.NewScanner(os.Stdin)
@@ -178,11 +194,17 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 		}
 		line := strings.TrimSpace(in.Text())
 		if line == "" {
+			// In voice mode a bare Enter is the push-to-talk trigger.
+			if vs != nil && vs.enabled {
+				if err := spokenTurn(ctx, a, cfg, vs); err != nil {
+					fmt.Printf("%s%v%s\n", cRed, err, cReset)
+				}
+			}
 			continue
 		}
 
 		if strings.HasPrefix(line, "/") {
-			quit, err := command(line, a, cfg, store, index)
+			quit, err := command(ctx, line, a, cfg, store, index, vs)
 			if err != nil {
 				fmt.Printf("%s%v%s\n", cRed, err, cReset)
 			}
@@ -213,8 +235,8 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 }
 
 // command handles /-prefixed REPL directives. Returns true to exit.
-func command(line string, a *agent.Agent, cfg *config.Config,
-	store *memory.Store, index *memory.Index) (bool, error) {
+func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Config,
+	store *memory.Store, index *memory.Index, vs *voiceState) (bool, error) {
 
 	cmd, rest, _ := strings.Cut(line, " ")
 	rest = strings.TrimSpace(rest)
@@ -234,6 +256,13 @@ func command(line string, a *agent.Agent, cfg *config.Config,
   /memory                  memory statistics
   /context                 token accounting for the last exchange
   /skills                  list registered skills
+  /voice                   voice status
+  /voice on | off          spoken mode (Enter = push to talk)
+  /voice enroll [name]     record a voiceprint
+  /voice test              score your voice against the print
+  /voice policy off|warn|enforce
+  /voice threshold <0-1>   tune acceptance
+  /voice say <text>        speak something
   /verbose                 toggle tool tracing
   /quit                    exit
 
@@ -246,6 +275,14 @@ func command(line string, a *agent.Agent, cfg *config.Config,
 
 	case "/persona":
 		return false, personaCommand(rest, a, cfg)
+
+	case "/voice":
+		if vs == nil {
+			return false, fmt.Errorf("voice is unavailable on this machine; " +
+				"install sox and espeak-ng")
+		}
+		_, err := voiceCommand(ctx, rest, vs, a)
+		return false, err
 
 	case "/skills":
 		names := a.Skills.Names()

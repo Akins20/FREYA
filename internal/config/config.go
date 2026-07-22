@@ -33,6 +33,25 @@ type Config struct {
 
 	// Verbose echoes tool calls and their results to the terminal.
 	Verbose bool
+
+	// --- voice ---
+
+	// Voice starts the session in spoken mode.
+	Voice bool
+	// STT selects the speech recogniser: "gemini" (default) or "whisper".
+	STT string
+	// TTS selects the synthesiser: "espeak", "piper" or "none".
+	TTS string
+	// VoiceName is an engine-specific voice, e.g. espeak's "en-gb".
+	VoiceName string
+	// WhisperModel is the ggml model path for offline recognition.
+	WhisperModel string
+	// PiperModel is the .onnx voice path for neural synthesis.
+	PiperModel string
+	// VoicePolicy governs unrecognised speakers: "off", "warn" or "enforce".
+	// Defaults to warn, because speaker verification is not accurate enough
+	// here to lock anyone out — see internal/voice/verify.go.
+	VoicePolicy string
 }
 
 // Load reads configuration from .env (if present) and the environment.
@@ -54,6 +73,14 @@ func Load() (*Config, error) {
 		ProjectsDir:  os.Getenv("FREYA_PROJECTS_DIR"),
 		Address:      os.Getenv("FREYA_ADDRESS"),
 		Verbose:      isTruthy(os.Getenv("FREYA_VERBOSE")),
+
+		Voice:        isTruthy(os.Getenv("FREYA_VOICE")),
+		STT:          os.Getenv("FREYA_STT"),
+		TTS:          os.Getenv("FREYA_TTS"),
+		VoiceName:    os.Getenv("FREYA_VOICE_NAME"),
+		WhisperModel: os.Getenv("FREYA_WHISPER_MODEL"),
+		PiperModel:   os.Getenv("FREYA_PIPER_MODEL"),
+		VoicePolicy:  os.Getenv("FREYA_VOICE_POLICY"),
 	}
 
 	if cfg.DataDir == "" {

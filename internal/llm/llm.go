@@ -92,6 +92,18 @@ type Provider interface {
 	Chat(ctx context.Context, req Request) (*Response, error)
 }
 
+// AudioTranscriber is an optional capability: a Provider whose model accepts
+// audio natively and can return a transcript.
+//
+// It is kept separate from Provider so that text-only backends need not know
+// audio exists. Callers type-assert for it and fall back to a local engine
+// when the assertion fails.
+type AudioTranscriber interface {
+	// TranscribeAudio returns a verbatim transcript of the supplied audio.
+	// mimeType is a value such as "audio/ogg", "audio/mp3" or "audio/wav".
+	TranscribeAudio(ctx context.Context, audio []byte, mimeType string) (string, error)
+}
+
 // ErrNoCredentials signals that a provider was selected but has no API key.
 var ErrNoCredentials = errors.New("llm: no API credentials configured")
 

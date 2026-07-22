@@ -73,16 +73,65 @@ Living checklist. Updated as work lands.
    apology and threw away every result gathered. Now makes a final tool-free
    call so the model must answer from what it has. Cap raised 8 → 12.
 
-## Phase 3 — voice (next)
+## Phase 3 — voice ✅
 
-- [ ] Install `cmake` (required to build whisper.cpp and piper)
-- [ ] Build whisper.cpp; fetch `base.en` model to ext4, not the external drive
-- [ ] `internal/voice/stt.go` — whisper.cpp binding or CLI shim
-- [ ] Build/fetch piper + a voice model
-- [ ] `internal/voice/tts.go` — piper shim, streaming sentence-by-sentence
-- [ ] Push-to-talk hotkey capture
+Plan changed on measurement. Local Whisper was the original design; benchmarking
+killed it. Gemini already holds the conversation, accepts audio natively, and on
+this hardware is both faster and more accurate than on-device inference. Neither
+cmake nor whisper.cpp nor any model download was needed.
+
+Transcription latency by upload format, 6s clip, gemini-3.1-flash-lite:
+
+| format | size | round trip | transcript |
+|---|---|---|---|
+| wav | 190 KB | 8.34 s | perfect |
+| mp3 | 18 KB | 2.89 s | perfect |
+| **ogg** | **31 KB** | **1.83 s** | **perfect** |
+
+Upload dominates latency, so recordings are encoded to Ogg during capture.
+
+- [x] `llm.AudioTranscriber` — optional provider capability, Gemini implements it
+- [x] `voice/record.go` — sox capture, auto-stops after 1.5s of silence
+- [x] `voice/stt.go` — GeminiSTT (default) + WhisperSTT (offline fallback)
+- [x] `voice/tts.go` — espeak (installed) + piper (optional), sentence streaming
+- [x] `voice/session.go` — listen → think → speak loop
+- [x] `voice/mfcc.go` — pure-Go FFT, mel filterbank, cepstral embedding
+- [x] `voice/verify.go` — speaker profile, enrolment, policy gate
+- [x] REPL: `/voice on|off|enroll|test|policy|threshold|say`, Enter = push to talk
+- [x] Verified live: espeak TTS audible, GeminiSTT 2.24s on the real code path
+
+### Speaker verification: implemented, NOT validated
+
+The honest result. Measured on real audio (four espeak voices, one enrolled):
+
+| voice | cosine | population |
+|---|---|---|
+| OWNER (unseen phrase) | 0.981 | 0.561 |
+| stranger en-us | 0.963 | 0.435 |
+| stranger en-sc | 0.980 | **0.539** |
+| stranger en+f3 | 0.722 | 0.219 |
+
+The nearest impostor sits 0.022 below the owner. **No threshold separates them.**
+Two fixes already landed and helped enormously — dropping cepstral coefficient
+c0 (loudness, not identity) and centring the embedding before normalising, which
+together widened the synthetic-audio margin from 0.016 to 0.480 — but real
+speech still defeats it.
+
+Caveat in its favour: all four test voices come from the same formant
+synthesiser and share machinery real vocal tracts would not. Human voices may
+separate better. That is a hypothesis, not a result.
+
+Therefore: default policy is `warn`, never `enforce`. `/voice test` exists so the
+claim can be measured against a real second person before anyone relies on it.
+
+Cost is not the problem — verification benchmarks at **17.6 ms** per utterance
+against a ~1,830 ms STT round trip, under 1% of the pipeline.
+
+- [ ] Validate with two real human voices via `/voice test`
+- [ ] If it fails there too: neural speaker embedding (ECAPA-TDNN via ONNX).
+      The `Verifier` interface exists so this drops in without touching the loop.
 - [ ] Barge-in: stop speaking when the user starts talking
-- [ ] Optional wake word ("Hey Freya") once push-to-talk is solid
+- [ ] Wake word ("Hey Freya") once push-to-talk is proven
 
 ## Phase 4 — later
 
