@@ -3,12 +3,16 @@ package docs
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Writing Office documents.
@@ -37,6 +41,12 @@ type Block struct {
 	// Rows holds table data, first row treated as the header.
 	Rows [][]string
 }
+
+// Title builds a document title block.
+func Title(text string) Block { return Block{Kind: "title", Text: text} }
+
+// Numbered builds a numbered list item.
+func Numbered(text string) Block { return Block{Kind: "numbered", Text: text} }
 
 // Heading builds a heading block.
 func Heading(level int, text string) Block {
@@ -73,16 +83,23 @@ const docxContentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
 </Types>`
+
+// docxDocumentRels links the document to its styles and numbering parts.
+// Without these relationships Word ignores both and silently falls back to
+// defaults, which looks exactly like the styling never having been written.
+const docxDocumentRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+</Relationships>`
 
 const docxRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
-
-// headingSize maps a heading level to half-points, which is the unit OOXML
-// uses for w:sz. 32 half-points is 16pt.
-var headingSize = map[int]int{1: 32, 2: 28, 3: 24}
 
 // WriteDOCX creates a Word document from blocks.
 func WriteDOCX(path string, blocks []Block) error {
@@ -95,19 +112,33 @@ func WriteDOCX(path string, blocks []Block) error {
 			if level < 1 || level > 3 {
 				level = 1
 			}
-			// Direct formatting rather than named styles: a styles part would
-			// have to be shipped and kept consistent, and bold-and-larger reads
-			// correctly everywhere without one.
+			// A named style, not bold-and-bigger. This is what puts the heading
+			// in the navigation pane and lets Word build a table of contents.
 			fmt.Fprintf(&body,
-				`<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>`+
-					`<w:r><w:rPr><w:b/><w:sz w:val="%d"/></w:rPr>`+
-					`<w:t xml:space="preserve">%s</w:t></w:r></w:p>`,
-				headingSize[level], esc(b.Text))
+				`<w:p><w:pPr><w:pStyle w:val="Heading%d"/></w:pPr>`+
+					`<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>`,
+				level, esc(b.Text))
+
+		case "title":
+			fmt.Fprintf(&body,
+				`<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>`+
+					`<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>`, esc(b.Text))
 
 		case "bullet":
+			// A real list item: numPr references the bullet definition in
+			// numbering.xml, so Word treats it as a list rather than a
+			// paragraph that happens to start with a dot character.
 			fmt.Fprintf(&body,
-				`<w:p><w:pPr><w:ind w:left="720"/></w:pPr><w:r>`+
-					`<w:t xml:space="preserve">• %s</w:t></w:r></w:p>`,
+				`<w:p><w:pPr><w:pStyle w:val="ListParagraph"/>`+
+					`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>`+
+					`<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>`,
+				esc(b.Text))
+
+		case "numbered":
+			fmt.Fprintf(&body,
+				`<w:p><w:pPr><w:pStyle w:val="ListParagraph"/>`+
+					`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr>`+
+					`<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>`,
 				esc(b.Text))
 
 		case "table":
@@ -131,9 +162,12 @@ func WriteDOCX(path string, blocks []Block) error {
 		`</w:body></w:document>`
 
 	return writeZip(path, map[string]string{
-		"[Content_Types].xml": docxContentTypes,
-		"_rels/.rels":         docxRels,
-		"word/document.xml":   document,
+		"[Content_Types].xml":          docxContentTypes,
+		"_rels/.rels":                  docxRels,
+		"word/_rels/document.xml.rels": docxDocumentRels,
+		"word/styles.xml":              docxStyles,
+		"word/numbering.xml":           docxNumbering,
+		"word/document.xml":            document,
 	})
 }
 
@@ -142,18 +176,29 @@ func docxTable(rows [][]string) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(`<w:tbl><w:tblPr><w:tblBorders>`)
+	sb.WriteString(`<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/>`)
+	sb.WriteString(`<w:tblW w:w="5000" w:type="pct"/><w:tblBorders>`)
 	for _, edge := range []string{"top", "left", "bottom", "right", "insideH", "insideV"} {
-		fmt.Fprintf(&sb, `<w:%s w:val="single" w:sz="4" w:color="999999"/>`, edge)
+		fmt.Fprintf(&sb, `<w:%s w:val="single" w:sz="4" w:color="8496B0"/>`, edge)
 	}
 	sb.WriteString(`</w:tblBorders></w:tblPr>`)
 
 	for i, row := range rows {
-		sb.WriteString(`<w:tr>`)
+		// Repeat the header on every page rather than leaving later pages
+		// with an unlabelled grid.
+		if i == 0 {
+			sb.WriteString(`<w:tr><w:trPr><w:tblHeader/></w:trPr>`)
+		} else {
+			sb.WriteString(`<w:tr>`)
+		}
 		for _, cell := range row {
-			sb.WriteString(`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p><w:r>`)
+			sb.WriteString(`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/>`)
 			if i == 0 {
-				sb.WriteString(`<w:rPr><w:b/></w:rPr>`) // header row
+				sb.WriteString(`<w:shd w:val="clear" w:fill="2E5496"/>`)
+			}
+			sb.WriteString(`</w:tcPr><w:p><w:r>`)
+			if i == 0 {
+				sb.WriteString(`<w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr>`)
 			}
 			fmt.Fprintf(&sb, `<w:t xml:space="preserve">%s</w:t></w:r></w:p></w:tc>`, esc(cell))
 		}
@@ -170,6 +215,7 @@ const xlsxContentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 %s</Types>`
 
 const xlsxRootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -194,7 +240,10 @@ func WriteXLSX(path string, sheets []Sheet) error {
 		return fmt.Errorf("xlsx: no sheets supplied")
 	}
 
-	parts := map[string]string{"_rels/.rels": xlsxRootRels}
+	parts := map[string]string{
+		"_rels/.rels":   xlsxRootRels,
+		"xl/styles.xml": xlsxStyles,
+	}
 
 	var overrides, workbookSheets, workbookRels strings.Builder
 	for i, s := range sheets {
@@ -226,12 +275,16 @@ func WriteXLSX(path string, sheets []Sheet) error {
 		fmt.Fprintf(&workbookRels,
 			`<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet%d.xml"/>`,
 			n, n)
+		_ = n
 	}
 
 	parts["[Content_Types].xml"] = fmt.Sprintf(xlsxContentTypes, overrides.String())
 	parts["xl/workbook.xml"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <sheets>` + workbookSheets.String() + `</sheets></workbook>`
+	// The styles part needs its own relationship or Excel ignores every format.
+	fmt.Fprintf(&workbookRels,
+		`<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`)
 	parts["xl/_rels/workbook.xml.rels"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 		workbookRels.String() + `</Relationships>`
@@ -242,22 +295,38 @@ func WriteXLSX(path string, sheets []Sheet) error {
 func xlsxSheet(rows [][]string) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+
+	// Element order is fixed by the schema: sheetViews, then cols, then
+	// sheetData. Out of order, Excel rejects the file outright.
+	if len(rows) > 1 {
+		sb.WriteString(freezeHeaderXML)
+	}
+	sb.WriteString(colsXML(columnWidths(rows)))
+	sb.WriteString(`<sheetData>`)
 
 	for r, row := range rows {
-		fmt.Fprintf(&sb, `<row r="%d">`, r+1)
+		isHeader := r == 0 && len(rows) > 1
+		fmt.Fprintf(&sb, `<row r="%d"`, r+1)
+		if isHeader {
+			sb.WriteString(` ht="20" customHeight="1"`)
+		}
+		sb.WriteString(`>`)
+
 		for c, cell := range row {
 			ref := columnName(c) + strconv.Itoa(r+1)
+			style := cellStyle(cell, isHeader)
 
 			// A value that is genuinely numeric is stored as a number, so the
 			// spreadsheet can actually compute with it.
-			if isNumeric(cell) {
-				fmt.Fprintf(&sb, `<c r="%s"><v>%s</v></c>`, ref, strings.TrimSpace(cell))
+			if isNumeric(cell) && !isHeader {
+				fmt.Fprintf(&sb, `<c r="%s" s="%d"><v>%s</v></c>`,
+					ref, style, strings.TrimSpace(cell))
 				continue
 			}
 			fmt.Fprintf(&sb,
-				`<c r="%s" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`,
-				ref, esc(cell))
+				`<c r="%s" s="%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`,
+				ref, style, esc(cell))
 		}
 		sb.WriteString(`</row>`)
 	}
@@ -344,6 +413,7 @@ func writeZip(path string, parts map[string]string) error {
 // output.
 func ParseBlocks(md string) []Block {
 	var blocks []Block
+	var seenTitle bool
 	lines := strings.Split(md, "\n")
 
 	var tableRows [][]string
@@ -387,9 +457,19 @@ func ParseBlocks(md string) []Block {
 		case strings.HasPrefix(trimmed, "## "):
 			blocks = append(blocks, Heading(2, strings.TrimPrefix(trimmed, "## ")))
 		case strings.HasPrefix(trimmed, "# "):
-			blocks = append(blocks, Heading(1, strings.TrimPrefix(trimmed, "# ")))
+			text := strings.TrimPrefix(trimmed, "# ")
+			// The first top-level heading is the document title; later ones are
+			// section headings. This is what people mean by markdown structure.
+			if !seenTitle {
+				seenTitle = true
+				blocks = append(blocks, Title(text))
+			} else {
+				blocks = append(blocks, Heading(1, text))
+			}
 		case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "* "):
 			blocks = append(blocks, Bullet(strings.TrimSpace(trimmed[2:])))
+		case numberedItem.MatchString(trimmed):
+			blocks = append(blocks, Numbered(numberedItem.ReplaceAllString(trimmed, "")))
 		default:
 			// Strip emphasis markers: they would otherwise be read aloud as
 			// asterisks and printed literally in the document.
@@ -400,9 +480,69 @@ func ParseBlocks(md string) []Block {
 	return blocks
 }
 
+// numberedItem matches "1. ", "2) " and similar list markers.
+var numberedItem = regexp.MustCompile(`^\d+[.)]\s+`)
+
 func stripEmphasis(s string) string {
 	for _, marker := range []string{"**", "__", "*", "_", "`"} {
 		s = strings.ReplaceAll(s, marker, "")
 	}
 	return s
+}
+
+// --- pdf --------------------------------------------------------------------
+
+// WritePDF produces a PDF by rendering a Word document through LibreOffice.
+//
+// Writing PDF directly would mean implementing font metrics, text layout and
+// the content-stream operators — and the result would still look worse than
+// what a real layout engine produces from the same content. Building the docx
+// first and converting reuses every style already defined, so the PDF and the
+// Word file are genuinely the same document.
+func WritePDF(path string, blocks []Block) error {
+	if _, err := exec.LookPath("soffice"); err != nil {
+		return fmt.Errorf("PDF export needs LibreOffice (soffice) on PATH")
+	}
+
+	outDir := filepath.Dir(path)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
+	// Stage the intermediate in a private directory so a concurrent conversion
+	// cannot collide on the name, and so a failure leaves nothing behind.
+	tmpDir, err := os.MkdirTemp("", "freya-pdf-")
+	if err != nil {
+		return fmt.Errorf("temp directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	intermediate := filepath.Join(tmpDir, base+".docx")
+	if err := WriteDOCX(intermediate, blocks); err != nil {
+		return fmt.Errorf("build intermediate document: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "soffice", "--headless", "--norestore",
+		"--convert-to", "pdf", intermediate, "--outdir", tmpDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("PDF conversion timed out")
+		}
+		return fmt.Errorf("PDF conversion failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	produced := filepath.Join(tmpDir, base+".pdf")
+	if _, err := os.Stat(produced); err != nil {
+		return fmt.Errorf("LibreOffice reported success but produced no PDF")
+	}
+
+	data, err := os.ReadFile(produced)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }

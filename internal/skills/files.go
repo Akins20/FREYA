@@ -871,6 +871,95 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 
 	r.Register(Skill{
 		Tool: llm.Tool{
+			Name: "pdf_write",
+			Description: "Create a PDF. Supply the body as markdown, exactly as for " +
+				"docx_write — it is laid out as a Word document and then rendered, so " +
+				"the PDF and a docx of the same content look identical.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"path":    {Type: "string", Description: "Where to write the .pdf."},
+				"content": {Type: "string", Description: "Document body as markdown."},
+				"reason":  {Type: "string", Description: "Why, shown when confirming."},
+			}, "path", "content"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			path := expand(argString(args, "path"))
+			content := argRaw(args, "content")
+			if path == "" || content == "" {
+				return "", fmt.Errorf("path and content are required")
+			}
+			if !strings.HasSuffix(strings.ToLower(path), ".pdf") {
+				path += ".pdf"
+			}
+
+			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},
+				Reason: argString(args, "reason")}
+			return g.Run(ctx, action, func(context.Context) (string, error) {
+				blocks := docs.ParseBlocks(content)
+				if err := docs.WritePDF(path, blocks); err != nil {
+					return "", err
+				}
+				info, _ := os.Stat(path)
+				var size int64
+				if info != nil {
+					size = info.Size()
+				}
+				return fmt.Sprintf("Wrote %s — %d blocks, %s.",
+					path, len(blocks), humanBytes(size)), nil
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "document_convert",
+			Description: "Convert a document between formats — docx, pdf, odt, xlsx, " +
+				"csv, html, txt. Use for 'turn this into a PDF' on a file that already " +
+				"exists, rather than regenerating it.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"path": {Type: "string", Description: "The existing file."},
+				"format": {Type: "string", Description: "Target format.",
+					Enum: []string{"pdf", "docx", "odt", "xlsx", "csv", "html", "txt"}},
+				"destination": {Type: "string", Description: "Optional output directory. " +
+					"Defaults to alongside the source."},
+			}, "path", "format"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			src := expand(argString(args, "path"))
+			format := argString(args, "format")
+			if src == "" || format == "" {
+				return "", fmt.Errorf("path and format are required")
+			}
+			if _, err := os.Stat(src); err != nil {
+				return "", fmt.Errorf("no such file: %s", src)
+			}
+			outDir := expand(argString(args, "destination"))
+			if outDir == "" {
+				outDir = filepath.Dir(src)
+			}
+			target := filepath.Join(outDir,
+				strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))+"."+format)
+
+			action := guard.Action{Kind: guard.KindWrite, Paths: []string{target},
+				Reason: fmt.Sprintf("convert %s to %s", filepath.Base(src), format)}
+			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				if !have("soffice") {
+					return "", fmt.Errorf("conversion needs LibreOffice (soffice)")
+				}
+				if _, err := run(ctx, 180*time.Second, "soffice", "--headless",
+					"--norestore", "--convert-to", format, src, "--outdir", outDir); err != nil {
+					return "", err
+				}
+				info, err := os.Stat(target)
+				if err != nil {
+					return "", fmt.Errorf("conversion reported success but produced no %s", format)
+				}
+				return fmt.Sprintf("Converted to %s (%s).", target, humanBytes(info.Size())), nil
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
 			Name: "xlsx_write",
 			Description: "Create an Excel spreadsheet. Supply rows as CSV text; use " +
 				"'---SHEET: Name---' on its own line to start a new sheet. Values that " +

@@ -16,11 +16,15 @@ import (
 	"github.com/akins/jarvis/internal/skills"
 )
 
-// maxToolRounds bounds one exchange. Genuine exploration — list projects, check
-// git, grep for the error — legitimately runs several rounds deep, so the cap
-// sits well above typical use; it exists to stop a malfunctioning model burning
-// tokens indefinitely, not to curb normal work.
-const maxToolRounds = 12
+// maxToolRounds bounds one exchange. Genuine work — resolve a folder, read
+// several documents, research a point, then write two files — legitimately runs
+// deep, and a cap that interrupts real tasks is worse than no cap at all. This
+// sits well above typical use; it exists only to stop a malfunctioning model
+// burning tokens indefinitely.
+//
+// Concurrent execution makes a higher ceiling cheap: a round now costs one
+// model call regardless of how many tools it requests.
+const maxToolRounds = 25
 
 // Agent is one configured assistant.
 type Agent struct {

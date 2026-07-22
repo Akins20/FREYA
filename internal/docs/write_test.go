@@ -224,10 +224,12 @@ Closing **bold** paragraph.`
 
 	blocks := ParseBlocks(md)
 
-	var headings, bullets, tables int
+	var titles, headings, bullets, tables int
 	var sawTableData bool
 	for _, b := range blocks {
 		switch b.Kind {
+		case "title":
+			titles++
 		case "heading":
 			headings++
 		case "bullet":
@@ -251,8 +253,14 @@ Closing **bold** paragraph.`
 			}
 		}
 	}
-	if headings != 2 {
-		t.Errorf("headings = %d, want 2", headings)
+	// The first top-level heading becomes the document Title; the "## Section"
+	// becomes a Heading. That distinction is what makes a generated document
+	// look like a document rather than a wall of same-sized bold text.
+	if titles != 1 {
+		t.Errorf("titles = %d, want 1 (the leading # becomes the title)", titles)
+	}
+	if headings != 1 {
+		t.Errorf("headings = %d, want 1", headings)
 	}
 	if bullets != 2 {
 		t.Errorf("bullets = %d, want 2", bullets)
@@ -280,4 +288,142 @@ func TestWriteToNestedPathCreatesParents(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestDOCXUsesNamedStyles is the difference between a document that looks like
+// it has headings and one that actually has them. Without pStyle and outlineLvl,
+// Word's navigation pane is empty and no table of contents can be generated.
+func TestDOCXUsesNamedStyles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "styled.docx")
+	if err := WriteDOCX(path, []Block{
+		Title("Assignment"),
+		Heading(1, "Introduction"),
+		Bullet("a point"),
+		Numbered("first step"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := readParts(t, path)
+
+	doc := parts["word/document.xml"]
+	for _, want := range []string{
+		`w:pStyle w:val="Title"`,
+		`w:pStyle w:val="Heading1"`,
+		`w:numId w:val="1"`, // real bullet list
+		`w:numId w:val="2"`, // real numbered list
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("document.xml missing %s", want)
+		}
+	}
+	// A literal bullet character means the list is fake.
+	if strings.Contains(doc, "<w:t xml:space=\"preserve\">• ") {
+		t.Error("bullets are typed characters, not list items")
+	}
+
+	styles, ok := parts["word/styles.xml"]
+	if !ok {
+		t.Fatal("no styles.xml — Word will fall back to defaults")
+	}
+	if !strings.Contains(styles, `w:outlineLvl`) {
+		t.Error("headings have no outline level, so they will not appear in the navigation pane")
+	}
+	if !strings.Contains(styles, `w:name w:val="heading 1"`) {
+		t.Error("style is not mapped to Word's built-in Heading 1 identity")
+	}
+	if _, ok := parts["word/numbering.xml"]; !ok {
+		t.Error("no numbering.xml — list references will dangle")
+	}
+	if rels, ok := parts["word/_rels/document.xml.rels"]; !ok {
+		t.Error("no document relationships — styles and numbering will be ignored")
+	} else if !strings.Contains(rels, "styles.xml") || !strings.Contains(rels, "numbering.xml") {
+		t.Error("relationships do not reference both parts")
+	}
+}
+
+// TestXLSXIsStyled covers the things that make a spreadsheet readable rather
+// than merely correct.
+func TestXLSXIsStyled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "styled.xlsx")
+	if err := WriteXLSX(path, []Sheet{{Name: "Data", Rows: [][]string{
+		{"A Fairly Long Header Label", "Throughput"},
+		{"Raft", "4500"},
+		{"Paxos", "2100"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := readParts(t, path)
+
+	if _, ok := parts["xl/styles.xml"]; !ok {
+		t.Fatal("no styles.xml — every format is ignored")
+	}
+	rels := parts["xl/_rels/workbook.xml.rels"]
+	if !strings.Contains(rels, "styles.xml") {
+		t.Error("styles part is not referenced, so Excel will not load it")
+	}
+
+	sheet := parts["xl/worksheets/sheet1.xml"]
+	if !strings.Contains(sheet, "<cols>") {
+		t.Error("no column widths — long labels will sit truncated on open")
+	}
+	if !strings.Contains(sheet, `state="frozen"`) {
+		t.Error("header row is not frozen")
+	}
+	if !strings.Contains(sheet, `s="1"`) {
+		t.Error("header cells carry no header style")
+	}
+	// Element order is fixed by the schema; out of order Excel rejects the file.
+	viewsAt := strings.Index(sheet, "<sheetViews>")
+	colsAt := strings.Index(sheet, "<cols>")
+	dataAt := strings.Index(sheet, "<sheetData>")
+	if !(viewsAt < colsAt && colsAt < dataAt) {
+		t.Errorf("schema element order wrong: sheetViews=%d cols=%d sheetData=%d",
+			viewsAt, colsAt, dataAt)
+	}
+}
+
+func TestColumnWidthsTrackContent(t *testing.T) {
+	widths := columnWidths([][]string{
+		{"short", "a much longer header than the other one"},
+		{"x", "y"},
+	})
+	if len(widths) != 2 {
+		t.Fatalf("got %d widths", len(widths))
+	}
+	if widths[1] <= widths[0] {
+		t.Errorf("wider content did not produce a wider column: %v", widths)
+	}
+	// Bounded at both ends: unbounded widths push later columns off screen.
+	for _, w := range widths {
+		if w < 9 || w > 55 {
+			t.Errorf("width %.1f outside sensible bounds", w)
+		}
+	}
+}
+
+// readParts unzips a container into a name->content map.
+func readParts(t *testing.T, path string) map[string]string {
+	t.Helper()
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	out := map[string]string{}
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[f.Name] = string(b)
+	}
+	return out
 }
