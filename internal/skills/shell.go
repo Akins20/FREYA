@@ -1,0 +1,233 @@
+package skills
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/akins/jarvis/internal/guard"
+	"github.com/akins/jarvis/internal/llm"
+)
+
+// shellTimeout bounds any single command.
+const shellTimeout = 120 * time.Second
+
+// maxShellOutput caps what is fed back to the model. A command that produces
+// megabytes of output would otherwise blow the context budget in one turn.
+const maxShellOutput = 20000
+
+// RegisterShell gives Freya the ability to run commands, every one of them
+// passing through guard first.
+//
+// The skill deliberately exposes two entry points rather than one. `run_command`
+// takes an argv array and executes it directly, with no shell involved, so
+// arguments cannot chain further commands. `run_shell` accepts a pipeline and
+// is assessed more harshly precisely because it can. Making the safe path also
+// the convenient path is most of the battle.
+func RegisterShell(r *Registry, g *guard.Guard) {
+	if g == nil {
+		return
+	}
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "run_command",
+			Description: "Run a program directly, without a shell. Prefer this over " +
+				"run_shell: arguments are passed literally, so nothing can be chained " +
+				"or injected. Destructive commands will ask the user first.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"command": {Type: "string", Description: "Program to run, e.g. 'ls', 'git', 'go'."},
+				"args": {Type: "string", Description: "Arguments, space separated. " +
+					"Quote anything containing spaces."},
+				"dir":    {Type: "string", Description: "Working directory. Defaults to home."},
+				"reason": {Type: "string", Description: "Why this is needed — shown to the user when confirming."},
+			}, "command"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			command := argString(args, "command")
+			if command == "" {
+				return "", fmt.Errorf("command is required")
+			}
+			argv := splitArgs(argString(args, "args"))
+			dir := resolveDir(argString(args, "dir"))
+
+			action := guard.Action{
+				Kind:     guard.KindExec,
+				Command:  command,
+				Args:     argv,
+				Paths:    pathLikeArgs(argv),
+				Elevated: command == "sudo" || command == "pkexec" || command == "doas",
+				Reason:   argString(args, "reason"),
+			}
+
+			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				return runProcess(ctx, dir, command, argv...)
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "run_shell",
+			Description: "Run a shell pipeline, for when you genuinely need pipes, " +
+				"redirection or globbing. Treated as higher risk than run_command " +
+				"because a shell string can chain commands. Use run_command when you can.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"script": {Type: "string", Description: "The shell command line."},
+				"dir":    {Type: "string", Description: "Working directory. Defaults to home."},
+				"reason": {Type: "string", Description: "Why this is needed — shown to the user when confirming."},
+			}, "script"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			script := argString(args, "script")
+			if script == "" {
+				return "", fmt.Errorf("script is required")
+			}
+			dir := resolveDir(argString(args, "dir"))
+
+			action := guard.Action{
+				Kind:     guard.KindExec,
+				Shell:    script,
+				Paths:    pathLikeArgs(strings.Fields(script)),
+				Elevated: strings.Contains(script, "sudo ") || strings.HasPrefix(script, "sudo"),
+				Reason:   argString(args, "reason"),
+			}
+
+			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				return runProcess(ctx, dir, "bash", "-c", script)
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "audit_recent",
+			Description: "Show recent actions taken on the machine and their outcomes, " +
+				"from the tamper-resistant audit log.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"limit": {Type: "number", Description: "How many entries, default 15."},
+			}),
+		},
+		Handler: func(_ context.Context, args map[string]any) (string, error) {
+			if g.Audit == nil {
+				return "No audit log is configured.", nil
+			}
+			records, err := g.Audit.Recent(clamp(argInt(args, "limit", 15), 1, 100))
+			if err != nil {
+				return "", err
+			}
+			if len(records) == 0 {
+				return "Nothing recorded yet.", nil
+			}
+			var sb strings.Builder
+			for _, rec := range records {
+				sb.WriteString(rec.Summary())
+				sb.WriteString("\n")
+			}
+			return strings.TrimSpace(sb.String()), nil
+		},
+	})
+}
+
+// runProcess executes a command and returns its combined output, truncated.
+func runProcess(ctx context.Context, dir, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, shellTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+
+	text := strings.TrimSpace(string(out))
+	if len(text) > maxShellOutput {
+		text = text[:maxShellOutput] + fmt.Sprintf("\n[output truncated at %d characters]", maxShellOutput)
+	}
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return text, fmt.Errorf("timed out after %s", shellTimeout)
+	}
+	if err != nil {
+		if text == "" {
+			return "", fmt.Errorf("%s: %w", name, err)
+		}
+		// Exit status plus output is more useful to the model than either alone.
+		return text, fmt.Errorf("%s exited with error: %w", name, err)
+	}
+	if text == "" {
+		return "(no output)", nil
+	}
+	return text, nil
+}
+
+// splitArgs performs minimal quote-aware splitting, so a single argument
+// containing spaces survives intact.
+func splitArgs(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	var cur strings.Builder
+	var quote rune
+
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ' ' || r == '\t':
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// pathLikeArgs picks out arguments that look like filesystem paths, so guard
+// can assess what is actually being touched rather than only the verb.
+func pathLikeArgs(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		// Require a path separator. A bare token like "*.go" is far more often
+		// a pattern argument (find -name "*.go") than a filesystem target, and
+		// treating it as one made ordinary searches look risky.
+		if strings.Contains(a, "/") || strings.HasPrefix(a, "~") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// resolveDir expands a working directory, defaulting to home.
+func resolveDir(dir string) string {
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return "."
+	}
+	if strings.HasPrefix(dir, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(dir, "~"))
+		}
+	}
+	return os.ExpandEnv(dir)
+}

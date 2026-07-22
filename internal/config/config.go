@@ -33,6 +33,8 @@ type Config struct {
 
 	// Verbose echoes tool calls and their results to the terminal.
 	Verbose bool
+	// DryRun assesses actions and reports them without executing.
+	DryRun bool
 
 	// --- voice ---
 
@@ -73,6 +75,7 @@ func Load() (*Config, error) {
 		ProjectsDir:  os.Getenv("FREYA_PROJECTS_DIR"),
 		Address:      os.Getenv("FREYA_ADDRESS"),
 		Verbose:      isTruthy(os.Getenv("FREYA_VERBOSE")),
+		DryRun:       isTruthy(os.Getenv("FREYA_DRY_RUN")),
 
 		Voice:        isTruthy(os.Getenv("FREYA_VOICE")),
 		STT:          os.Getenv("FREYA_STT"),

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/skills"
@@ -25,6 +26,9 @@ type Agent struct {
 	Store    *memory.Store
 	Builder  *memory.ContextBuilder
 	Persona  Persona
+	// Guard, when set, is exposed for status reporting. Enforcement happens
+	// inside the skills themselves, not here.
+	Guard *guard.Guard
 
 	// OnTool is called before and after each tool execution, for tracing.
 	OnTool func(event, name, detail string)

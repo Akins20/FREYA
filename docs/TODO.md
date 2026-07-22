@@ -158,13 +158,68 @@ retunes her mid-conversation. Verified: she called
 - [ ] Barge-in: stop speaking when the user starts talking
 - [ ] Wake word ("Hey Freya") once push-to-talk is proven
 
-## Phase 4 — later
+## Phase 4 — permission layer ✅
+
+Built before any root capability existed, deliberately. Three tiers rather than
+a yes/no prompt, because a binary prompt trains people to say yes:
+
+- **allowed** — reads and trivially reversible changes, run silently
+- **confirmed** — shown with a concrete preview, run only on explicit approval
+- **forbidden** — refused regardless of approval
+
+The forbidden tier is the point. Confirmation dialogs get answered by tired
+people at midnight; some commands must simply not be reachable.
+
+- [x] `internal/guard/guard.go` — risk tiers, Run gate, dry-run
+- [x] `internal/guard/rules.go` — forbidden patterns, protected paths, canonicalisation
+- [x] `internal/guard/preview.go` — resolves globs, counts files, measures bytes
+- [x] `internal/guard/audit.go` — append-only JSONL, mode 600
+- [x] `internal/skills/shell.go` — run_command (argv) and run_shell (pipeline)
+- [x] `cmd/freya/confirm.go` — prompt requiring "yes" spelled out for destructive acts
+- [x] `/audit` command and `audit_recent` skill
+
+### Adversarial results
+
+25 evasion attempts: **22 blocked outright, 3 require confirmation, 0 slipped**.
+Zero false positives across ordinary work (`rm -rf ./node_modules`, `git status`).
+
+The three that only prompt — `cd / && rm -rf *`, `find / | xargs rm`,
+`$(rm -rf /)` — depend on runtime state that cannot be resolved statically.
+Preview plus confirmation is the honest answer there, not a block.
+
+### Bugs found and fixed during that hunt
+
+1. **Case folding defeated the flag check.** The command line was lowercased
+   before matching, so `chmod -R 777 /` read as `-r` and scored merely medium.
+   Case is load-bearing: `chmod -r` clears the read bit, `-R` recurses.
+   Matching now runs on the raw string.
+2. **Spelling variants walked straight through.** `rm --recursive --force /`,
+   `rm -rf "/"`, `rm -rf ~`, `rm -rf $HOME`, `find / -delete` and `mv /* ...`
+   all scored medium. Fixed by canonicalising — stripping quotes, expanding
+   `~` and `$HOME` — then reasoning over tokens rather than matching spellings.
+3. **The user's whole workspace looked like a system path.** `/run/media/...`
+   matched the `/run` prefix, so every operation in Development was
+   "destructive". Removable media is now excluded.
+4. **Read-only pipelines were rated destructive.** `find . -name "*.go" | wc -l`
+   demanded confirmation because it contained a pipe. Pipelines are now assessed
+   per segment; a chain of observational commands stays read-only.
+5. **Pattern arguments were mistaken for paths.** `-name "*.go"` was treated as
+   a filesystem glob. Path detection now requires a separator.
+
+Bugs 3 to 5 mattered as much as 1 and 2: a gate that obstructs ordinary work
+gets disabled, and a disabled gate protects nothing.
+
+## Phase 5 — later
 
 - [ ] Model-written episode summaries (replace mechanical distillation)
 - [ ] Streaming responses (needed for low-latency TTS)
 - [ ] Reminder daemon that actually fires notifications
 - [ ] Embedding-based retrieval as a `Retriever` implementation
 - [ ] Swap JSON fact store for SQLite if the archive outgrows RAM
+- [ ] restic snapshots to sda1 (~18G after excluding caches; 112G free)
+- [ ] Chrome control via DevTools Protocol on 9222
+- [ ] Desktop control via xdotool/wmctrl (both already installed)
+- [ ] Proactivity: watchers, salience scoring, dedup against memory
 
 ## Known limitations (accepted for now)
 

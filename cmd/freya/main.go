@@ -15,6 +15,7 @@ import (
 
 	"github.com/akins/jarvis/internal/agent"
 	"github.com/akins/jarvis/internal/config"
+	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/skills"
@@ -43,17 +44,18 @@ func main() {
 		provider = flag.String("provider", "", "override provider: gemini, anthropic or mock")
 		model    = flag.String("model", "", "override model id")
 		verbose  = flag.Bool("v", false, "show tool calls and context accounting")
+		dryRun   = flag.Bool("dry-run", false, "assess actions without executing them")
 	)
 	flag.Parse()
 	initColors()
 
-	if err := run(*oneShot, *provider, *model, *verbose); err != nil {
+	if err := run(*oneShot, *provider, *model, *verbose, *dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
 		os.Exit(1)
 	}
 }
 
-func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
+func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -66,6 +68,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 	}
 	if verbose {
 		cfg.Verbose = true
+	}
+	if dryRun {
+		cfg.DryRun = true
 	}
 
 	provider, err := buildProvider(cfg)
@@ -85,8 +90,27 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 		persona.Address = cfg.Address
 	}
 
+	// Guard gates every action that touches the machine. Its confirmation
+	// prompt shares one stdin reader with the REPL so the two never race.
+	stdin := bufio.NewReader(os.Stdin)
+	auditLog, auditErr := guard.OpenLog(cfg.DataDir)
+	if auditErr != nil {
+		fmt.Fprintf(os.Stderr, "%swarning: audit log unavailable: %v%s\n", cYellow, auditErr, cReset)
+	}
+	defer auditLog.Close()
+
+	confirm := confirmPrompt(stdin)
+	if !isTerminal() {
+		// A piped session has nobody to ask, so it must refuse rather than assume.
+		confirm = autoDenyConfirm()
+	}
+	g := guard.New(confirm, auditLog)
+	g.DryRun = cfg.DryRun
+	g.ProtectedPaths = []string{cfg.DataDir}
+
 	reg := skills.New()
 	skills.RegisterSystem(reg)
+	skills.RegisterShell(reg, g)
 	skills.RegisterMemory(reg, store, index)
 	skills.RegisterWeb(reg, os.Getenv("SERPER_API_KEY"))
 	skills.RegisterDev(reg, cfg.ProjectsDir)
@@ -103,6 +127,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 
 	builder := memory.NewContextBuilder(store, index, persona.Prompt(reg.Names()))
 	a := agent.New(provider, reg, store, builder, persona)
+	a.Guard = g
 	if cfg.Verbose {
 		a.OnTool = func(event, name, detail string) {
 			switch event {
@@ -134,7 +159,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose bool) error {
 	} else if cfg.Voice {
 		vs.enabled = true
 	}
-	return repl(ctx, a, cfg, store, index, persona, vs)
+	return repl(ctx, a, cfg, store, index, persona, vs, stdin)
 }
 
 func buildProvider(cfg *config.Config) (llm.Provider, error) {
@@ -180,7 +205,7 @@ func ask(ctx context.Context, a *agent.Agent, cfg *config.Config, input string) 
 
 func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 	store *memory.Store, index *memory.Index, persona agent.Persona,
-	vs *voiceState) error {
+	vs *voiceState, stdin *bufio.Reader) error {
 
 	fmt.Printf("%s%s%s — %s, %d skills, %d turns remembered\n",
 		cBold, persona.Name, cReset, a.Provider.Name(), len(a.Skills.Names()), store.TurnCount())
@@ -189,16 +214,14 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 	}
 	fmt.Printf("%stype /help for commands, /quit to leave%s\n\n", cDim, cReset)
 
-	in := bufio.NewScanner(os.Stdin)
-	in.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
 	for {
 		fmt.Printf("%s❯%s ", cCyan, cReset)
-		if !in.Scan() {
+		raw, readErr := stdin.ReadString('\n')
+		if readErr != nil && raw == "" {
 			fmt.Println()
-			return in.Err()
+			return nil
 		}
-		line := strings.TrimSpace(in.Text())
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			// In voice mode a bare Enter is the push-to-talk trigger.
 			if vs != nil && vs.enabled {
@@ -276,6 +299,7 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice style voice Kore  pick a voice preset
   /voice style reset       restore defaults
   /voice voices            list voices, paces, tones
+  /audit                   recent actions and their outcomes
   /verbose                 toggle tool tracing
   /quit                    exit
 
@@ -300,6 +324,23 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 	case "/skills":
 		names := a.Skills.Names()
 		fmt.Printf("  %d skills: %s\n", len(names), strings.Join(names, ", "))
+		return false, nil
+
+	case "/audit":
+		if a.Guard == nil || a.Guard.Audit == nil {
+			return false, fmt.Errorf("no audit log configured")
+		}
+		records, err := a.Guard.Audit.Recent(20)
+		if err != nil {
+			return false, err
+		}
+		if len(records) == 0 {
+			fmt.Println("  nothing recorded yet")
+			return false, nil
+		}
+		for i := len(records) - 1; i >= 0; i-- {
+			fmt.Printf("  %s\n", records[i].Summary())
+		}
 		return false, nil
 
 	case "/memory":
