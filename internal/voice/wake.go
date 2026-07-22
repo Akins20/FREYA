@@ -81,6 +81,14 @@ type Listener struct {
 	OnHeard func(text string, woke bool)
 	// OnStop explains why listening ended.
 	OnStop func(reason string)
+	// OnTrouble reports a fault that is not stopping the loop but means nothing
+	// is being heard.
+	//
+	// Without this the failure mode is silence that looks exactly like nobody
+	// speaking: a recorder that cannot write its output fails identically every
+	// time, and the backoff below turns that into an assistant which is
+	// attentively deaf and says nothing about it.
+	OnTrouble func(err error, consecutive int)
 
 	mu        sync.Mutex
 	listening bool
@@ -152,6 +160,10 @@ func (l *Listener) loop(ctx context.Context) {
 		dir = os.TempDir()
 	}
 
+	// Consecutive recorder failures. Reset by any successful capture, so a
+	// genuinely intermittent device never trips the report.
+	failures := 0
+
 	defer func() {
 		l.mu.Lock()
 		l.listening = false
@@ -188,11 +200,19 @@ func (l *Listener) loop(ctx context.Context) {
 				l.stopped("stopped")
 				return
 			}
-			// A recorder failure is usually transient — a device briefly busy.
-			// Back off rather than spinning.
+			// A recorder failure is usually transient — a device briefly busy —
+			// so back off rather than spinning. But "usually" is doing a lot of
+			// work: a misconfigured sandbox or a missing device fails this way
+			// every single time, and staying quiet about it is how listening
+			// comes to mean nothing at all.
+			failures++
+			if l.OnTrouble != nil && (failures == 3 || failures%60 == 0) {
+				l.OnTrouble(err, failures)
+			}
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		failures = 0
 		if !fileHasAudio(path) {
 			os.Remove(path)
 			continue

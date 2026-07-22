@@ -115,6 +115,11 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 			}
 			fmt.Printf("%s  (heard, not addressed: %.60s)%s\n", cDim, text, cReset)
 		},
+		OnTrouble: func(err error, consecutive int) {
+			fmt.Fprintf(os.Stderr,
+				"%s  cannot record: %v (%d attempts in a row — she is listening but hearing nothing)%s\n",
+				cYellow, err, consecutive, cReset)
+		},
 		OnStop: func(reason string) {
 			// The light must follow the listener even when it stops itself on
 			// the inactivity timeout, which is the case a caller cannot see.
@@ -517,4 +522,38 @@ func spokenTurn(ctx context.Context, a *agent.Agent, cfg *config.Config, v *voic
 	speakErr := v.session.Speak(ctx, res.Reply)
 	_ = voice.ChimeDone()
 	return speakErr
+}
+
+// startWakeListening arms the wake word and points the status light at it.
+//
+// # Why the daemon defaults to no timeout and a session does not
+//
+// The inactivity timeout exists so that listening, once switched on, does not
+// stay on because somebody forgot. That reasoning does not apply to a process
+// whose entire purpose is to be there when you speak to it: a daemon that goes
+// deaf after two quiet hours is a daemon that is deaf every morning.
+//
+// The cost is real and worth stating plainly rather than burying. There is no
+// local wake-word model here, so while this is on, speech near the microphone
+// is recorded and sent for transcription whether or not it was meant for her.
+// FREYA_WAKE=off turns it off; FREYA_WAKE=2h restores a timeout.
+func startWakeListening(ctx context.Context, a *agent.Agent, v *voiceState, ind *indicator) error {
+	if v == nil {
+		return fmt.Errorf("voice is not configured")
+	}
+	v.indicator = ind
+
+	arg := strings.ToLower(strings.TrimSpace(os.Getenv("FREYA_WAKE")))
+	switch arg {
+	case "off", "no", "false":
+		return fmt.Errorf("disabled by FREYA_WAKE=off")
+	case "", "on", "forever", "always", "indefinite":
+		arg = "forever"
+	}
+
+	if err := v.startListening(ctx, arg, a); err != nil {
+		return err
+	}
+	ind.listening()
+	return nil
 }

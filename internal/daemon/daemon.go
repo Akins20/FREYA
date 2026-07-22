@@ -109,6 +109,17 @@ type Daemon struct {
 	// Quiet suppresses desktop notifications, for debugging.
 	Quiet bool
 
+	// Yield is called when an interactive session takes over. The daemon must
+	// stop listening and release the memory store: exactly one process writes
+	// at a time, and the one with a human in front of it wins.
+	Yield func()
+	// Resume is called when that session ends and the daemon takes back over.
+	Resume func()
+
+	// yielded tracks whether a session currently holds the store, so that two
+	// sessions opening in succession do not resume the daemon between them.
+	yielded int
+
 	mu         sync.Mutex
 	started    time.Time
 	notified   int
@@ -249,6 +260,33 @@ func (d *Daemon) serve(conn net.Conn) {
 
 	case "drain":
 		writeReply(conn, Reply{OK: true, Observations: d.Sentinel.Pending()})
+
+	case "yield":
+		// A session is starting. Stand down: stop listening for the wake word
+		// and let go of the store.
+		d.mu.Lock()
+		d.yielded++
+		first := d.yielded == 1
+		d.mu.Unlock()
+		if first && d.Yield != nil {
+			d.Yield()
+		}
+		writeReply(conn, Reply{OK: true, Message: "yielded"})
+
+	case "resume":
+		// That session has ended. Take over again, but only once the last one
+		// has gone — two overlapping sessions would otherwise hand the store
+		// back while one of them is still writing to it.
+		d.mu.Lock()
+		if d.yielded > 0 {
+			d.yielded--
+		}
+		last := d.yielded == 0
+		d.mu.Unlock()
+		if last && d.Resume != nil {
+			d.Resume()
+		}
+		writeReply(conn, Reply{OK: true, Message: "resumed"})
 
 	case "stop":
 		writeReply(conn, Reply{OK: true, Message: "stopping"})

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,10 @@ type Store struct {
 	archive *os.File
 }
 
+// ErrSuspended is returned by writes attempted while another process owns the
+// store.
+var ErrSuspended = errors.New("memory: this process is not the current writer")
+
 // Open loads (or initialises) a memory store rooted at dir.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -85,6 +90,82 @@ func Open(dir string) (*Store, error) {
 	s.st.Sessions++
 	_ = s.saveJSON(stateFile, s.st)
 	return s, nil
+}
+
+// Suspend releases the archive handle and stops this process writing.
+//
+// # Why memory has an owner at all
+//
+// The archive is an append-only file and the JSON stores are rewritten whole.
+// Two processes writing either one interleave and corrupt it. So exactly one
+// process holds the write handle at a time: the daemon while nobody is at the
+// keyboard, and the interactive session the moment one starts.
+//
+// Suspend is the handover. Reads keep working from what is already in memory,
+// which is what lets the daemon answer a question that arrives during the
+// changeover instead of failing it.
+func (s *Store) Suspend() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.archive == nil {
+		return nil
+	}
+	err := s.archive.Close()
+	s.archive = nil
+	return err
+}
+
+// Resume re-reads everything from disk and takes the write handle back.
+//
+// A full reload rather than a tail-read of what was appended: the session may
+// also have rewritten facts, episodes and the working anchor, and reconciling
+// those incrementally is a great deal of machinery to save reading a few
+// megabytes that the page cache is holding anyway.
+func (s *Store) Resume() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.archive != nil {
+		return nil // already writing
+	}
+
+	s.turns = nil
+	s.facts = map[string]*Fact{}
+	s.episodes = nil
+
+	if err := s.loadArchive(); err != nil {
+		return err
+	}
+	if err := s.loadJSON(factsFile, &s.facts); err != nil {
+		return err
+	}
+	if err := s.loadJSON(episodesFile, &s.episodes); err != nil {
+		return err
+	}
+	if err := s.loadJSON(stateFile, &s.st); err != nil {
+		return err
+	}
+	if s.facts == nil {
+		s.facts = map[string]*Fact{}
+	}
+	if b, err := os.ReadFile(filepath.Join(s.dir, identityFile)); err == nil {
+		s.identity = string(b)
+	}
+
+	f, err := os.OpenFile(filepath.Join(s.dir, archiveFile),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("memory: reopen archive: %w", err)
+	}
+	s.archive = f
+	return nil
+}
+
+// Writing reports whether this process currently holds the write handle.
+func (s *Store) Writing() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.archive != nil
 }
 
 // Close releases the archive handle.
@@ -130,10 +211,14 @@ func (s *Store) AppendTurn(t Turn) (Turn, error) {
 	if err != nil {
 		return t, fmt.Errorf("memory: encode turn: %w", err)
 	}
-	if s.archive != nil {
-		if _, err := s.archive.Write(append(line, '\n')); err != nil {
-			return t, fmt.Errorf("memory: append turn: %w", err)
-		}
+	// A suspended store must refuse rather than accept-and-discard. Keeping the
+	// turn in memory while skipping the file would make it look recorded right
+	// up until the next restart, which is the worst way to lose a conversation.
+	if s.archive == nil {
+		return t, ErrSuspended
+	}
+	if _, err := s.archive.Write(append(line, '\n')); err != nil {
+		return t, fmt.Errorf("memory: append turn: %w", err)
 	}
 	s.turns = append(s.turns, t)
 	return t, nil

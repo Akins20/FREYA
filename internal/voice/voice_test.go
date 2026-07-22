@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -522,6 +523,57 @@ func TestListenerStopsWhenIdle(t *testing.T) {
 	}
 }
 
+// TestListenerReportsAPersistentRecorderFault is the regression guard for the
+// worst failure this package can have: a recorder that fails every time — a
+// read-only temp directory, a missing microphone — turned the loop into an
+// assistant that listens attentively and hears nothing, without a word about
+// why. The service ran in exactly that state until the sandbox was fixed.
+func TestListenerReportsAPersistentRecorderFault(t *testing.T) {
+	var mu sync.Mutex
+	var reports int
+	var lastCount int
+
+	l := &Listener{
+		Recorder:   brokenRecorder{},
+		Recognizer: emptyRecognizer{},
+		Indefinite: true,
+		TempDir:    t.TempDir(),
+		OnTrouble: func(err error, consecutive int) {
+			mu.Lock()
+			reports++
+			lastCount = consecutive
+			mu.Unlock()
+		},
+	}
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+
+	// The backoff is two seconds a try and the first report is at the third
+	// failure, so allow enough wall-clock for it to arrive.
+	deadline := time.After(9 * time.Second)
+	for {
+		mu.Lock()
+		got := reports
+		mu.Unlock()
+		if got > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("a recorder that fails every time was never reported — the failure is silent")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if lastCount < 3 {
+		t.Errorf("reported after %d failures, expected the loop to persist to at least 3", lastCount)
+	}
+}
+
 func TestListenerStopsOnRequest(t *testing.T) {
 	l := &Listener{
 		Recorder:   silentRecorder{},
@@ -544,6 +596,15 @@ func TestListenerStopsOnRequest(t *testing.T) {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// brokenRecorder fails every call, standing in for a read-only temp dir or an
+// absent capture device.
+type brokenRecorder struct{}
+
+func (brokenRecorder) Name() string { return "broken" }
+func (brokenRecorder) Record(ctx context.Context, path string) error {
+	return errors.New("can't open output file: read-only file system")
 }
 
 type silentRecorder struct{}

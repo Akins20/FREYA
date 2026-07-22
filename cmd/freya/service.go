@@ -63,7 +63,14 @@ Environment=XDG_RUNTIME_DIR=/run/user/%%U
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=no
-PrivateTmp=false
+
+# A private /tmp, and not for isolation — for write access. ProtectSystem=strict
+# mounts the whole hierarchy read-only apart from /dev, /proc and /sys, and that
+# includes /tmp, where voice recordings and generated chimes are written. Without
+# this, sox fails on every capture with "Read-only file system", the wake-word
+# loop treats it as a transient device error, and she listens forever without
+# ever hearing anything.
+PrivateTmp=true
 
 [Install]
 WantedBy=default.target

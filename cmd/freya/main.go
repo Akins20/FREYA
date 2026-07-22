@@ -232,24 +232,80 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	defer stop()
 
 	if daemonize {
-		// Headless. No agent and no conversation, so nothing here writes to
-		// memory — the session process owns every write, and two writers would
-		// corrupt an append-only archive and whole-file JSON stores.
+		// Headless, but not inert. This is the process that is running when
+		// nobody is at the keyboard, so it is the one that has to answer when
+		// spoken to and the one that shows whether she is awake. It owns the
+		// memory store until an interactive session takes it — see the yield
+		// and resume handlers below, and Store.Suspend.
 		d := daemon.New(cfg.DataDir, sen)
+
+		ind := newIndicator(ctx)
+		defer ind.close()
+
 		if vs != nil {
+			vs.indicator = ind
 			d.Speak = func(text string) {
 				go func() { _ = vs.session.Speak(context.Background(), text) }()
 			}
 		}
-		fmt.Printf("%sFreya daemon: %d watchers, chattiness %s, socket %s%s\n",
-			cDim, len(sen.Watchers()), sen.Chattiness, daemon.SocketPath(cfg.DataDir), cReset)
+
+		listening := "no voice"
+		if vs != nil && voiceErr == nil {
+			if err := startWakeListening(ctx, a, vs, ind); err != nil {
+				listening = "wake word unavailable: " + err.Error()
+			} else {
+				listening = `listening for "Freya"`
+			}
+		} else if voiceErr != nil {
+			listening = "no voice: " + voiceErr.Error()
+		}
+
+		// Handover. A session that starts while the daemon holds the store must
+		// take it, or both write to an append-only archive at once.
+		d.Yield = func() {
+			if vs != nil && vs.listener != nil {
+				vs.listener.Stop()
+			}
+			ind.idle()
+			if err := store.Suspend(); err != nil {
+				fmt.Fprintf(os.Stderr, "suspend memory: %v\n", err)
+			}
+		}
+		d.Resume = func() {
+			if err := store.Resume(); err != nil {
+				fmt.Fprintf(os.Stderr, "resume memory: %v\n", err)
+				return
+			}
+			if vs != nil && voiceErr == nil {
+				_ = startWakeListening(ctx, a, vs, ind)
+			}
+		}
+
+		fmt.Printf("%sFreya daemon: %d watchers, chattiness %s, %s, socket %s%s\n",
+			cDim, len(sen.Watchers()), sen.Chattiness, listening,
+			daemon.SocketPath(cfg.DataDir), cReset)
 		return d.Run(ctx)
 	}
 
 	// A session defers to a running daemon rather than starting a second set of
-	// watchers, so the same warning cannot arrive from two directions.
+	// watchers, so the same warning cannot arrive from two directions. It also
+	// takes the memory store: the daemon has it open for writing, and a person
+	// at the keyboard outranks a background process.
 	if daemon.Running(cfg.DataDir) {
 		sen.Stop()
+		if _, err := daemon.Ask(cfg.DataDir, "yield"); err != nil {
+			fmt.Fprintf(os.Stderr, "%scould not take memory from the daemon: %v%s\n",
+				cYellow, err, cReset)
+		} else {
+			// Handing it back on the way out is what lets her keep listening
+			// once the terminal is closed.
+			defer func() { _, _ = daemon.Ask(cfg.DataDir, "resume") }()
+			// The daemon closed the archive after we opened it; reopening picks
+			// up anything it wrote in between.
+			if err := store.Resume(); err != nil {
+				fmt.Fprintf(os.Stderr, "%sreopen memory: %v%s\n", cYellow, err, cReset)
+			}
+		}
 		fmt.Printf("%sdaemon is running — deferring background watching to it%s\n", cDim, cReset)
 	}
 
