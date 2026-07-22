@@ -129,6 +129,51 @@ type geminiResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage *geminiUsage `json:"usageMetadata"`
+}
+
+// geminiUsage mirrors the API's own accounting block.
+//
+// The modality breakdown matters: audio input is billed at about double the
+// text rate, and without splitting it out a spoken conversation is costed as
+// though it had been typed.
+type geminiUsage struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
+	CachedContentTokens  int `json:"cachedContentTokenCount"`
+	ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
+	PromptTokensDetails  []struct {
+		Modality   string `json:"modality"`
+		TokenCount int    `json:"tokenCount"`
+	} `json:"promptTokensDetails"`
+}
+
+// toUsage converts the API block to the shared shape.
+func (g *geminiUsage) toUsage() Usage {
+	if g == nil {
+		return Usage{}
+	}
+	u := Usage{
+		InputTokens:   g.PromptTokenCount,
+		OutputTokens:  g.CandidatesTokenCount,
+		CachedTokens:  g.CachedContentTokens,
+		ThoughtTokens: g.ThoughtsTokenCount,
+	}
+	for _, d := range g.PromptTokensDetails {
+		if strings.EqualFold(d.Modality, "AUDIO") {
+			u.AudioTokens += d.TokenCount
+		}
+	}
+	// Reasoning tokens are billed as output but reported separately by some
+	// versions of the API. Counting them only when the totals disagree avoids
+	// double-charging when they are already included.
+	if u.OutputTokens > 0 && g.TotalTokenCount > 0 {
+		if sum := u.InputTokens + u.OutputTokens; sum < g.TotalTokenCount {
+			u.OutputTokens = g.TotalTokenCount - u.InputTokens
+		}
+	}
+	return u
 }
 
 // Chat performs one completion round against the Gemini API.
@@ -191,7 +236,7 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("gemini: model returned no candidates")
 	}
 
-	out := &Response{}
+	out := &Response{Usage: decoded.Usage.toUsage()}
 	var text strings.Builder
 	for i, part := range decoded.Candidates[0].Content.Parts {
 		if part.Text != "" {

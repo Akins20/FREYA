@@ -138,11 +138,26 @@ type Guard struct {
 	AutoApprove Risk
 	// ProtectedPaths are additional paths to treat as high risk.
 	ProtectedPaths []string
+	// Telemetry counts decisions, if anything is listening.
+	//
+	// Declared as a local interface rather than importing the telemetry package
+	// so that the guard — the component with the least business depending on
+	// anything — keeps its import list to the standard library.
+	Telemetry DecisionRecorder
 
 	// confirmMu serialises confirmation prompts. Tool calls now run
 	// concurrently, and two prompts competing for the same terminal would
 	// interleave their questions and read each other's answers.
 	confirmMu sync.Mutex
+}
+
+// DecisionRecorder is told about every guard decision.
+//
+// Implementations must be non-blocking and must tolerate a nil receiver: a
+// refusal is on the critical path of an action the user is waiting for, and
+// metrics have no business slowing it down or failing it.
+type DecisionRecorder interface {
+	Guard(risk, outcome, detail string)
 }
 
 // New builds a guard with safe defaults.
@@ -241,6 +256,17 @@ func (g *Guard) Run(ctx context.Context, action Action, exec func(context.Contex
 func (g *Guard) record(r Record) {
 	if g.Audit != nil {
 		_ = g.Audit.Append(r)
+	}
+	// Every outcome — allowed, confirmed, denied, forbidden — passes through
+	// here, which is why the counter hangs off this one call rather than being
+	// sprinkled through Run. A refusal that is never counted is a refusal
+	// nobody can review later.
+	if g.Telemetry != nil {
+		detail := r.Rule
+		if detail == "" {
+			detail = r.Action.Command
+		}
+		g.Telemetry.Guard(r.Risk, r.Outcome, detail)
 	}
 }
 

@@ -81,6 +81,42 @@ type Request struct {
 type Response struct {
 	Text      string
 	ToolCalls []ToolCall
+	// Usage is what the call cost, as reported by the provider. Zero when the
+	// provider does not report it.
+	Usage Usage
+}
+
+// Usage is a provider's own accounting of a call.
+//
+// These are the provider's numbers, not an estimate: guessing token counts from
+// character counts is off by enough to make a cost report misleading, and every
+// provider returns the real figures for free alongside the response.
+type Usage struct {
+	// InputTokens is everything sent: system prompt, history, tools, the lot.
+	InputTokens int
+	// OutputTokens is what came back, including any reasoning tokens the model
+	// billed for but did not show.
+	OutputTokens int
+	// CachedTokens are input tokens the provider served from its cache, billed
+	// at a lower rate. This is the number that makes the memory architecture's
+	// stable-prefix ordering worth having, so it is worth watching.
+	CachedTokens int
+	// AudioTokens are input tokens that came from sound rather than text. Billed
+	// at roughly double, so voice interaction costs more than it appears to.
+	AudioTokens int
+	// ThoughtTokens are reasoning tokens, counted within OutputTokens.
+	ThoughtTokens int
+}
+
+// Total is every token the call touched.
+func (u Usage) Total() int { return u.InputTokens + u.OutputTokens }
+
+// CacheRate is the share of input served from cache, as a fraction.
+func (u Usage) CacheRate() float64 {
+	if u.InputTokens == 0 {
+		return 0
+	}
+	return float64(u.CachedTokens) / float64(u.InputTokens)
 }
 
 // Provider is a reasoning backend. Implementations must be safe for use from

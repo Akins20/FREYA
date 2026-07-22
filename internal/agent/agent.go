@@ -14,6 +14,7 @@ import (
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/skills"
+	"github.com/akins/jarvis/internal/telemetry"
 )
 
 // maxToolRounds bounds one exchange. Genuine work — resolve a folder, read
@@ -47,6 +48,30 @@ type Agent struct {
 	// "hang on, let me look that up". Surfacing it is what lets her speak
 	// mid-action instead of going silent for the length of a web search.
 	OnInterim func(text string)
+
+	// Telemetry records what ran and what it cost. Nil is fine — every method
+	// on a nil Recorder is a no-op, so instrumentation never becomes a reason
+	// for the agent to fail.
+	Telemetry *telemetry.Recorder
+}
+
+// chat calls the provider and records what it cost.
+//
+// Every model call in this file goes through here, so there is exactly one
+// place where usage is captured and exactly one place to change if that ever
+// needs to move.
+func (a *Agent) chat(ctx context.Context, req llm.Request) (*llm.Response, error) {
+	started := time.Now()
+	resp, err := a.Provider.Chat(ctx, req)
+	elapsed := time.Since(started)
+
+	var u llm.Usage
+	if resp != nil {
+		u = resp.Usage
+	}
+	a.Telemetry.ModelCall(a.Provider.Name(), elapsed,
+		u.InputTokens, u.OutputTokens, u.CachedTokens, u.AudioTokens, err)
+	return resp, err
 }
 
 // Result is the outcome of one user exchange.
@@ -102,7 +127,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	for round := 1; round <= maxToolRounds; round++ {
 		result.Rounds = round
 
-		resp, err := a.Provider.Chat(ctx, llm.Request{
+		resp, err := a.chat(ctx, llm.Request{
 			System:   system,
 			Messages: msgs,
 			Tools:    tools,
@@ -156,7 +181,9 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 				defer wg.Done()
 				a.trace("start", call.Name, formatArgs(call.Args))
 
+				started := time.Now()
 				output, err := a.Skills.Execute(ctx, call.Name, call.Args)
+				a.Telemetry.Tool(call.Name, time.Since(started), err)
 				if err != nil {
 					// Errors go back to the model as text: a failed tool is
 					// information it can act on, not a reason to abort the turn.
@@ -198,7 +225,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// Round limit reached. Rather than discarding everything gathered so far,
 	// ask once more with no tools available — the model cannot call anything,
 	// so it must answer from what it already has.
-	final, err := a.Provider.Chat(ctx, llm.Request{
+	final, err := a.chat(ctx, llm.Request{
 		System: system + "\n\nYou have reached the tool-call limit for this exchange. " +
 			"Answer now using only what you have already gathered. Do not request more tools. " +
 			"If it is genuinely not enough, say briefly what you still need.",

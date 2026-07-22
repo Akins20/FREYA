@@ -23,6 +23,7 @@ import (
 	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
+	"github.com/akins/jarvis/internal/telemetry"
 	"github.com/akins/jarvis/internal/term"
 )
 
@@ -177,6 +178,17 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	a := agent.New(provider, reg, store, builder, persona)
 	a.Guard = g
 
+	// Telemetry. Opening it can fail — a full disk, a read-only data directory
+	// — and that must not stop a session: a recorder that failed to open still
+	// accepts events and discards them, so nothing downstream needs to care.
+	tel, telErr := telemetry.Open(cfg.DataDir)
+	if telErr != nil && cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "%stelemetry: %v%s\n", cDim, telErr, cReset)
+	}
+	defer tel.Close()
+	a.Telemetry = tel
+	g.Telemetry = tel
+
 	// Reflection lenses: several readings of the same memory, so what surfaces
 	// is experience rather than a single lookup.
 	refl := reflect.New()
@@ -213,6 +225,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// observation clears the salience bar.
 	sen := setupSentinel(cfg, reg, store)
 	skills.RegisterProactive(reg, sen)
+	skills.RegisterTelemetry(reg, cfg.DataDir)
 
 	// Ctrl-C cancels the in-flight request rather than killing the process.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -269,7 +282,16 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	sen.Start(ctx)
 	defer sen.Stop()
 
-	return repl(ctx, a, cfg, store, index, persona, vs, stdin, sen)
+	// The screen light. Red while she is merely running, blue when the wake
+	// word is armed, amber while she is working. Absent entirely without X11,
+	// which is not an error.
+	ind := newIndicator(ctx)
+	defer ind.close()
+	if vs != nil {
+		vs.indicator = ind
+	}
+
+	return repl(ctx, a, cfg, store, index, persona, vs, stdin, sen, ind)
 }
 
 func buildProvider(cfg *config.Config) (llm.Provider, error) {
@@ -315,7 +337,7 @@ func ask(ctx context.Context, a *agent.Agent, cfg *config.Config, input string) 
 
 func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 	store *memory.Store, index *memory.Index, persona agent.Persona,
-	vs *voiceState, stdin *bufio.Reader, sen *sentinel.Sentinel) error {
+	vs *voiceState, stdin *bufio.Reader, sen *sentinel.Sentinel, ind *indicator) error {
 
 	fmt.Printf("%s%s%s — %s, %d skills, %d turns remembered\n",
 		cBold, persona.Name, cReset, a.Provider.Name(), len(a.Skills.Names()), store.TurnCount())
@@ -343,7 +365,7 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 		}
 
 		if strings.HasPrefix(line, "/") {
-			quit, err := command(ctx, line, a, cfg, store, index, vs, sen)
+			quit, err := command(ctx, line, a, cfg, store, index, vs, sen, ind)
 			if err != nil {
 				fmt.Printf("%s%v%s\n", cRed, err, cReset)
 			}
@@ -354,7 +376,9 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 		}
 
 		start := time.Now()
+		done := ind.working()
 		res, err := a.Ask(ctx, line)
+		done()
 		if err != nil {
 			if ctx.Err() != nil {
 				fmt.Printf("\n%sinterrupted%s\n", cYellow, cReset)
@@ -376,7 +400,7 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 // command handles /-prefixed REPL directives. Returns true to exit.
 func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Config,
 	store *memory.Store, index *memory.Index, vs *voiceState,
-	sen *sentinel.Sentinel) (bool, error) {
+	sen *sentinel.Sentinel, ind *indicator) (bool, error) {
 
 	cmd, rest, _ := strings.Cut(line, " ")
 	rest = strings.TrimSpace(rest)
@@ -384,6 +408,9 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 	switch cmd {
 	case "/quit", "/exit", "/q":
 		return true, nil
+
+	case "/stats":
+		return false, showStats(cfg, rest, ind)
 
 	case "/help":
 		fmt.Print(`
@@ -394,6 +421,9 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /persona reset           restore defaults
   /traits                  list available traits
   /memory                  memory statistics
+  /stats                   what has run, and what it cost
+  /stats daily             usage broken down by day
+  /stats rates             the price table the estimates assume
   /context                 token accounting for the last exchange
   /skills                  list registered skills
   /voice                   voice status
@@ -405,6 +435,8 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice say <text>        speak something
   /voice listen [2h|forever]  wake-word listening ("Freya" / "hey Freya")
   /voice deaf              stop listening
+  /voice ack [chime|speak|both|silent]
+  /voice chime             play the wake sound
   /voice style             show delivery settings
   /voice pace <name>       very slow .. very fast
   /voice pitch <name>      very low .. very high

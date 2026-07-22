@@ -56,6 +56,9 @@ type Config struct {
 	WhisperModel string
 	// PiperModel is the .onnx voice path for neural synthesis.
 	PiperModel string
+	// WakeAck is how a detected wake word is acknowledged: chime, speak,
+	// both or silent.
+	WakeAck string
 	// VoicePolicy governs unrecognised speakers: "off", "warn" or "enforce".
 	// Defaults to warn, because speaker verification is not accurate enough
 	// here to lock anyone out — see internal/voice/verify.go.
@@ -92,6 +95,7 @@ func Load() (*Config, error) {
 		WhisperModel: os.Getenv("FREYA_WHISPER_MODEL"),
 		PiperModel:   os.Getenv("FREYA_PIPER_MODEL"),
 		VoicePolicy:  os.Getenv("FREYA_VOICE_POLICY"),
+		WakeAck:      os.Getenv("FREYA_WAKE_ACK"),
 	}
 
 	if cfg.DataDir == "" {

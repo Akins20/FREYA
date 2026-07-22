@@ -564,3 +564,88 @@ func (emptyRecognizer) Name() string { return "empty" }
 func (emptyRecognizer) Transcribe(context.Context, string) (string, error) {
 	return "", nil
 }
+
+func TestChimeGeneratesValidWAV(t *testing.T) {
+	data := renderTones(wakeTones)
+	if len(data) < 44 {
+		t.Fatal("chime is too short to be a WAV")
+	}
+	if string(data[:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+		t.Error("chime is not a RIFF/WAVE file")
+	}
+	// It must be readable by the same parser used for everything else.
+	path := filepath.Join(t.TempDir(), "chime.wav")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	samples, rate, err := readWAVMono(path)
+	if err != nil {
+		t.Fatalf("generated chime cannot be read back: %v", err)
+	}
+	if rate != chimeSampleRate {
+		t.Errorf("rate = %d, want %d", rate, chimeSampleRate)
+	}
+
+	expected := 0.0
+	for _, tn := range wakeTones {
+		expected += tn.duration.Seconds()
+	}
+	if got := float64(len(samples)) / float64(rate); math.Abs(got-expected) > 0.02 {
+		t.Errorf("duration %.3fs, want %.3fs", got, expected)
+	}
+
+	// The envelope must bring the edges to near silence, or each tone starts
+	// and ends with an audible click.
+	if math.Abs(samples[0]) > 0.02 {
+		t.Errorf("chime starts at amplitude %.3f — that is a click", samples[0])
+	}
+	if last := samples[len(samples)-1]; math.Abs(last) > 0.05 {
+		t.Errorf("chime ends at amplitude %.3f — that is a click", last)
+	}
+
+	// And it must actually be audible in the middle.
+	var peak float64
+	for _, s := range samples {
+		if a := math.Abs(s); a > peak {
+			peak = a
+		}
+	}
+	if peak < 0.05 {
+		t.Errorf("chime peaks at %.3f — inaudible", peak)
+	}
+	if peak > 0.5 {
+		t.Errorf("chime peaks at %.3f — too loud for something that plays constantly", peak)
+	}
+}
+
+func TestParseAckStyle(t *testing.T) {
+	cases := map[string]AckStyle{
+		"chime": AckChime, "": AckChime, "nonsense": AckChime,
+		"speak": AckSpeak, "say": AckSpeak,
+		"both": AckBoth, "silent": AckSilent, "off": AckSilent,
+	}
+	for in, want := range cases {
+		if got := ParseAckStyle(in); got != want {
+			t.Errorf("ParseAckStyle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSilentAckDoesNothing(t *testing.T) {
+	spoke := false
+	Acknowledge(AckSilent, func(string) error { spoke = true; return nil })
+	if spoke {
+		t.Error("silent acknowledgement spoke")
+	}
+}
+
+func TestWakeAndDoneTonesDiffer(t *testing.T) {
+	// Rising means attention, falling means finished. If they sounded the same
+	// the distinction would carry no information.
+	if wakeTones[0].freq >= wakeTones[1].freq {
+		t.Error("the wake tone does not rise")
+	}
+	if doneTones[0].freq <= doneTones[1].freq {
+		t.Error("the completion tone does not fall")
+	}
+}

@@ -24,6 +24,9 @@ type voiceState struct {
 	dataDir  string
 	style    voice.Style
 	listener *voice.Listener
+	ackStyle voice.AckStyle
+	// indicator is the screen light, if there is a display. Nil is safe.
+	indicator *indicator
 }
 
 // Style implements skills.VoiceController.
@@ -68,7 +71,8 @@ func setupVoice(cfg *config.Config, provider llm.Provider) (*voiceState, error) 
 	}
 
 	return &voiceState{
-		style: style,
+		style:    style,
+		ackStyle: voice.ParseAckStyle(cfg.WakeAck),
 		session: &voice.Session{
 			Recorder:   recorder,
 			Recognizer: recognizer,
@@ -112,16 +116,27 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 			fmt.Printf("%s  (heard, not addressed: %.60s)%s\n", cDim, text, cReset)
 		},
 		OnStop: func(reason string) {
+			// The light must follow the listener even when it stops itself on
+			// the inactivity timeout, which is the case a caller cannot see.
+			v.indicator.idle()
 			fmt.Printf("\n%s  %s%s\n%s❯%s ", cYellow, reason, cReset, cCyan, cReset)
 		},
 		OnWake: func(w voice.Wake) {
+			// First thing, before any processing: the point of the sound is to
+			// land while the user is still talking, so they know she caught it.
+			voice.Acknowledge(v.ackStyle, func(s string) error {
+				return v.session.Speak(ctx, s)
+			})
 			fmt.Printf("\n%s  ▸ %s%s\n", cCyan, w.Transcript, cReset)
 
 			command := w.Command
 			if command == "" {
-				// Addressed with nothing after it: acknowledge and take the
-				// next utterance as the request, which is how people speak.
-				_ = v.session.Speak(ctx, "Yes?")
+				// Addressed with nothing after it: wait for the request, which
+				// is how people speak when they pause after a name.
+				if v.ackStyle == voice.AckChime {
+					// The chime alone does not invite a reply; say so.
+					_ = v.session.Speak(ctx, "Yes?")
+				}
 				follow, err := v.session.Listen(ctx)
 				if err != nil || strings.TrimSpace(follow) == "" {
 					return
@@ -130,19 +145,28 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 				fmt.Printf("%s  ▸ %s%s\n", cCyan, command, cReset)
 			}
 
+			done := v.indicator.working()
 			res, err := a.Ask(ctx, command)
+			done()
 			if err != nil {
+				// A falling two-tone, so a failure is audible from across the
+				// room rather than only visible on a terminal nobody is reading.
+				_ = voice.ChimeError()
 				fmt.Printf("%s  %v%s\n", cRed, err, cReset)
 				return
 			}
 			fmt.Printf("\n%s\n\n%s❯%s ", res.Reply, cCyan, cReset)
 			_ = v.session.Speak(ctx, res.Reply)
+			// The closing chime goes after the speech, where it marks the end of
+			// the exchange. Before it, it would sound like an error.
+			_ = voice.ChimeDone()
 		},
 	}
 
 	if err := v.listener.Start(ctx); err != nil {
 		return err
 	}
+	v.indicator.listening()
 	limit := timeout.String()
 	if indefinite {
 		limit = "no timeout"
@@ -201,10 +225,28 @@ func voiceCommand(ctx context.Context, rest string, v *voiceState, a *agent.Agen
 	case "listen":
 		return false, v.startListening(ctx, arg, a)
 
+	case "ack":
+		if arg == "" {
+			fmt.Printf("  wake acknowledgement: %s\n", v.ackStyle)
+			fmt.Println("  options: chime, speak, both, silent")
+			return false, nil
+		}
+		v.ackStyle = voice.ParseAckStyle(arg)
+		fmt.Printf("  wake acknowledgement: %s\n", v.ackStyle)
+		// Play it so the choice is audible rather than described.
+		voice.Acknowledge(v.ackStyle, func(s string) error {
+			return v.session.Speak(ctx, s)
+		})
+		return false, nil
+
+	case "chime":
+		return false, voice.Chime()
+
 	case "deaf", "unlisten":
 		if v.listener != nil {
 			v.listener.Stop()
 		}
+		v.indicator.idle()
 		fmt.Println("  stopped listening")
 		return false, nil
 
@@ -458,8 +500,11 @@ func spokenTurn(ctx context.Context, a *agent.Agent, cfg *config.Config, v *voic
 
 	fmt.Printf("%s  you:%s %s\n", cCyan, cReset, transcript)
 
+	done := v.indicator.working()
 	res, err := a.Ask(ctx, transcript)
+	done()
 	if err != nil {
+		_ = voice.ChimeError()
 		_ = v.session.Speak(ctx, "Something went wrong handling that.")
 		return err
 	}
@@ -469,5 +514,7 @@ func spokenTurn(ctx context.Context, a *agent.Agent, cfg *config.Config, v *voic
 		fmt.Printf("%s  record %.1fs · transcribe %.1fs · %d round(s)%s\n",
 			cDim, sttStart.Sub(recStart).Seconds(), sttTime.Seconds(), res.Rounds, cReset)
 	}
-	return v.session.Speak(ctx, res.Reply)
+	speakErr := v.session.Speak(ctx, res.Reply)
+	_ = voice.ChimeDone()
+	return speakErr
 }
