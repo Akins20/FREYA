@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 JARVIS is the project; **Freya** is the assistant's persona. A personal AI assistant
-in Go, currently text-first (terminal REPL), with voice planned as Phase 2.
+in Go with a terminal REPL and an optional spoken mode (`/voice on`).
 
 **Zero external dependencies — pure standard library.** This is deliberate: builds are
 instant and offline on modest hardware, there is no supply-chain surface, and the binary
@@ -45,9 +45,13 @@ variables always win.
 | `FREYA_MODEL` | Defaults to `gemini-3.1-flash-lite`. |
 | `FREYA_DATA_DIR` | Memory location. Defaults to `~/.local/share/freya`. |
 | `FREYA_PROJECTS_DIR` | What the dev skills scan. Defaults to the repo's parent. |
+| `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
+| `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
+| `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
 
 State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `facts.json`,
-`episodes.json`, `notes.json`, `persona.json`, `state.json`, and hand-editable `identity.md`.
+`episodes.json`, `notes.json`, `persona.json`, `voicestyle.json`, `voiceprint.json`
+(mode 600, biometric), `state.json`, and hand-editable `identity.md`.
 
 ## Architecture
 
@@ -59,6 +63,7 @@ internal/agent    think-act loop + persona
 internal/memory   tiered memory, context assembly, BM25 retrieval
 internal/skills   the tool registry and every capability
 internal/llm      provider-agnostic model interface
+internal/voice    record, recognise, synthesise, speaker gate
 ```
 
 ### The memory architecture is the load-bearing design
