@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -33,11 +34,15 @@ const (
 type Session struct {
 	Name    string
 	Started time.Time
+	// isShell records whether completion can be detected exactly. A shell can
+	// be asked to echo a marker after a command; a REPL cannot.
+	isShell bool
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	master  *os.File
 	buf     bytes.Buffer
+	screen  *Screen
 	closed  bool
 	exited  bool
 	lastOut time.Time
@@ -94,11 +99,12 @@ func (m *Manager) Start(name, program, dir string) (*Session, error) {
 	// signal handling behave as they would for a person at a keyboard.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 
-	// TERM matters: without it programs assume a dumb terminal and some refuse
-	// to run at all. dumb is deliberate for the opposite reason — it suppresses
-	// the cursor-movement escapes that make captured output unreadable.
+	// TERM=dumb seemed safer — fewer escape sequences to strip — but it makes
+	// programs announce their own degradation ("Starship disabled due to
+	// TERM=dumb") and some refuse features entirely. Clean() removes escapes
+	// anyway, so a real terminal type costs nothing and buys compatibility.
 	cmd.Env = append(os.Environ(),
-		"TERM=dumb",
+		"TERM=xterm-256color",
 		"PAGER=cat", // stop `git log` and friends waiting on a pager forever
 		"GIT_PAGER=cat",
 		"PYTHONUNBUFFERED=1",
@@ -116,8 +122,10 @@ func (m *Manager) Start(name, program, dir string) (*Session, error) {
 	s := &Session{
 		Name:    name,
 		Started: time.Now(),
+		isShell: looksLikeShell(program),
 		cmd:     cmd,
 		master:  master,
+		screen:  NewScreen(defaultRows, defaultCols),
 		lastOut: time.Now(),
 	}
 	go s.pump()
@@ -184,15 +192,41 @@ func (s *Session) SendRaw(data string) error {
 	return err
 }
 
-// Run sends a command and waits for the output to settle.
+// looksLikeShell reports whether a program accepts shell syntax, and so can be
+// asked to signal its own completion.
+func looksLikeShell(program string) bool {
+	base := program
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	switch base {
+	case "", "sh", "bash", "zsh", "dash", "ksh", "fish":
+		return true
+	}
+	return false
+}
+
+// markerCounter makes each completion marker unique within a session.
+var markerCounter atomic.Uint64
+
+// Run sends a command and returns its output.
 //
-// "Settle" rather than "finish": there is no reliable way to know a shell
-// command has completed when watching a terminal, because the prompt is just
-// more output. Waiting for a pause is what a person does, and it is honest
-// about being a heuristic — a command that pauses mid-run may return early,
-// which is why Read exists to collect the rest.
+// In a shell, completion is *known* rather than guessed: the command is
+// followed by an echo of a unique marker, and output is read until that marker
+// appears. Waiting for output to go quiet cannot work — a shell prompt is just
+// more output, and a 35-character Starship prompt looks exactly as substantive
+// as a real answer. That heuristic returned the prompt and left the actual
+// reply to be collected by the *next* command, so every answer arrived a turn
+// late.
+//
+// Outside a shell — a REPL, an ssh session — there is nothing to echo a marker,
+// so the settle heuristic remains, with its limitations.
 func (s *Session) Run(command string, timeout time.Duration) (string, error) {
 	s.Drain() // discard anything left from before, so the result is this command's
+
+	if s.isShell {
+		return s.runWithMarker(command, timeout)
+	}
 
 	if err := s.Send(command); err != nil {
 		return "", err
@@ -204,18 +238,89 @@ func (s *Session) Run(command string, timeout time.Duration) (string, error) {
 
 		s.mu.Lock()
 		quiet := time.Since(s.lastOut)
-		hasOutput := s.buf.Len() > 0
+		current := s.buf.String()
 		done := s.exited || s.closed
 		s.mu.Unlock()
 
 		if done {
 			break
 		}
-		if hasOutput && quiet > idleSettle {
+		if quiet <= idleSettle {
+			continue
+		}
+		// Settling is not the same as finishing. A slow command often emits a
+		// prompt or a warning first, then pauses while it works — returning at
+		// that point hands back the noise and discards the answer. Only treat
+		// a pause as completion once there is substantive output.
+		if isSubstantive(current) {
 			break
 		}
 	}
 	return s.Drain(), nil
+}
+
+// promptLike matches shell prompts and the banners programs print about
+// themselves, none of which mean a command has produced its answer.
+var promptLike = regexp.MustCompile(`(?i)^[\s>$#%❯➜]*$|starship|^\s*\S+@\S+[:\s]|^\s*\[\S+\]\s*[$#>]`)
+
+// minSubstantiveBytes is the output below which a pause is more likely to be a
+// prompt than a result.
+const minSubstantiveBytes = 24
+
+// isSubstantive reports whether captured output looks like an actual result.
+func isSubstantive(raw string) bool {
+	cleaned := Clean(raw)
+	if len(cleaned) < minSubstantiveBytes {
+		return false
+	}
+	// Strip lines that are only prompts or self-announcements and see whether
+	// anything of substance remains.
+	var real int
+	for _, line := range strings.Split(cleaned, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || promptLike.MatchString(t) {
+			continue
+		}
+		real += len(t)
+	}
+	return real >= minSubstantiveBytes
+}
+
+// runWithMarker executes a command and waits for a definite completion signal.
+func (s *Session) runWithMarker(command string, timeout time.Duration) (string, error) {
+	marker := fmt.Sprintf("__FREYA_DONE_%d_%d__", time.Now().UnixNano(), markerCounter.Add(1))
+
+	// printf rather than echo: it does not interpret escapes, and the marker
+	// is split so the echoed command line cannot itself match.
+	wrapped := fmt.Sprintf("%s\nprintf '%%s%%s\\n' '%s' '%s'",
+		command, marker[:len(marker)/2], marker[len(marker)/2:])
+
+	if err := s.Send(wrapped); err != nil {
+		return "", err
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		current := s.buf.String()
+		done := s.exited || s.closed
+		s.mu.Unlock()
+
+		if idx := strings.Index(current, marker); idx >= 0 {
+			s.mu.Lock()
+			s.buf.Reset()
+			s.mu.Unlock()
+			// Everything before the marker is the command's own output.
+			return current[:idx], nil
+		}
+		if done {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Timed out: hand back whatever arrived rather than nothing.
+	return s.Drain(), fmt.Errorf("command did not finish within %s (output so far returned)", timeout)
 }
 
 // Read returns buffered output without clearing it.
@@ -223,6 +328,17 @@ func (s *Session) Read() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.buf.String()
+}
+
+// Screen returns what the terminal currently displays.
+//
+// Use this for full-screen programs. They do not stream output — they position
+// the cursor and paint — so the accumulated byte stream is every frame run
+// together, while this is the single frame on screen now.
+func (s *Session) Screen() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.screen.Text()
 }
 
 // Drain returns buffered output and clears the buffer.
@@ -323,12 +439,20 @@ func (m *Manager) CloseAll() {
 // movement, colour and screen clearing.
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][B0]|\r`)
 
-// Clean strips terminal control sequences from captured output.
+// Clean renders captured output as text.
 //
-// Even with TERM=dumb some programs emit them, and a model reading
-// "\x1b[32mOK\x1b[0m" sees noise where a person sees green text.
+// This runs the bytes through the emulator rather than deleting escapes with a
+// pattern. Regex stripping missed OSC sequences terminated by ST rather than
+// BEL — which is exactly what shell integration emits — leaving "]133;C" in the
+// output and, worse, satisfying the "has output settled" check so answers were
+// returned a turn late.
 func Clean(s string) string {
-	s = ansiEscape.ReplaceAllString(s, "")
+	if s == "" {
+		return ""
+	}
+	screen := NewScreen(2000, defaultCols)
+	screen.Write(s)
+	s = screen.Text()
 	// Collapse the blank-line runs that clearing sequences leave behind.
 	lines := strings.Split(s, "\n")
 	out := make([]string, 0, len(lines))

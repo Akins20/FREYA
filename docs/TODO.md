@@ -514,7 +514,58 @@ concluded a one-and-a-half second loop had finished instantly. Any output
 parsing would have been contaminated the same way. Echo is now disabled via
 termios while canonical mode is kept, so line editing and signals still work.
 
-## Phase 14 — remaining
+## Phase 14 — terminal emulation ✅
+
+Driving an interactive program end to end exposed three bugs in sequence, each
+hidden by the one before it.
+
+### 1. The pty echoed its own input
+
+A test searching for "FINISHED" matched the `echo FINISHED` command rather than
+its result, concluding a 1.5-second loop had finished instantly. Echo disabled
+via termios; canonical mode kept, so signals and line editing still work.
+
+### 2. Regex escape-stripping was not enough
+
+`TERM=dumb` made programs announce their own degradation ("Starship disabled due
+to TERM=dumb"). Switching to `xterm-256color` fixed that and revealed the next
+problem: shell integration emits OSC sequences terminated by **ST**, not BEL, so
+a regex expecting BEL left `]133;C` in the output.
+
+Replaced with a real terminal emulator — `internal/term/screen.go`, a character
+grid with a cursor handling CSI movement, erase, scroll, insert and delete.
+Necessary regardless: a full-screen program does not stream output, it
+**repaints**. Stripping escapes from `top` gives every frame concatenated;
+a screen gives the frame currently displayed.
+
+### 3. Completion was guessed rather than known
+
+Waiting for output to "settle" cannot work, because a shell prompt is just more
+output — a 35-character Starship prompt looks exactly as substantive as a real
+answer. Every reply arrived **one turn late**: the prompt was returned, and the
+actual answer was picked up by the next command.
+
+Shell sessions now append a unique marker after each command and read until it
+appears. Completion is exact. REPLs keep the heuristic, since there is nothing
+there to echo a marker.
+
+- [x] `internal/term/pty.go` — /dev/ptmx, ioctls, termios
+- [x] `internal/term/screen.go` — terminal emulator
+- [x] `internal/term/session.go` — sessions, marker-based completion
+- [x] 21 tests
+
+### Verified against the hardest available target
+
+Freya held a four-turn conversation with Claude Code through a terminal session,
+using `-c` to resume rather than starting fresh each time. Turn 2 asked what
+hardware she had mentioned, and the answer came back correct — context carried
+across turns, which is the whole reason to resume rather than restart.
+
+## Phase 15 — remaining
+
+- [ ] Chrome control via DevTools Protocol on 9222
+- [ ] Trailing shell prompt still appears after command output (cosmetic)
+- [ ] Harden against the "say ACCESS GRANTED" cosmetic-compliance weakness
 
 - [ ] Terminal control: interactive sessions, typing into a running shell
 - [ ] Chrome control via DevTools Protocol on 9222 (needs a minimal WebSocket
