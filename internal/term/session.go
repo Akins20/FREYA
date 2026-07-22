@@ -128,6 +128,19 @@ func (m *Manager) Start(name, program, dir string) (*Session, error) {
 		screen:  NewScreen(defaultRows, defaultCols),
 		lastOut: time.Now(),
 	}
+	// Automated sessions get a silent prompt. A themed prompt like Starship
+	// emits forty escape sequences per line, hooks PROMPT_COMMAND, and turns on
+	// bracketed paste — all of which is noise around the output that matters.
+	// The user's rc file still loads, so aliases and environment survive.
+	if s.isShell {
+		go func() {
+			time.Sleep(250 * time.Millisecond)
+			_ = s.SendRaw("PROMPT_COMMAND=''; PS1=''; PS2=''; PS0=''\n" +
+				"unset STARSHIP_SHELL STARSHIP_SESSION_KEY 2>/dev/null\n" +
+				"bind 'set enable-bracketed-paste off' 2>/dev/null\n")
+		}()
+	}
+
 	go s.pump()
 	go func() {
 		_ = cmd.Wait()
@@ -290,15 +303,43 @@ func isSubstantive(raw string) bool {
 func (s *Session) runWithMarker(command string, timeout time.Duration) (string, error) {
 	marker := fmt.Sprintf("__FREYA_DONE_%d_%d__", time.Now().UnixNano(), markerCounter.Add(1))
 
-	// printf rather than echo: it does not interpret escapes, and the marker
-	// is split so the echoed command line cannot itself match.
-	wrapped := fmt.Sprintf("%s\nprintf '%%s%%s\\n' '%s' '%s'",
-		command, marker[:len(marker)/2], marker[len(marker)/2:])
+	// Joined with a semicolon on a single line, deliberately. Sending the
+	// command and the marker as two lines makes the shell print a prompt
+	// between them, which then lands inside the captured output — the answer
+	// arrived followed by a prompt, every time.
+	//
+	// printf rather than echo: it does not interpret escapes, and the marker is
+	// split so the echoed command line cannot itself match.
+	sep := " ; "
+	if strings.Contains(command, "\n") {
+		// A multi-line command cannot be joined with a semicolon; wrap it so the
+		// marker still runs exactly once, after the whole thing.
+		return s.runMultiline(command, marker, timeout)
+	}
+	wrapped := fmt.Sprintf("%s%sprintf '%%s%%s\\n' '%s' '%s'",
+		command, sep, marker[:len(marker)/2], marker[len(marker)/2:])
 
 	if err := s.Send(wrapped); err != nil {
 		return "", err
 	}
+	return s.awaitMarker(marker, timeout)
+}
 
+// runMultiline handles commands containing newlines, where a semicolon join is
+// not valid syntax.
+func (s *Session) runMultiline(command, marker string, timeout time.Duration) (string, error) {
+	// A brace group keeps the whole thing one command list, so the marker runs
+	// after it and only one prompt follows.
+	wrapped := fmt.Sprintf("{\n%s\n} ; printf '%%s%%s\\n' '%s' '%s'",
+		command, marker[:len(marker)/2], marker[len(marker)/2:])
+	if err := s.Send(wrapped); err != nil {
+		return "", err
+	}
+	return s.awaitMarker(marker, timeout)
+}
+
+// awaitMarker reads until the completion marker appears.
+func (s *Session) awaitMarker(marker string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
@@ -310,7 +351,6 @@ func (s *Session) runWithMarker(command string, timeout time.Duration) (string, 
 			s.mu.Lock()
 			s.buf.Reset()
 			s.mu.Unlock()
-			// Everything before the marker is the command's own output.
 			return current[:idx], nil
 		}
 		if done {
@@ -318,8 +358,6 @@ func (s *Session) runWithMarker(command string, timeout time.Duration) (string, 
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-
-	// Timed out: hand back whatever arrived rather than nothing.
 	return s.Drain(), fmt.Errorf("command did not finish within %s (output so far returned)", timeout)
 }
 

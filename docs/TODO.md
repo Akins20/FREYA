@@ -561,7 +561,58 @@ using `-c` to resume rather than starting fresh each time. Turn 2 asked what
 hardware she had mentioned, and the answer came back correct — context carried
 across turns, which is the whole reason to resume rather than restart.
 
-## Phase 15 — remaining
+## Phase 15 — orchestration ✅
+
+### The shell prompt bug, finally understood
+
+Output kept arriving with a prompt attached. The raw byte stream showed why:
+`ANSWER` → **PROMPT** → `MARKER`. The command and its completion marker were
+sent as two lines, so bash printed a prompt between them, and the prompt landed
+inside the captured output.
+
+- [x] Command and marker joined on one line with `;`, so one prompt follows
+      everything rather than sitting in the middle
+- [x] Multi-line commands wrapped in a brace group, where `;` is invalid syntax
+- [x] Prompt neutralised at session start — a themed prompt emits ~40 escape
+      sequences per line, hooks PROMPT_COMMAND and enables bracketed paste. The
+      user's rc still loads, so aliases and environment survive.
+- [x] `terminal_run` opens a session on demand rather than failing when one was
+      not opened first — ceremony that only wasted turns
+
+Output is now exactly the command's result.
+
+### Claude Code as a subordinate
+
+- [x] `internal/claude` — typed client over `-p --output-format json`
+- [x] Session index persisted, so a thread started this morning can be resumed
+      tonight, by id or by label
+- [x] `claude_delegate`, `claude_continue`, `claude_sessions`, `claude_skill`,
+      `claude_label`
+- [x] Permission levels expressed as plain English — plan, read-only, edit,
+      full — rather than requiring knowledge of Claude's own flag names
+- [x] Every delegation passes through the guard, since it consumes the user's
+      allowance and, in edit mode, changes files
+
+Verified: turn one asked Claude to remember 8317 and got "noted"; turn two
+resumed the same session, asked what the number was, and got "8317" back.
+Same session id both times.
+
+### A correction worth recording
+
+The first version described delegation as costing money and warned about
+"about four cents". That was wrong. Auth here is an **OAuth subscription**, not
+an API key — confirmed from the config — so usage counts against five-hourly
+and weekly rate-limit windows and nothing is billed per token. The dollar
+figure Claude reports is API-equivalent cost: a good proxy for how much of the
+window a task consumed, and a bad description of money.
+
+Framing corrected throughout: `Usage()` rather than `Spend()`, "~$X equiv"
+rather than "$X", and the budget flag documented as a runaway guard against
+agentic loops rather than a spending limit. Model choice is now called out in
+the skill description, since Claude defaults to its most capable model and two
+trivial turns measured ~$0.24 equivalent.
+
+## Phase 16 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222
 - [ ] Trailing shell prompt still appears after command output (cosmetic)

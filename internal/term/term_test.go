@@ -424,3 +424,47 @@ func TestNonShellStillUsesSettle(t *testing.T) {
 		t.Errorf("REPL output wrong: %q", Clean(out))
 	}
 }
+
+// TestNoPromptInOutput is the regression test for a shell prompt appearing
+// after every result. Sending the command and its completion marker as two
+// lines made the shell print a prompt between them, so the prompt landed inside
+// the captured output.
+func TestNoPromptInOutput(t *testing.T) {
+	_, s := newSession(t)
+	time.Sleep(500 * time.Millisecond) // let prompt neutralisation apply
+	s.Drain()
+
+	out, err := s.Run("echo THE-ONLY-THING-HERE", 15*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := strings.TrimSpace(Clean(out))
+
+	if clean != "THE-ONLY-THING-HERE" {
+		t.Errorf("output is not clean — expected exactly the echo, got:\n%q", clean)
+	}
+	// Specific things that used to leak.
+	for _, junk := range []string{"$", "❯", "v1.26", "akins", "/tmp"} {
+		if strings.Contains(clean, junk) {
+			t.Errorf("prompt residue %q in output: %q", junk, clean)
+		}
+	}
+}
+
+func TestMultilineCommandStillCompletes(t *testing.T) {
+	_, s := newSession(t)
+	time.Sleep(500 * time.Millisecond)
+	s.Drain()
+
+	// A semicolon join is invalid here, so this must take the brace-group path.
+	out, err := s.Run("for i in 1 2 3\ndo\n  echo item-$i\ndone", 15*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := Clean(out)
+	for _, want := range []string{"item-1", "item-2", "item-3"} {
+		if !strings.Contains(clean, want) {
+			t.Errorf("multiline command lost %q: %q", want, clean)
+		}
+	}
+}

@@ -78,18 +78,28 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 				"name":    {Type: "string", Description: "Session name."},
 				"command": {Type: "string", Description: "What to run."},
 				"timeout": {Type: "number", Description: "Seconds to wait for output, default 30."},
+				"dir":     {Type: "string", Description: "Directory, used only if the session must be opened."},
 				"reason":  {Type: "string", Description: "Why, shown when confirming."},
 			}, "name", "command"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
 			command := argRaw(args, "command")
+			// Open on demand. Requiring terminal_open first is ceremony that
+			// buys nothing: "run this in a terminal called build" is a complete
+			// instruction, and failing it on a technicality just wastes a turn.
 			s, ok := m.Get(name)
-			if !ok {
-				return "", fmt.Errorf("no session named %q — open one with terminal_open", name)
-			}
-			if s.Done() {
-				return "", fmt.Errorf("session %q has ended", name)
+			if !ok || s.Done() {
+				if ok && s.Done() {
+					_ = m.Close(name)
+				}
+				opened, err := m.Start(name, "", expand(argString(args, "dir")))
+				if err != nil {
+					return "", fmt.Errorf("could not open session %q: %w", name, err)
+				}
+				time.Sleep(600 * time.Millisecond)
+				opened.Drain()
+				s = opened
 			}
 
 			timeout := time.Duration(clamp(argInt(args, "timeout", 30), 1, 600)) * time.Second

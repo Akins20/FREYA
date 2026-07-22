@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/akins/jarvis/internal/agent"
+	"github.com/akins/jarvis/internal/claude"
 	"github.com/akins/jarvis/internal/config"
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
@@ -134,6 +135,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	terminals := term.NewManager()
 	defer terminals.CloseAll()
 	skills.RegisterTerminal(reg, g, terminals)
+
+	// Claude Code as a subordinate for heavy engineering work.
+	claudeClient := claude.New(cfg.DataDir)
+	skills.RegisterClaude(reg, g, claudeClient)
 	if seer, ok := provider.(llm.VisionAnalyzer); ok {
 		skills.RegisterVision(reg, seer)
 	}
