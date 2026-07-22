@@ -1,0 +1,19 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+
+# Build output
+/bin/
+/freya
+/jarvis
+
+# Local model weights (large; keep off the near-full external drive)
+/models/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
