@@ -256,3 +256,28 @@ func parseDue(s string) (time.Time, error) {
 func shortID() string {
 	return fmt.Sprintf("%x", time.Now().UnixNano()%0xfffff)
 }
+
+// DueReminders returns a function reporting reminders that have come due.
+//
+// It exists so the sentinel can watch reminders without importing the skills
+// package's storage internals, and so notes.json has exactly one reader.
+func DueReminders(dir string) func() ([]string, error) {
+	return func() ([]string, error) {
+		nb, err := openNoteBook(dir)
+		if err != nil {
+			return nil, err
+		}
+		nb.mu.Lock()
+		defer nb.mu.Unlock()
+
+		now := time.Now()
+		var due []string
+		for _, n := range nb.Notes {
+			if n.Done || n.Due == nil || n.Due.After(now) {
+				continue
+			}
+			due = append(due, n.Text)
+		}
+		return due, nil
+	}
+}

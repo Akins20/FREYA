@@ -6,8 +6,15 @@ import (
 	"strings"
 
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/voice"
 )
+
+// ObservationSource is the sentinel, narrowed to what the skill needs.
+type ObservationSource interface {
+	Pending() []sentinel.Observation
+	Peek() []sentinel.Observation
+}
 
 // VoiceController is what the voice skill manipulates. The REPL supplies it,
 // so the skills package stays unaware of how speech is actually produced.
@@ -128,6 +135,46 @@ func RegisterVoice(r *Registry, vc VoiceController) {
 		},
 		Handler: func(_ context.Context, _ map[string]any) (string, error) {
 			return vc.Style().Describe(), nil
+		},
+	})
+}
+
+// RegisterProactive lets Freya read her own backlog of observations.
+//
+// Without this the sentinel could only interrupt. With it, "anything I should
+// know about?" becomes a question she can actually answer, which is what makes
+// a quiet setting usable rather than merely silent.
+func RegisterProactive(r *Registry, s ObservationSource) {
+	if s == nil {
+		return
+	}
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "pending_observations",
+			Description: "Check what the background watchers have noticed but not " +
+				"interrupted the user about — disk, battery, memory, uncommitted work, " +
+				"due reminders. Use when asked what's going on, what needs attention, " +
+				"or whether anything is wrong.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"clear": {Type: "boolean", Description: "Drain the queue after reading. " +
+					"Default false, so nothing is silently lost."},
+			}),
+		},
+		Handler: func(_ context.Context, args map[string]any) (string, error) {
+			var items []string
+			if argBool(args, "clear") {
+				for _, o := range s.Pending() {
+					items = append(items, o.Describe())
+				}
+			} else {
+				for _, o := range s.Peek() {
+					items = append(items, o.Describe())
+				}
+			}
+			if len(items) == 0 {
+				return "Nothing outstanding. Everything looks normal.", nil
+			}
+			return strings.Join(items, "\n"), nil
 		},
 	})
 }

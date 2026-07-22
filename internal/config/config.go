@@ -35,6 +35,8 @@ type Config struct {
 	Verbose bool
 	// DryRun assesses actions and reports them without executing.
 	DryRun bool
+	// Chattiness controls proactive interruptions: quiet, balanced, companion.
+	Chattiness string
 	// SafetyThreshold sets Gemini's content filtering. Empty means the
 	// built-in default of "OFF"; set BLOCK_ONLY_HIGH or BLOCK_MEDIUM_AND_ABOVE
 	// to re-enable filtering.
@@ -81,6 +83,7 @@ func Load() (*Config, error) {
 		Verbose:         isTruthy(os.Getenv("FREYA_VERBOSE")),
 		DryRun:          isTruthy(os.Getenv("FREYA_DRY_RUN")),
 		SafetyThreshold: os.Getenv("FREYA_SAFETY"),
+		Chattiness:      os.Getenv("FREYA_CHATTINESS"),
 
 		Voice:        isTruthy(os.Getenv("FREYA_VOICE")),
 		STT:          os.Getenv("FREYA_STT"),

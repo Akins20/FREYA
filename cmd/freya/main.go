@@ -18,6 +18,7 @@ import (
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
 )
 
@@ -145,6 +146,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 		}
 	}
 
+	// Proactivity: watchers run in the background and only speak when an
+	// observation clears the salience bar.
+	sen := setupSentinel(cfg, reg)
+	skills.RegisterProactive(reg, sen)
+
 	// Ctrl-C cancels the in-flight request rather than killing the process.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -163,7 +169,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	} else if cfg.Voice {
 		vs.enabled = true
 	}
-	return repl(ctx, a, cfg, store, index, persona, vs, stdin)
+	sen.Notify = notifier(vs, true)
+	sen.Start(ctx)
+	defer sen.Stop()
+
+	return repl(ctx, a, cfg, store, index, persona, vs, stdin, sen)
 }
 
 func buildProvider(cfg *config.Config) (llm.Provider, error) {
@@ -209,7 +219,7 @@ func ask(ctx context.Context, a *agent.Agent, cfg *config.Config, input string) 
 
 func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 	store *memory.Store, index *memory.Index, persona agent.Persona,
-	vs *voiceState, stdin *bufio.Reader) error {
+	vs *voiceState, stdin *bufio.Reader, sen *sentinel.Sentinel) error {
 
 	fmt.Printf("%s%s%s — %s, %d skills, %d turns remembered\n",
 		cBold, persona.Name, cReset, a.Provider.Name(), len(a.Skills.Names()), store.TurnCount())
@@ -237,7 +247,7 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 		}
 
 		if strings.HasPrefix(line, "/") {
-			quit, err := command(ctx, line, a, cfg, store, index, vs)
+			quit, err := command(ctx, line, a, cfg, store, index, vs, sen)
 			if err != nil {
 				fmt.Printf("%s%v%s\n", cRed, err, cReset)
 			}
@@ -269,7 +279,8 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 
 // command handles /-prefixed REPL directives. Returns true to exit.
 func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Config,
-	store *memory.Store, index *memory.Index, vs *voiceState) (bool, error) {
+	store *memory.Store, index *memory.Index, vs *voiceState,
+	sen *sentinel.Sentinel) (bool, error) {
 
 	cmd, rest, _ := strings.Cut(line, " ")
 	rest = strings.TrimSpace(rest)
@@ -303,6 +314,9 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice style voice Kore  pick a voice preset
   /voice style reset       restore defaults
   /voice voices            list voices, paces, tones
+  /proactive               status and queued observations
+  /proactive quiet|balanced|companion
+  /proactive check         drain the queue now
   /audit                   recent actions and their outcomes
   /verbose                 toggle tool tracing
   /quit                    exit
@@ -329,6 +343,9 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 		names := a.Skills.Names()
 		fmt.Printf("  %d skills: %s\n", len(names), strings.Join(names, ", "))
 		return false, nil
+
+	case "/proactive":
+		return false, proactiveCommand(rest, sen, cfg)
 
 	case "/audit":
 		if a.Guard == nil || a.Guard.Audit == nil {
