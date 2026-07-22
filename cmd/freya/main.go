@@ -16,6 +16,7 @@ import (
 	"github.com/akins/jarvis/internal/agent"
 	"github.com/akins/jarvis/internal/claude"
 	"github.com/akins/jarvis/internal/config"
+	"github.com/akins/jarvis/internal/daemon"
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
@@ -44,22 +45,32 @@ func initColors() {
 
 func main() {
 	var (
-		oneShot  = flag.String("ask", "", "ask a single question and exit")
-		provider = flag.String("provider", "", "override provider: gemini, anthropic or mock")
-		model    = flag.String("model", "", "override model id")
-		verbose  = flag.Bool("v", false, "show tool calls and context accounting")
-		dryRun   = flag.Bool("dry-run", false, "assess actions without executing them")
+		oneShot   = flag.String("ask", "", "ask a single question and exit")
+		provider  = flag.String("provider", "", "override provider: gemini, anthropic or mock")
+		model     = flag.String("model", "", "override model id")
+		verbose   = flag.Bool("v", false, "show tool calls and context accounting")
+		dryRun    = flag.Bool("dry-run", false, "assess actions without executing them")
+		daemonize = flag.Bool("daemon", false, "run headless: watchers and notifications, no chat")
+		install   = flag.Bool("install-service", false, "write a systemd user unit and enable it")
 	)
 	flag.Parse()
 	initColors()
 
-	if err := run(*oneShot, *provider, *model, *verbose, *dryRun); err != nil {
+	if *install {
+		if err := installService(); err != nil {
+			fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize); err != nil {
 		fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
 		os.Exit(1)
 	}
 }
 
-func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) error {
+func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemonize bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -206,6 +217,28 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun bool) 
 	// Ctrl-C cancels the in-flight request rather than killing the process.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if daemonize {
+		// Headless. No agent and no conversation, so nothing here writes to
+		// memory — the session process owns every write, and two writers would
+		// corrupt an append-only archive and whole-file JSON stores.
+		d := daemon.New(cfg.DataDir, sen)
+		if vs != nil {
+			d.Speak = func(text string) {
+				go func() { _ = vs.session.Speak(context.Background(), text) }()
+			}
+		}
+		fmt.Printf("%sFreya daemon: %d watchers, chattiness %s, socket %s%s\n",
+			cDim, len(sen.Watchers()), sen.Chattiness, daemon.SocketPath(cfg.DataDir), cReset)
+		return d.Run(ctx)
+	}
+
+	// A session defers to a running daemon rather than starting a second set of
+	// watchers, so the same warning cannot arrive from two directions.
+	if daemon.Running(cfg.DataDir) {
+		sen.Stop()
+		fmt.Printf("%sdaemon is running — deferring background watching to it%s\n", cDim, cReset)
+	}
 
 	if oneShot != "" {
 		return ask(ctx, a, cfg, oneShot)
@@ -370,6 +403,8 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice policy off|warn|enforce
   /voice threshold <0-1>   tune acceptance
   /voice say <text>        speak something
+  /voice listen [2h|forever]  wake-word listening ("Freya" / "hey Freya")
+  /voice deaf              stop listening
   /voice style             show delivery settings
   /voice pace <name>       very slow .. very fast
   /voice pitch <name>      very low .. very high
@@ -378,6 +413,7 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /voice style reset       restore defaults
   /voice voices            list voices, paces, tones
   /reflect                 lenses and queued insights
+  /daemon                  background service status
   /proactive               status and queued observations
   /proactive quiet|balanced|companion
   /proactive check         drain the queue now
@@ -420,6 +456,29 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 		}
 		for _, i := range pending {
 			fmt.Printf("  %s\n", i.Describe())
+		}
+		return false, nil
+
+	case "/daemon":
+		if !daemon.Running(cfg.DataDir) {
+			fmt.Println("  not running — start it with:  freya -daemon")
+			fmt.Println("  or install it as a service:   freya -install-service")
+			return false, nil
+		}
+		reply, err := daemon.Ask(cfg.DataDir, "status")
+		if err != nil {
+			return false, err
+		}
+		if reply.Status != nil {
+			fmt.Printf("  %s\n", reply.Status.Describe())
+		}
+		if pending, err := daemon.Ask(cfg.DataDir, "pending"); err == nil {
+			if len(pending.Observations) == 0 {
+				fmt.Println("  nothing queued")
+			}
+			for _, o := range pending.Observations {
+				fmt.Printf("    %s\n", o.Describe())
+			}
 		}
 		return false, nil
 

@@ -23,6 +23,7 @@ type voiceState struct {
 	enabled  bool
 	dataDir  string
 	style    voice.Style
+	listener *voice.Listener
 }
 
 // Style implements skills.VoiceController.
@@ -80,10 +81,86 @@ func setupVoice(cfg *config.Config, provider llm.Provider) (*voiceState, error) 
 	}, nil
 }
 
+// startListening turns on continuous wake-word listening.
+func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Agent) error {
+	if v.listener != nil && v.listener.Listening() {
+		fmt.Printf("  %s\n", v.listener.Describe())
+		return nil
+	}
+
+	timeout := voice.DefaultInactivityTimeout
+	indefinite := false
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "forever", "indefinite", "always":
+		indefinite = true
+	case "":
+	default:
+		if d, err := time.ParseDuration(arg); err == nil {
+			timeout = d
+		}
+	}
+
+	v.listener = &voice.Listener{
+		Recorder:          v.session.Recorder,
+		Recognizer:        v.session.Recognizer,
+		InactivityTimeout: timeout,
+		Indefinite:        indefinite,
+		OnHeard: func(text string, woke bool) {
+			if woke {
+				return // the wake handler reports it
+			}
+			fmt.Printf("%s  (heard, not addressed: %.60s)%s\n", cDim, text, cReset)
+		},
+		OnStop: func(reason string) {
+			fmt.Printf("\n%s  %s%s\n%s❯%s ", cYellow, reason, cReset, cCyan, cReset)
+		},
+		OnWake: func(w voice.Wake) {
+			fmt.Printf("\n%s  ▸ %s%s\n", cCyan, w.Transcript, cReset)
+
+			command := w.Command
+			if command == "" {
+				// Addressed with nothing after it: acknowledge and take the
+				// next utterance as the request, which is how people speak.
+				_ = v.session.Speak(ctx, "Yes?")
+				follow, err := v.session.Listen(ctx)
+				if err != nil || strings.TrimSpace(follow) == "" {
+					return
+				}
+				command = follow
+				fmt.Printf("%s  ▸ %s%s\n", cCyan, command, cReset)
+			}
+
+			res, err := a.Ask(ctx, command)
+			if err != nil {
+				fmt.Printf("%s  %v%s\n", cRed, err, cReset)
+				return
+			}
+			fmt.Printf("\n%s\n\n%s❯%s ", res.Reply, cCyan, cReset)
+			_ = v.session.Speak(ctx, res.Reply)
+		},
+	}
+
+	if err := v.listener.Start(ctx); err != nil {
+		return err
+	}
+	limit := timeout.String()
+	if indefinite {
+		limit = "no timeout"
+	}
+	fmt.Printf("  listening for \"Freya\" or \"hey Freya\" — stops after %s\n", limit)
+	fmt.Printf("%s  note: while this is on, speech near the mic is transcribed,\n"+
+		"  whether or not it was meant for her. /voice deaf turns it off.%s\n", cDim, cReset)
+	return nil
+}
+
 func (v *voiceState) describe() string {
-	return fmt.Sprintf("recorder %s · ears %s · voice %s · policy %s · %s",
+	base := fmt.Sprintf("recorder %s · ears %s · voice %s · policy %s · %s",
 		v.session.Recorder.Name(), v.session.Recognizer.Name(),
 		v.session.Synth.Name(), v.policy, v.verifier.Describe())
+	if v.listener != nil && v.listener.Listening() {
+		base += "\n  " + v.listener.Describe()
+	}
+	return base
 }
 
 // voiceCommand handles the /voice family. Returns true if voice mode should
@@ -120,6 +197,16 @@ func voiceCommand(ctx context.Context, rest string, v *voiceState, a *agent.Agen
 
 	case "test":
 		return false, v.test(ctx)
+
+	case "listen":
+		return false, v.startListening(ctx, arg, a)
+
+	case "deaf", "unlisten":
+		if v.listener != nil {
+			v.listener.Stop()
+		}
+		fmt.Println("  stopped listening")
+		return false, nil
 
 	case "style":
 		if arg == "" {

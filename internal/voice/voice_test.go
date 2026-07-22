@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // synthWAV writes a 16-bit mono WAV built from a fundamental plus harmonics.
@@ -431,4 +433,134 @@ func BenchmarkFFT(b *testing.B) {
 		copy(im, make([]float64, fftSize))
 		fft(re, im)
 	}
+}
+
+func TestDetectWake(t *testing.T) {
+	woken := []struct{ transcript, wantCommand string }{
+		{"hey freya what's my disk at", "what's my disk at"},
+		{"Freya, check the build", "check the build"},
+		{"hey Freyja open my assignment folder", "open my assignment folder"},
+		{"ok fraya remind me in ten minutes", "remind me in ten minutes"},
+		{"so, freya, what time is it?", "what time is it?"},
+		{"hey freya", ""},
+		{"FREYA STOP", "STOP"},
+	}
+	for _, tc := range woken {
+		w, ok := DetectWake(tc.transcript)
+		if !ok {
+			t.Errorf("missed the wake word in %q", tc.transcript)
+			continue
+		}
+		if w.Command != tc.wantCommand {
+			t.Errorf("%q -> command %q, want %q", tc.transcript, w.Command, tc.wantCommand)
+		}
+	}
+
+	// Ordinary conversation must not trigger it.
+	ignored := []string{
+		"", "what's the weather like",
+		"I was talking to my friend about the project",
+		"the frequency was too high",
+		"free your mind",
+	}
+	for _, s := range ignored {
+		if _, ok := DetectWake(s); ok {
+			t.Errorf("woke on ordinary speech: %q", s)
+		}
+	}
+}
+
+func TestWakeToleratesRecognitionVariants(t *testing.T) {
+	// Recognisers do not reliably render an invented name, and matching only
+	// the exact spelling would mean ignoring the user most of the time.
+	for _, spelling := range []string{
+		"hey freya go", "hey freyja go", "hey fraya go",
+		"hey freyer go", "hey freia go", "hey friar go",
+	} {
+		if _, ok := DetectWake(spelling); !ok {
+			t.Errorf("did not recognise the name in %q", spelling)
+		}
+	}
+}
+
+func TestListenerRefusesWithoutDevices(t *testing.T) {
+	l := &Listener{}
+	if err := l.Start(context.Background()); err == nil {
+		t.Fatal("started listening with no recorder or recogniser")
+	}
+}
+
+// TestListenerStopsWhenIdle is the safeguard against listening forever because
+// somebody turned it on and forgot.
+func TestListenerStopsWhenIdle(t *testing.T) {
+	l := &Listener{
+		Recorder:          silentRecorder{},
+		Recognizer:        emptyRecognizer{},
+		InactivityTimeout: 250 * time.Millisecond,
+		TempDir:           t.TempDir(),
+	}
+	var reason string
+	var mu sync.Mutex
+	l.OnStop = func(r string) { mu.Lock(); reason = r; mu.Unlock() }
+
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for l.Listening() {
+		select {
+		case <-deadline:
+			l.Stop()
+			t.Fatal("listener never timed out")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(reason, "listening off") {
+		t.Errorf("stop reason unclear: %q", reason)
+	}
+}
+
+func TestListenerStopsOnRequest(t *testing.T) {
+	l := &Listener{
+		Recorder:   silentRecorder{},
+		Recognizer: emptyRecognizer{},
+		Indefinite: true,
+		TempDir:    t.TempDir(),
+	}
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !l.Listening() {
+		t.Fatal("not listening after start")
+	}
+	l.Stop()
+	deadline := time.After(3 * time.Second)
+	for l.Listening() {
+		select {
+		case <-deadline:
+			t.Fatal("did not stop on request")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+type silentRecorder struct{}
+
+func (silentRecorder) Name() string { return "silent" }
+func (silentRecorder) Record(ctx context.Context, path string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(60 * time.Millisecond):
+	}
+	return os.WriteFile(path, make([]byte, 8), 0o644) // below the audio threshold
+}
+
+type emptyRecognizer struct{}
+
+func (emptyRecognizer) Name() string { return "empty" }
+func (emptyRecognizer) Transcribe(context.Context, string) (string, error) {
+	return "", nil
 }
