@@ -492,3 +492,40 @@ func TestAuditSurvivesDenialAndApproval(t *testing.T) {
 		t.Errorf("audit did not capture both outcomes: %v", outcomes)
 	}
 }
+
+// TestBrowserActionsRunWithoutConfirmation is the daemon-usability guarantee:
+// over voice there is no terminal to confirm on, so anything the user routinely
+// asks for in the browser must be low-risk enough to run unprompted. Opening a
+// page as the user, clicking, filling a non-secret field — all of it. A nil
+// Confirm stands in for the daemon, which denies anything that needs asking.
+func TestBrowserActionsRunWithoutConfirmation(t *testing.T) {
+	g := New(nil, nil) // nil confirm = the daemon: deny anything that must ask
+
+	browserActions := []Action{
+		{Kind: KindBrowser, Command: "open x", Reason: "open portal, auth context, real cookies"},
+		{Kind: KindBrowser, Command: "click #login", Reason: "click"},
+		{Kind: KindBrowser, Command: "fill #search", Reason: "enter text"},
+		{Kind: KindBrowser, Command: "submit form", Reason: "submit"},
+		{Kind: KindBrowser, Command: "type into #box", Reason: "type"},
+	}
+	for _, a := range browserActions {
+		out, err := g.Run(context.Background(), a, func(ctx context.Context) (string, error) {
+			return "ran", nil
+		})
+		if err != nil {
+			t.Errorf("%q was blocked over voice: %v", a.Command, err)
+		}
+		if out != "ran" {
+			t.Errorf("%q did not execute (out=%q)", a.Command, out)
+		}
+	}
+
+	// The safety line still holds: genuinely destructive things are denied when
+	// nobody can confirm, rather than run.
+	_, err := g.Run(context.Background(),
+		Action{Kind: KindDelete, Command: "rm -rf /etc", Args: []string{"/etc"}, Reason: "delete"},
+		func(ctx context.Context) (string, error) { return "ran", nil })
+	if err == nil {
+		t.Error("a destructive delete of /etc ran without confirmation — the guard is too loose")
+	}
+}

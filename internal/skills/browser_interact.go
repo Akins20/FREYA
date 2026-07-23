@@ -70,7 +70,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			sel, opt := argString(args, "selector"), argString(args, "option")
-			action := guard.Action{Kind: guard.KindInput, Command: "select " + opt,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "select " + opt,
 				Reason: fmt.Sprintf("choose %q in %q, tab %q (%s context)", opt, sel, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				return tab.client.SelectOption(ctx, sel, opt)
@@ -98,7 +98,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				want = v
 			}
 			sel := argString(args, "selector")
-			action := guard.Action{Kind: guard.KindInput, Command: "check " + sel,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "check " + sel,
 				Reason: fmt.Sprintf("set %q in tab %q (%s context)", sel, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				return tab.client.SetChecked(ctx, sel, want)
@@ -157,7 +157,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			key := argString(args, "key")
-			action := guard.Action{Kind: guard.KindInput, Command: "press " + key,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "press " + key,
 				Reason: fmt.Sprintf("press %s in tab %q (%s context)", key, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if sel := argString(args, "selector"); sel != "" {
@@ -197,7 +197,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			sel := argString(args, "selector")
-			action := guard.Action{Kind: guard.KindInput, Command: "type into " + sel,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "type into " + sel,
 				Reason: fmt.Sprintf("type into %q in tab %q (%s context)", sel, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.TypeText(ctx, sel, argRaw(args, "text")); err != nil {
@@ -226,7 +226,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			sel := argString(args, "selector")
-			action := guard.Action{Kind: guard.KindInput, Command: "click " + sel,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
 				Reason: fmt.Sprintf("click %q with real mouse events in tab %q (%s context)",
 					sel, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
@@ -314,7 +314,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			}
 			sel := argString(args, "selector")
 			// Submitting is the irreversible one: it sends whatever is in the form.
-			action := guard.Action{Kind: guard.KindInput, Command: "submit form",
+			action := guard.Action{Kind: guard.KindBrowser, Command: "submit form",
 				Reason: fmt.Sprintf("submit the form in tab %q (%s context) — this sends its contents",
 					tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {

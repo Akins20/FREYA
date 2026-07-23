@@ -30,13 +30,20 @@ type Style struct {
 	Custom string `json:"custom,omitempty"`
 }
 
-// DefaultStyle matches the default persona: quick, dry and casual.
+// DefaultStyle matches the default persona: warm and unhurried.
+//
+// The delivery is where "sassy" actually lived. The words could be kind, but a
+// dry, amused, brisk voice reads as attitude no matter what it is saying — tone
+// carries more than text over audio. So the default is a voice chosen for warmth
+// (Sulafat), an ordinary conversational pace rather than a clipped brisk one,
+// and warm-and-calm tone in place of dry-and-amused. This is the register of an
+// assistant who is on your side, not one performing wit at you.
 func DefaultStyle() Style {
 	return Style{
-		Voice: "Leda",
-		Pace:  "brisk",
+		Voice: "Sulafat",
+		Pace:  "normal",
 		Pitch: "normal",
-		Tone:  []string{"casual", "dry", "amused"},
+		Tone:  []string{"warm", "calm"},
 	}
 }
 

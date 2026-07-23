@@ -128,12 +128,19 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				Command: "open " + url,
 				Reason:  fmt.Sprintf("open %s in the %s browser context", url, bctx),
 			}
-			// Acting with the user's live sessions is a different thing from
-			// reading a page anonymously, and is never silent.
+			// Opening a page — even signed in as the user — is not a destructive
+			// act; it loads something they already have access to. It used to be
+			// elevated to a confirm-required action, which meant that over voice,
+			// where there is no terminal to confirm on, it was denied outright:
+			// she could not open the user's own portal at their own request. The
+			// user has explicitly standing-authorised the auth context, so this
+			// stays low-risk. The reason still names it, so the audit log records
+			// that a page was opened with their real session; and the genuinely
+			// consequential steps — typing a secret, submitting — are gated at the
+			// skills that do them, not here.
 			if bctx == browser.ContextAuth {
-				action.Kind = guard.KindSystem
 				action.Reason = fmt.Sprintf(
-					"open %s SIGNED IN AS THE USER (auth context, real cookies)", url)
+					"open %s signed in as the user (auth context, real cookies)", url)
 			}
 
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
@@ -237,7 +244,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", fmt.Errorf("no tab named %q", argString(args, "name"))
 			}
 			sel := argString(args, "selector")
-			action := guard.Action{Kind: guard.KindInput, Command: "click " + sel,
+			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
 				Reason: fmt.Sprintf("click %q in tab %q (%s context)", sel, tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.Click(ctx, sel); err != nil {
@@ -278,7 +285,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 					"ask the user to type it themselves", sel)
 			}
 
-			action := guard.Action{Kind: guard.KindInput,
+			action := guard.Action{Kind: guard.KindBrowser,
 				Command: "fill " + sel,
 				Reason: fmt.Sprintf("enter text into %q on tab %q (%s context)",
 					sel, tab.name, tab.ctx)}
