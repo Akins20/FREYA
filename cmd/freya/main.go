@@ -55,6 +55,7 @@ func main() {
 		daemonize = flag.Bool("daemon", false, "run headless: watchers and notifications, no chat")
 		install   = flag.Bool("install-service", false, "write a systemd user unit and enable it")
 		talk      = flag.Bool("talk", false, "trigger one push-to-talk exchange in the running daemon")
+		autonomy  = flag.Bool("yes", false, "auto-approve routine actions (writes, commands); still refuses the destructive")
 	)
 	flag.Parse()
 	initColors()
@@ -88,13 +89,13 @@ func main() {
 		return
 	}
 
-	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize); err != nil {
+	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize, *autonomy); err != nil {
 		fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
 		os.Exit(1)
 	}
 }
 
-func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemonize bool) error {
+func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemonize, autonomous bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -150,6 +151,23 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	g := guard.New(confirm, auditLog)
 	g.DryRun = cfg.DryRun
 	g.ProtectedPaths = []string{cfg.DataDir}
+
+	// Autonomy: how much she does without stopping to ask.
+	//
+	// The default guard asks before anything that writes a file, runs a command,
+	// or moves something — sensible when a human is at the keyboard to answer.
+	// But over voice, and in any automated run, there is nobody to answer, so
+	// those routine actions were simply denied, and she could not do the work
+	// she was handed. That is the "she narrates and does nothing" failure at its
+	// root. The user's standing rule is the right dial: full autonomy for
+	// ordinary work, a confirmation only before something destructive. So when
+	// asked to run autonomously — the -yes flag, and the background daemon — she
+	// auto-approves up to RiskMedium (writes, commands, moves, browser) and only
+	// RiskHigh (deleting data, touching system paths, escalating to root) still
+	// needs a yes she cannot get, and so is safely refused.
+	if autonomous || daemonize {
+		g.AutoApprove = guard.RiskMedium
+	}
 
 	reg := skills.New()
 	skills.RegisterSystem(reg)
@@ -267,6 +285,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 
 		if vs != nil {
 			vs.indicator = ind
+			// Over voice, a destructive action is not silently denied — she asks
+			// about it aloud and acts on the spoken answer. Routine work never
+			// reaches here (auto-approved); only RiskHigh does.
+			if voiceErr == nil {
+				g.Confirm = voiceConfirm(vs)
+			}
 			d.Speak = func(text string) {
 				go func() { _ = vs.session.Speak(context.Background(), text) }()
 			}
