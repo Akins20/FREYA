@@ -30,13 +30,40 @@ func main() {
 		parallel = flag.Int("parallel", 2, "how many benchmarks to run at once")
 		keep     = flag.Bool("keep", false, "keep workspaces on disk for inspection")
 		verbose  = flag.Bool("v", false, "stream per-run progress")
+		runs     = flag.Int("runs", 1, "run each benchmark this many times for a pass-rate")
+		serve    = flag.Bool("serve", false, "just start the fake portal and print its URL, for manual testing")
 	)
 	flag.Parse()
+
+	if *serve {
+		ts, err := bench.StartPortal()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("fake portal serving at %s/portal  (Ctrl-C to stop)\n", ts.URL)
+		select {} // block forever
+	}
 
 	all := bench.AllBenchmarks()
 	if *category != "" {
 		all = bench.InCategory(*category)
 	}
+
+	// Browser benchmarks run against a local fake portal, built at run time so
+	// they can check its server-side record. Start it whenever a browser
+	// benchmark might run, and keep it up for the whole suite.
+	wantBrowser := *category == "" || *category == "browser"
+	if wantBrowser {
+		ts, err := bench.StartPortal()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bench: could not start test portal: %v\n", err)
+			os.Exit(1)
+		}
+		defer ts.Close()
+		all = append(all, bench.BrowserBenchmarks(ts)...)
+	}
+
 	if *only != "" {
 		var f []bench.Benchmark
 		for _, b := range all {
@@ -75,46 +102,67 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Printf("running %d benchmarks against %s (parallel %d)\n\n", len(all), bin, *parallel)
+	n := maxi(1, *runs)
+	fmt.Printf("running %d benchmarks × %d runs against %s (parallel %d)\n\n", len(all), n, bin, *parallel)
 	start := time.Now()
 
-	// A bounded worker pool: benchmarks are independent, and running a few at
-	// once cuts a suite that is mostly waiting on the model from an hour to
-	// minutes, without hammering the API.
+	// Each benchmark is enqueued n times. A pass-RATE, not a single pass/fail, is
+	// what makes the number trustworthy: the model is non-deterministic, so one
+	// run is an anecdote and five runs are a measurement.
+	type job struct {
+		b   bench.Benchmark
+		run int
+	}
+	var jobs []job
+	for _, b := range all {
+		for i := 0; i < n; i++ {
+			jobs = append(jobs, job{b, i})
+		}
+	}
+
 	var (
-		card bench.Scorecard
-		mu   sync.Mutex
-		wg   sync.WaitGroup
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		results = map[string][]bench.Result{} // benchmark name -> its runs
 	)
 	sem := make(chan struct{}, maxi(1, *parallel))
-	for _, b := range all {
+	for _, jb := range jobs {
 		wg.Add(1)
-		go func(b bench.Benchmark) {
+		go func(jb job) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if ctx.Err() != nil {
 				return
 			}
-			r := runner.Run(ctx, b)
+			r := runner.Run(ctx, jb.b)
 			mu.Lock()
-			card.Add(r)
+			results[jb.b.Name] = append(results[jb.b.Name], r)
 			mark := "FAIL"
 			if r.Pass {
 				mark = "pass"
 			}
-			fmt.Printf("  [%s] %-28s %s\n", mark, b.Name, r.Reason)
+			fmt.Printf("  [%s] %-30s run %d/%d  %s\n", mark, jb.b.Name, jb.run+1, n, r.Reason)
 			mu.Unlock()
-		}(b)
+		}(jb)
 	}
 	wg.Wait()
 
-	fmt.Printf("\n%s\n", card.Report())
+	fmt.Printf("\n%s\n", bench.PassRateReport(all, results))
 	fmt.Printf("(suite took %s)\n", time.Since(start).Round(time.Second))
 
-	// Exit non-zero if anything failed, so this can gate a release.
-	for _, r := range card.Results {
-		if !r.Pass {
+	// Exit non-zero if any benchmark never passed across its runs, so this can
+	// gate a release. A flaky benchmark (some passes) does not fail the gate; a
+	// total miss does.
+	for _, rs := range results {
+		anyPass := false
+		for _, r := range rs {
+			if r.Pass {
+				anyPass = true
+				break
+			}
+		}
+		if !anyPass {
 			os.Exit(1)
 		}
 	}

@@ -232,3 +232,8 @@ func Setups(steps ...func(string) error) func(string) error {
 		return nil
 	}
 }
+
+// containsFold is a case-insensitive substring test.
+func containsFold(haystack, needle string) bool {
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+}
