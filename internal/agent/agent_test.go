@@ -248,7 +248,7 @@ func TestEmptyModelReplyGetsFallback(t *testing.T) {
 
 func TestPersonaTraits(t *testing.T) {
 	p := DefaultPersona()
-	want := []string{"sassy", "friendly", "casual", "blunt", "direct"}
+	want := []string{"friendly", "warm", "casual", "direct"}
 	if strings.Join(p.Traits, ",") != strings.Join(want, ",") {
 		t.Fatalf("default traits = %v, want %v", p.Traits, want)
 	}

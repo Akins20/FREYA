@@ -225,4 +225,27 @@ func RegisterBrowserHistory(r *Registry) {
 			return fmt.Sprintf("%s\n%s\n(from bookmarks)", v.Title, v.URL), nil
 		},
 	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "browser_accounts",
+			Description: "List the usernames the user has saved in Chrome for a site — NOT the " +
+				"passwords, which are never read. Check this BEFORE signing in: if a site has " +
+				"more than one saved account, ask the user which to use rather than picking " +
+				"one. If it has exactly one, sign in with it. Passwords are filled by Chrome " +
+				"itself when you choose a login; you only ever need the username to know " +
+				"whether there is a choice to make.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"site": {Type: "string", Description: "The site or domain, e.g. 'learn.uopeople.com' or a full URL."},
+			}, "site"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			logins, err := browser.LoadLogins("")
+			if err != nil {
+				return "", err
+			}
+			site := argString(args, "site")
+			return browser.FormatAccounts(site, browser.AccountsFor(logins, site)), nil
+		},
+	})
 }

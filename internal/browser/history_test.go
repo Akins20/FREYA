@@ -2,6 +2,7 @@ package browser
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -359,6 +360,52 @@ func TestKeyParsing(t *testing.T) {
 		}
 		if got != c.wantKey {
 			t.Errorf("%q: key = %q want %q", c.input, got, c.wantKey)
+		}
+	}
+}
+
+func TestLoadLoginsReadsUsernamesNotPasswords(t *testing.T) {
+	hist, err := HistoryFile()
+	if err != nil {
+		t.Skip("no browser profile")
+	}
+	path := filepath.Join(filepath.Dir(hist), "Login Data")
+	if _, err := os.Stat(path); err != nil {
+		t.Skip("no Login Data file")
+	}
+	logins, err := LoadLogins(path)
+	if err != nil {
+		t.Fatalf("load logins: %v", err)
+	}
+	if len(logins) == 0 {
+		t.Skip("no saved logins")
+	}
+	t.Logf("read %d saved logins", len(logins))
+
+	// The struct has no password field at all; this asserts the shape rather
+	// than a value, which is the real guarantee — the secret is never carried.
+	for _, l := range logins {
+		if l.Origin == "" {
+			t.Error("a login came back with no origin")
+		}
+	}
+
+	// A site with multiple accounts must trigger the ask-path formatting.
+	byHost := map[string]int{}
+	for _, l := range logins {
+		byHost[l.Host()]++
+	}
+	var multiSite string
+	for h, n := range byHost {
+		if n > 1 {
+			multiSite = h
+			break
+		}
+	}
+	if multiSite != "" {
+		out := FormatAccounts(multiSite, AccountsFor(logins, multiSite))
+		if !strings.Contains(strings.ToUpper(out), "ASK") {
+			t.Errorf("a multi-account site did not produce an ASK prompt:\n%s", out)
 		}
 	}
 }

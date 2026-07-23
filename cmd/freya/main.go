@@ -273,6 +273,18 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			// The desktop key binding pokes the socket, which calls this.
 			if voiceErr == nil {
 				d.Talk = func() { pushToTalk(ctx, a, vs) }
+
+				// In the daemon, voice is push-to-talk, so her mid-action
+				// narration must be *spoken*, not just printed to a terminal
+				// nobody is watching. Without this she goes to work in silence:
+				// you ask her to do something, she says nothing, and things
+				// start happening. Speaking the interim line is how she tells
+				// you "on it, opening your portal" before she opens it.
+				printInterim := a.OnInterim
+				a.OnInterim = func(text string) {
+					printInterim(text)
+					go func() { _ = vs.session.Speak(context.Background(), text) }()
+				}
 			}
 		}
 

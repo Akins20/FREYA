@@ -123,10 +123,19 @@ func (s SoxRecorder) Record(ctx context.Context, path string) error {
 	return nil
 }
 
-// pttMaxRecording bounds a single push-to-talk capture. Generous, because a
-// spoken request after a deliberate key press can run long, but finite so a
-// stuck gate cannot record forever.
-const pttMaxRecording = 15 * time.Second
+// pttMaxRecording bounds a single push-to-talk capture. Long, because a spoken
+// request after a deliberate key press can be a whole paragraph of instructions
+// — "sign in, open this, then do that" — and cutting it at fifteen seconds sent
+// half-sentences to be acted on. Finite still, so a stuck gate cannot run away.
+const pttMaxRecording = 45 * time.Second
+
+// pttTrailingSilence is how long a pause must last before the capture ends.
+//
+// This was 1.5s and cut people off mid-thought: a natural pause while deciding
+// what to say next reads as the end of speech at that setting, and the recorder
+// stopped and sent a fragment. 2.5s tolerates a real thinking pause while still
+// ending promptly once someone has genuinely finished.
+const pttTrailingSilence = "2.5"
 
 // PushToTalkRecorder captures a command after an explicit trigger.
 //
@@ -146,17 +155,17 @@ func (PushToTalkRecorder) Record(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, pttMaxRecording)
 	defer cancel()
 
-	// silence 1 0.1 0.1%  — begin almost immediately: 0.1% is below any real
-	//                       room, so the first clause is satisfied at once
-	// silence 1 1.5 2%    — stop 1.5s after the level falls below 2%, i.e. the
-	//                       speaker has finished
+	// silence 1 0.1 0.1%   — begin almost immediately: 0.1% is below any real
+	//                        room, so the first clause is satisfied at once
+	// silence 1 <n> 2%     — stop after n seconds below 2%, i.e. a genuine pause
+	//                        rather than a mid-sentence breath
 	cmd := exec.CommandContext(ctx, "sox",
 		"-q", "-d",
 		"-r", strconv.Itoa(sampleRate),
 		"-c", strconv.Itoa(channels),
 		"-b", strconv.Itoa(bitDepth),
 		path,
-		"silence", "1", "0.1", "0.1%", "1", "1.5", "2%",
+		"silence", "1", "0.1", "0.1%", "1", pttTrailingSilence, "2%",
 	)
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

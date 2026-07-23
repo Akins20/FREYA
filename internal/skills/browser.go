@@ -101,11 +101,13 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		Tool: llm.Tool{
 			Name: "browser_open",
 			Description: "Open a browser tab and load a page. Two contexts:\n\n" +
-				"'guest' (default) is isolated and signed into nothing — use it for " +
-				"reading any ordinary page, and for anything you do not fully trust.\n\n" +
-				"'auth' carries the user's real cookies and logins. Use it only when the " +
-				"page genuinely requires being signed in — a portal, an account page, a " +
-				"dashboard. Everything done there acts as the user on their accounts.",
+				"'guest' is isolated and signed into nothing — use it for reading an " +
+				"ordinary public page, and for anything you do not fully trust.\n\n" +
+				"'auth' carries the user's real cookies and logins — it IS their Chrome. " +
+				"Use it for anything involving their accounts: a portal, dashboard, email, " +
+				"their school, an account page. In it they are already signed in to most " +
+				"sites, so this is how you access their things. Do not fall back to guest " +
+				"and then claim you cannot sign in. Everything done here acts as the user.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "A name to refer to this tab by."},
 				"url":  {Type: "string", Description: "Page to load."},
