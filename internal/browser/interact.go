@@ -104,6 +104,8 @@ func (c *Client) ClickReal(ctx context.Context, selector string) error {
 			sleepCtx(ctx, 45*time.Millisecond)
 		}
 	}
+	// Let whatever the click triggered load before the caller reads the page.
+	c.WaitStable(ctx, 5*time.Second)
 	return nil
 }
 

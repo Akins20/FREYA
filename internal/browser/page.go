@@ -21,7 +21,13 @@ func (c *Client) Navigate(ctx context.Context, url string) error {
 	if _, err := c.Call(ctx, "Page.navigate", map[string]any{"url": url}); err != nil {
 		return err
 	}
-	return c.waitReady(ctx)
+	if err := c.waitReady(ctx); err != nil {
+		return err
+	}
+	// Then wait for the app's own content, not just its shell — otherwise a
+	// read a moment later sees placeholders.
+	c.WaitStable(ctx, 8*time.Second)
+	return nil
 }
 
 // waitReady polls document.readyState.
@@ -45,6 +51,59 @@ func (c *Client) waitReady(ctx context.Context) error {
 		}
 	}
 	return nil // usable enough; a slow page is not a failure
+}
+
+// WaitStable waits until the page's content stops changing.
+//
+// # Why readyState is not enough
+//
+// A single-page app reports readyState "complete" the instant its HTML shell
+// arrives — and then fetches the actual content and swaps it in a beat later.
+// Reading at that moment sees skeleton placeholders, not the list that is about
+// to appear, which is exactly the "it keeps coming up empty" failure: she looked
+// too early. This waits for the real thing.
+//
+// The signal is a content signature — how much text is on the page, and how many
+// elements — polled until it holds still. Placeholders are sparse; when the
+// fetch lands, text and element counts jump, then settle. When the signature
+// stops moving for a few polls, the content has arrived. A page that never
+// settles (a live ticker, an animation) falls through to the timeout, which is
+// correct: at that point what is there is what there is going to be.
+func (c *Client) WaitStable(ctx context.Context, timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	const sigExpr = `(() => {
+      const b = document.body;
+      if (!b) return "0:0";
+      // Text length catches skeleton→content; element count catches lists that
+      // render rows without much text. Together they move when content loads.
+      return b.innerText.length + ":" + document.querySelectorAll('*').length;
+    })()`
+
+	var last string
+	stable := 0
+	for time.Now().Before(deadline) {
+		sig, err := c.EvalString(ctx, sigExpr)
+		if err == nil {
+			if sig == last && sig != "0:0" {
+				stable++
+				// Unchanged for three polls (~600ms) means it has settled.
+				if stable >= 3 {
+					return
+				}
+			} else {
+				stable = 0
+				last = sig
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // Eval runs JavaScript and returns the raw result value.
@@ -153,6 +212,9 @@ func (c *Client) Click(ctx context.Context, selector string) error {
 	if res == "not-found" {
 		return fmt.Errorf("no element matches %q", selector)
 	}
+	// A click on an app usually swaps content in; wait for it to settle so the
+	// next read sees the result, not the page mid-transition.
+	c.WaitStable(ctx, 5*time.Second)
 	return nil
 }
 

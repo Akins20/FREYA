@@ -126,7 +126,10 @@ func findBinary(explicit string) (string, error) {
 		if _, err := os.Stat(explicit); err != nil {
 			return "", fmt.Errorf("no binary at %s", explicit)
 		}
-		return explicit, nil
+		// Must be absolute: each run changes the working directory to a throwaway
+		// workspace, and a relative binary path would resolve against that empty
+		// dir and fail to launch — silently, as 0 tools in 0 seconds.
+		return absPath(explicit)
 	}
 	for _, cand := range []string{"./bin/freya", "bin/freya"} {
 		if _, err := os.Stat(cand); err == nil {

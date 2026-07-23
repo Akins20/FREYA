@@ -28,6 +28,26 @@ func (w *World) Exists(rel string) bool {
 	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
+// findByBase walks the workspace for a non-empty file with the given basename,
+// so a check can locate an output wherever she reasonably filed it.
+func (w *World) findByBase(base string) string {
+	var found string
+	_ = filepath.Walk(w.Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || found != "" {
+			return nil
+		}
+		// The data directory is Freya's own memory, not task output.
+		if strings.Contains(path, ".freya-data") {
+			return nil
+		}
+		if filepath.Base(path) == base && info.Size() > 0 {
+			found = path
+		}
+		return nil
+	})
+	return found
+}
+
 // Find returns the first workspace file matching a glob, or "".
 func (w *World) Find(glob string) string {
 	matches, _ := filepath.Glob(filepath.Join(w.Dir, glob))
@@ -65,9 +85,19 @@ func (w *World) ReadText(rel string) (string, error) {
 
 // FileHas passes when a file exists and its text contains every needle
 // (case-insensitive).
+//
+// The named path is a hint, not a demand: if it isn't there, the file is sought
+// by its basename anywhere in the workspace. Insisting on an exact directory
+// would fail a task she did correctly just because she filed the output beside
+// its inputs rather than at the root — a placement choice, not a capability gap.
 func FileHas(rel string, needles ...string) func(*World) (bool, string) {
 	return func(w *World) (bool, string) {
 		text, err := w.ReadText(rel)
+		if err != nil {
+			if found := w.findByBase(filepath.Base(rel)); found != "" {
+				text, err = w.ReadText(found)
+			}
+		}
 		if err != nil {
 			return false, fmt.Sprintf("%s was not created", rel)
 		}

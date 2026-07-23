@@ -267,6 +267,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	sen := setupSentinel(cfg, reg, store)
 	skills.RegisterProactive(reg, sen)
 	skills.RegisterTelemetry(reg, cfg.DataDir)
+	skills.RegisterSkillbook(reg)
 
 	// Ctrl-C cancels the in-flight request rather than killing the process.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
