@@ -25,9 +25,11 @@ func RegisterSkillbook(r *Registry) {
 		"using your tools well, and reading the relevant one first is what turns a " +
 		"pile of capabilities into competence. Available skills:\n\n" +
 		playbook.Index() + "\n\n" +
-		"Consult 'web' before driving any web page, 'signin' before logging in, " +
-		"'documents' before producing a file, 'research' before a real search task, " +
-		"'delegation' before deciding whether to hand work to Claude."
+		"Consult 'web' before driving any web page, 'shell' before running commands " +
+		"(it's why a redirection or pipe silently does nothing), 'files' before " +
+		"reading or editing files, 'signin' before logging in, 'documents' before " +
+		"producing a file, 'research' before a real search, 'delegation' before " +
+		"handing work to Claude."
 
 	r.Register(Skill{
 		Tool: llm.Tool{

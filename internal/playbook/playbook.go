@@ -174,6 +174,87 @@ comparison or a moving topic.
   pages"; that's the raw material, not the work.`,
 	},
 
+	"shell": {
+		Name:    "shell",
+		Summary: "running commands — which of the three ways to reach for, pipes/redirection, long-running and interactive",
+		Body: `RUNNING COMMANDS
+
+You have three ways to run things, and picking the wrong one is why a command
+"succeeds" and yet nothing happened. Choose deliberately:
+
+1. run_command — a single program, run directly, no shell.
+   Use it for one clean invocation: ls, git status, go build, cp a b. It is the
+   default and the safest. But it is NOT a shell: a > or | or * you put in the
+   arguments is a literal string, not redirection, a pipe, or a glob. "echo hi >
+   out.txt" through run_command writes the characters "> out.txt" as arguments and
+   creates no file. This is the single most common mistake — if your command has
+   a >, >>, |, *, &&, or a $VAR, run_command is the wrong tool.
+
+2. run_shell — a real shell line, for when you genuinely need shell features.
+   Redirection (echo x > out.txt), pipes (cat f | grep x), globs (rm *.tmp),
+   chaining (make && ./run). This is how you send output to a file or feed one
+   command into another. Reach for it the moment you need any of those; do not
+   try to fake them with run_command.
+
+3. terminal_open / terminal_run / terminal_read / terminal_send — a PERSISTENT
+   session that survives between commands.
+   Use it when state must carry over (a cd, an exported variable, a running
+   server), for an interactive program that prompts (python, a REPL, an installer
+   that asks a question — answer with terminal_send), or for long-running work you
+   want to check on. terminal_read collects what a session has produced since you
+   last looked.
+
+DON'T OVER-BUILD A ONE-OFF. If the task is just to produce some output, one
+run_shell line usually does it — "seq 1 5 > out.txt", "sort names.txt | uniq".
+Writing a script file, chmod-ing it, and running it is only worth it when the
+task actually asks for a reusable script; otherwise it is three ways to
+introduce a bug for no gain.
+
+WRITE SCRIPTS THAT ACTUALLY RUN. A shell script needs real newlines between its
+lines and the right separators — a for-loop is "for i in a b c; do echo $i;
+done", with the semicolon before done, not "do echo $i done". Cramming it onto
+one line or dropping a separator gives a syntax error that produces no output.
+
+ALWAYS VERIFY THE RESULT, NOT THE EXIT. A command returning no error is not proof
+it did what you meant. If it was supposed to write a file, read the file back and
+check it has the right content. An EMPTY output file is the classic tell that the
+script or command was broken — do not report success on it; the script errored,
+so fix the script and run it again. "Ran without error" and "did the job" are
+different claims, and the second is the one that matters.`,
+	},
+
+	"files": {
+		Name:    "files",
+		Summary: "reading, editing and finding files without losing content or clobbering the rest",
+		Body: `WORKING WITH FILES
+
+- READING A LARGE FILE. file_read returns only the first stretch of a big file
+  and clips the rest — so on a long file you have NOT seen all of it. Do not
+  answer as if you had. Read the part you need, or use run_shell with grep, head,
+  tail, or sed to find and pull the exact lines. Never invent content you did not
+  actually read; that is the file equivalent of a hallucination.
+
+- CHANGING AN EXISTING FILE. Use file_edit, which replaces one exact string and
+  leaves everything else untouched. Do NOT rewrite the whole file with file_write
+  from memory — that quietly drops or alters the parts you did not focus on. Put
+  enough surrounding text in old_text to make the match unique. file_write is for
+  a NEW file or a deliberate full replacement, not for a tweak.
+
+- FINDING SOMETHING. Don't guess a path and don't re-scan the whole disk every
+  time. folder_list explores a directory; run_shell with find (by name) or grep
+  -r (by content) searches a tree. When the user names a place they've referred
+  to before — "my assignment folder" — resolve it from what you know rather than
+  hunting from root.
+
+- PATHS WITH SPACES. Paths on this machine contain spaces. Pass a path as one
+  whole value; when it goes through a shell, quote it. A path split on spaces is
+  a path that points nowhere.
+
+- AFTER WRITING. Confirm the file is where you meant and holds what you intended,
+  especially for anything generated (a document, a converted file). Deleting is
+  the one file action that is hard to undo — treat it with the care that earns.`,
+	},
+
 	"delegation": {
 		Name:    "delegation",
 		Summary: "when to hand heavy engineering to Claude instead of doing it yourself",

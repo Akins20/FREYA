@@ -159,6 +159,28 @@ func UsedTool(name string, min int) func(*World) (bool, string) {
 	}
 }
 
+// UsedAnyTool passes when any of the named tools was called at least min times
+// in total. Use it where several tools are legitimate for the same job — running
+// a command through the terminal or through a shell pipeline both count.
+func UsedAnyTool(names []string, min int) func(*World) (bool, string) {
+	set := map[string]bool{}
+	for _, n := range names {
+		set[n] = true
+	}
+	return func(w *World) (bool, string) {
+		n := 0
+		for _, c := range w.ToolCalls {
+			if set[c] {
+				n++
+			}
+		}
+		if n >= min {
+			return true, fmt.Sprintf("used one of %v %d times", names, n)
+		}
+		return false, fmt.Sprintf("used %v %d times, needed %d", names, n, min)
+	}
+}
+
 // Drove passes when the agent actually did substantial work rather than
 // answering conversationally — a floor under "it must be an agent, not a chat".
 func Drove(minTools int) func(*World) (bool, string) {

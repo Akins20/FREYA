@@ -40,7 +40,7 @@ func init() {
 				"of them are Gmail addresses — the line contains gmail.com — and save just that " +
 				"number to gmail_count.txt.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// 13 gmail addresses out of 20; a no-filter count gives 20.
 				FileHas("gmail_count.txt", "13"),
 				FinishedCleanly(),
@@ -62,7 +62,7 @@ func init() {
 				"produce tags_sorted.txt containing each colour exactly once in alphabetical order, and " +
 				"write the number of distinct colours to distinct_count.txt.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// All six survivors of the dedupe, in the file the pipe wrote.
 				FileHas("tags_sorted.txt", "blue", "green", "orange", "purple", "red", "yellow"),
 				// 6 distinct; failing to dedupe leaves 15.
@@ -89,7 +89,7 @@ func init() {
 				"into errors.log, then write summary.txt stating how many ERROR lines and how many " +
 				"WARN lines the log contained.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// The redirected file holds the ERROR-only messages.
 				FileHas("errors.log", "disk full", "auth fail", "db lost"),
 				// 11 ERROR, 6 WARN; both come only from counting, not from a cell.
@@ -114,7 +114,7 @@ func init() {
 				"a line reading 'Total revenue: <number>'. Run it in the terminal and save its output " +
 				"to revenue.txt.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// 108 = 20+20+18+32+18, reachable only by running the arithmetic.
 				FileHas("revenue.txt", "total revenue", "108"),
 				FinishedCleanly(),
@@ -137,7 +137,7 @@ func init() {
 				"three highest scorers, and write top3.txt listing those three names with their scores " +
 				"followed by their average score.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// The three genuine leaders plus 91, the average only they produce.
 				FileHas("top3.txt", "Cy", "Gu", "Ada", "91"),
 				FinishedCleanly(),
@@ -169,7 +169,7 @@ func init() {
 				"three and write report.txt giving the total number of jobs that FAILED and the total " +
 				"number that succeeded across the whole week.",
 			Check: All(
-				UsedTool("terminal_run", 1),
+				UsedAnyTool([]string{"terminal_run", "run_shell"}, 1),
 				// 16 failed and 14 succeeded across all three files.
 				FileHas("report.txt", "16", "14"),
 				FinishedCleanly(),
