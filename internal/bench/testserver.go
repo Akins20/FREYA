@@ -69,6 +69,7 @@ func StartPortal() (*TestServer, error) {
 	mux.HandleFunc("/api/worklist", ts.handleWorklist)
 	mux.HandleFunc("/quiz/", ts.handleQuiz)
 	mux.HandleFunc("/login", ts.handleLogin)
+	ts.registerChallenges(mux)
 
 	ts.http = &http.Server{Handler: mux}
 	go func() { _ = ts.http.Serve(ln) }()

@@ -46,14 +46,12 @@ func main() {
 	}
 
 	all := bench.AllBenchmarks()
-	if *category != "" {
-		all = bench.InCategory(*category)
-	}
 
 	// Browser benchmarks run against a local fake portal, built at run time so
 	// they can check its server-side record. Start it whenever a browser
-	// benchmark might run, and keep it up for the whole suite.
-	wantBrowser := *category == "" || *category == "browser"
+	// benchmark might run — the "browser" and "browser-edge" categories, or a
+	// full run — and keep it up for the whole suite.
+	wantBrowser := *category == "" || strings.HasPrefix(*category, "browser")
 	if wantBrowser {
 		ts, err := bench.StartPortal()
 		if err != nil {
@@ -62,8 +60,20 @@ func main() {
 		}
 		defer ts.Close()
 		all = append(all, bench.BrowserBenchmarks(ts)...)
+		all = append(all, ts.ChallengeBenchmarks()...)
 	}
 
+	// Filter the combined list — static and runtime benchmarks alike — so a
+	// category or name filter reaches the browser benchmarks too.
+	if *category != "" {
+		var f []bench.Benchmark
+		for _, b := range all {
+			if b.Category == *category {
+				f = append(f, b)
+			}
+		}
+		all = f
+	}
 	if *only != "" {
 		var f []bench.Benchmark
 		for _, b := range all {

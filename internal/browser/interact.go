@@ -387,9 +387,24 @@ func (c *Client) ScrollTo(ctx context.Context, where string) error {
 		sleepCtx(ctx, 300*time.Millisecond)
 		return err
 	case "bottom":
-		_, err := c.EvalString(ctx,
-			`(() => { window.scrollTo(0, document.body.scrollHeight); return 'ok'; })()`)
-		sleepCtx(ctx, 400*time.Millisecond)
+		// Not a single jump. Lazy lists load on the scroll event, and infinite
+		// scroll loads more each time you reach the bottom — so step down
+		// repeatedly, firing the scroll event explicitly (some listeners miss a
+		// programmatic scrollTo), and keep going until the page stops growing.
+		// That reveals content that a one-shot jump to the bottom leaves unloaded.
+		_, err := c.EvalString(ctx, `(async () => {
+          let last = -1;
+          for (let i = 0; i < 25; i++) {
+            window.scrollTo(0, document.body.scrollHeight);
+            window.dispatchEvent(new Event('scroll'));
+            await new Promise(r => setTimeout(r, 250));
+            const h = document.body.scrollHeight;
+            if (h === last) break;   // height stopped growing: fully loaded
+            last = h;
+          }
+          return 'ok';
+        })()`)
+		c.WaitStable(ctx, 3*time.Second)
 		return err
 	default:
 		expr := fmt.Sprintf(`(() => {

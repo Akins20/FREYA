@@ -154,14 +154,31 @@ func (c *Client) EvalString(ctx context.Context, expr string) (string, error) {
 	return strings.Trim(string(v), `"`), nil
 }
 
-// readableText extracts what a person would read, skipping the furniture.
+// readableText extracts what a person would actually read on the page.
+//
+// It reads the LIVE document's innerText, deliberately not a clone. innerText on
+// a detached clone ignores layout, so it would return content hidden behind
+// display:none — a modal not yet opened, a collapsed panel, an inactive tab — as
+// though it were on screen. Reading the live tree instead means she sees what is
+// visible and must actually reveal what is not, which is how a person works a
+// page and the only honest way to read one.
+//
+// Same-origin iframes are pulled in explicitly: their text is not part of the
+// top document's innerText, so an embedded report would otherwise be invisible.
+// Cross-origin frames throw on access and are skipped.
 const readableText = `(() => {
-  const drop = ['script','style','noscript','svg','nav','footer','header','aside','form'];
-  const doc = document.cloneNode(true);
-  drop.forEach(t => doc.querySelectorAll(t).forEach(e => e.remove()));
-  const main = doc.querySelector('main,article,[role=main]') || doc.body;
-  if (!main) return '';
-  return main.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  const main = document.querySelector('main,article,[role=main]') || document.body;
+  let out = main ? (main.innerText || '').replace(/\n{3,}/g, '\n\n').trim() : '';
+  document.querySelectorAll('iframe').forEach(f => {
+    try {
+      const d = f.contentDocument;
+      if (d && d.body) {
+        const t = (d.body.innerText || '').trim();
+        if (t) out += '\n\n[embedded frame]\n' + t;
+      }
+    } catch (e) { /* cross-origin frame, cannot read */ }
+  });
+  return out.trim();
 })()`
 
 // Text returns the page's readable content.

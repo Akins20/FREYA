@@ -76,7 +76,29 @@ in this order, every time:
    the same goal another way. Clicking the same dead element ten times is how a
    turn's whole budget gets burned for nothing.
 
-You never need permission to open, read, scroll, or click. Just work the page.`,
+5. WHAT YOU WANT IS OFTEN HIDDEN — REVEAL IT.
+   A read shows only what is VISIBLE, so if you can't find something, it may be
+   there but not shown yet. Work through the ways content hides:
+   - Below the fold or infinite scroll: scroll down (browser_scroll to 'bottom'),
+     then read again; more rows and sections render as you go.
+   - Behind a button: "Show", "Show more", "Details", "View" — click it, wait,
+     read. The content was display:none until you did.
+   - In a modal or dialog: an "Open"/"View" button opens an overlay; its content
+     is only readable once open. Read it, then close it if it blocks the rest.
+   - Under another tab: content lives under a tab that isn't selected. Click the
+     tab, wait, read.
+   - Behind a search or filter: type the relevant word into the search box
+     (browser_type), which filters the list so the matching item appears.
+   - In a collapsed panel or accordion: click the header/expander to open it,
+     then read.
+   - In an embedded frame: reads include same-origin iframe content, so if a
+     report is embedded, its text appears under an "[embedded frame]" marker —
+     look for it there.
+   The rule: if it isn't visible, ask which of these is hiding it, do the reveal,
+   wait, and read again. Concluding "it's not there" before trying the reveals is
+   the mistake.
+
+You never need permission to open, read, scroll, click, or reveal. Work the page.`,
 	},
 
 	"signin": {

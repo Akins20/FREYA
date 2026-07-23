@@ -346,6 +346,12 @@ func Launch(ctx context.Context, c Context) error {
 		"--user-data-dir=" + dir,
 		"--no-first-run",
 		"--no-default-browser-check",
+		// A realistic window, so tall pages actually scroll and lazy-loaded
+		// content below the fold has a fold to be below. Without a fixed size the
+		// window inherits whatever the desktop gives it — often large enough that
+		// a long page fits with no scroll, which breaks scroll-to-load pages and
+		// makes screenshots and element coordinates behave unlike a real browser.
+		"--window-size=1280,900",
 		"about:blank",
 	}
 	if c == ContextGuest {
