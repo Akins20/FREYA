@@ -57,6 +57,12 @@ func (s *Session) Listen(ctx context.Context) (string, error) {
 	if !fileHasAudio(path) {
 		return "", nil
 	}
+	// Same guard as the wake loop: a near-silent clip is discarded rather than
+	// transcribed, so a pause after the wake word returns nothing instead of a
+	// hallucinated command. Returning empty is the contract for "heard nothing".
+	if !hasSpeechEnergy(ctx, path) {
+		return "", nil
+	}
 
 	start := time.Now()
 	text, err := s.Recognizer.Transcribe(ctx, path)

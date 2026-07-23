@@ -710,3 +710,135 @@ func TestWakeAndDoneTonesDiffer(t *testing.T) {
 		t.Error("the completion tone does not fall")
 	}
 }
+
+// TestWakeFuzzyMatchingCatchesNearMisses covers the real-world failure that
+// prompted it: the transcriber does not render an invented name identically
+// every time, and a wake word that only works on a perfect transcript does not
+// work.
+func TestWakeFuzzyMatchingCatchesNearMisses(t *testing.T) {
+	shouldWake := []string{
+		"freya", "Freya", "freyja", "fraya",
+		"freyaa", // one insertion
+		"freyer", // exact variant
+		"freyah", // exact variant
+	}
+	for _, s := range shouldWake {
+		if _, woke := DetectWake(s); !woke {
+			t.Errorf("%q should have woken her", s)
+		}
+	}
+
+	// The tolerance must not be so loose that ordinary speech trips it. These
+	// are the words the fuzzy path is most at risk of over-matching.
+	shouldNotWake := []string{
+		"free", "fry", "afraid", "friday", "great", "player", "the",
+		"pray", "fresh", "from", "frame",
+	}
+	for _, s := range shouldNotWake {
+		if _, woke := DetectWake(s); woke {
+			t.Errorf("%q should NOT have woken her — the fuzzy match is too loose", s)
+		}
+	}
+}
+
+func TestEditDistanceWithin(t *testing.T) {
+	cases := []struct {
+		a, b string
+		max  int
+		want bool
+	}{
+		{"freya", "freya", 1, true},
+		{"freya", "freyaa", 1, true},  // insertion
+		{"freya", "freyx", 1, true},   // substitution
+		{"freya", "reya", 1, true},    // deletion
+		{"freya", "friend", 1, false}, // far
+		{"freya", "free", 1, false},   // two edits, over a bound of one
+		{"freya", "fry", 1, false},    // two edits, over a bound of one
+		{"freya", "fry", 2, true},     // two edits, within a bound of two
+	}
+	for _, c := range cases {
+		if got := editDistanceWithin(c.a, c.b, c.max); got != c.want {
+			t.Errorf("editDistanceWithin(%q,%q,%d) = %v want %v", c.a, c.b, c.max, got, c.want)
+		}
+	}
+}
+
+func TestWakeHintNamesTheWord(t *testing.T) {
+	h := WakeHint()
+	if !strings.Contains(h, "Freya") {
+		t.Error("the hint does not name the wake word, which is its whole purpose")
+	}
+	// It must remain a possibility, not an instruction to emit the word.
+	lower := strings.ToLower(h)
+	if strings.Contains(lower, "output freya") || strings.Contains(lower, "always") {
+		t.Error("the hint instructs rather than suggests — it will hallucinate the name from silence")
+	}
+}
+
+func TestWakeTunedRecorderIsShort(t *testing.T) {
+	w := WakeTuned()
+	// The whole point is a short ceiling: background noise must not be able to
+	// stretch a wake cycle toward the command-length ceiling.
+	if w.Max == 0 || w.Max > 10*time.Second {
+		t.Errorf("wake recorder ceiling is %v, expected a short bound", w.Max)
+	}
+	if w.SilenceSeconds == 0 || w.SilenceSeconds > 1.0 {
+		t.Errorf("wake trailing silence is %vs, expected under a second", w.SilenceSeconds)
+	}
+	// A default recorder must stay generous, or long spoken requests get cut off.
+	var d SoxRecorder
+	if d.Max != 0 {
+		t.Error("default recorder should use the generous ceiling, not a short one")
+	}
+}
+
+// TestWakeHintIsNotAFillInTemplate is the direct regression guard for the
+// hallucination that put phantom "Freya, play music" commands into memory. The
+// hint must name the word, never describe the shape of an utterance, because a
+// model handed a template completes it from silence.
+func TestWakeHintIsNotAFillInTemplate(t *testing.T) {
+	h := strings.ToLower(WakeHint())
+	if !strings.Contains(h, "freya") {
+		t.Error("the hint no longer names the wake word")
+	}
+	for _, banned := range []string{"followed by a request", "may be addressing", "a request", "command"} {
+		if strings.Contains(h, banned) {
+			t.Errorf("the hint contains %q — that template is what fabricated commands from silence", banned)
+		}
+	}
+	if !strings.Contains(h, "no clear speech") && !strings.Contains(h, "nothing") {
+		t.Error("the hint does not insist on silence-for-silence, which suppresses hallucination")
+	}
+}
+
+// TestSpeechEnergyGateFailsOpen: a gate that fails closed would make her deaf
+// on any sox quirk, which is a worse failure than the noise it guards against.
+func TestSpeechEnergyGateFailsOpen(t *testing.T) {
+	// A path that cannot be measured must be treated as speech, not discarded.
+	if !hasSpeechEnergy(context.Background(), "/nonexistent/definitely-not-here.ogg") {
+		t.Error("the energy gate failed closed on an unreadable file — it must fail open")
+	}
+}
+
+// TestSpeechEnergyGateRejectsSilence proves the backstop actually works on real
+// audio, when sox is present.
+func TestSpeechEnergyGateRejectsSilence(t *testing.T) {
+	if !have("sox") {
+		t.Skip("sox not installed")
+	}
+	dir := t.TempDir()
+
+	// A near-silent WAV: tiny amplitude, well under the speech floor.
+	quiet := filepath.Join(dir, "quiet.wav")
+	synthWAV(t, quiet, 120, []float64{0.0006}, 1.0)
+	if hasSpeechEnergy(context.Background(), quiet) {
+		t.Error("near-silence passed the energy gate — noise would still reach the transcriber")
+	}
+
+	// A clearly-voiced WAV must pass.
+	loud := filepath.Join(dir, "loud.wav")
+	synthWAV(t, loud, 120, []float64{1, 0.5, 0.3}, 1.0)
+	if !hasSpeechEnergy(context.Background(), loud) {
+		t.Error("real speech-level audio was rejected by the energy gate")
+	}
+}

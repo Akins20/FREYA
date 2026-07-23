@@ -115,6 +115,9 @@ type Daemon struct {
 	Yield func()
 	// Resume is called when that session ends and the daemon takes back over.
 	Resume func()
+	// Talk starts one push-to-talk exchange, triggered through the socket by a
+	// desktop keybinding. Nil when voice is unavailable.
+	Talk func()
 
 	// yielded tracks whether a session currently holds the store, so that two
 	// sessions opening in succession do not resume the daemon between them.
@@ -287,6 +290,20 @@ func (d *Daemon) serve(conn net.Conn) {
 			d.Resume()
 		}
 		writeReply(conn, Reply{OK: true, Message: "resumed"})
+
+	case "talk":
+		// Push-to-talk, triggered from outside. The X server on this hardware
+		// would not deliver a physical global-hotkey grab to us, but the desktop
+		// environment captures the key reliably and can run a command — so the
+		// key binding poked this socket instead. Acknowledge at once and run the
+		// exchange in the background: the caller is a one-shot process that
+		// should not block for the length of a spoken conversation.
+		if d.Talk != nil {
+			go d.Talk()
+			writeReply(conn, Reply{OK: true, Message: "listening"})
+		} else {
+			writeReply(conn, Reply{OK: false, Message: "voice is not available"})
+		}
 
 	case "stop":
 		writeReply(conn, Reply{OK: true, Message: "stopping"})

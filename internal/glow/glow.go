@@ -148,7 +148,52 @@ func New() (*Indicator, error) {
 	}
 	gc := c.createGC(wid)
 
+	// Every synchronous handshake read is done; from here the connection is
+	// write-only, so start draining it or the server will disconnect us.
+	go c.drain()
+
 	return &Indicator{conn: c, window: wid, gc: gc, width: width, state: StateListening}, nil
+}
+
+// rebuild replaces a dead connection with a fresh one.
+//
+// A long-lived overlay outlives transient X trouble — a compositor restart, a
+// display that briefly drops — and a status light that goes out for good the
+// first time that happens is not much of a status light. This redials, remakes
+// the window, and returns whether it succeeded; the caller keeps the old one on
+// failure and tries again later.
+func (in *Indicator) rebuild() bool {
+	c, err := dial()
+	if err != nil {
+		return false
+	}
+	if err := c.queryShape(); err != nil {
+		c.close()
+		return false
+	}
+	wid := c.createWindow(0, 0, c.screenWidth, stripHeight, 0x00000d1f)
+	if err := c.makeClickThrough(wid); err != nil {
+		c.close()
+		return false
+	}
+	gc := c.createGC(wid)
+	go c.drain()
+
+	in.mu.Lock()
+	old := in.conn
+	in.conn = c
+	in.window = wid
+	in.gc = gc
+	in.width = c.screenWidth
+	if in.running {
+		c.mapWindow(wid)
+	}
+	in.mu.Unlock()
+
+	if old != nil {
+		_ = old.close()
+	}
+	return true
 }
 
 // Showing reports whether the glow is visible.
@@ -242,9 +287,33 @@ func (in *Indicator) animate(ctx context.Context) {
 	raiseEvery := time.NewTicker(3 * time.Second)
 	defer raiseEvery.Stop()
 
+	// How long to wait before trying to rebuild a dropped connection. Long
+	// enough not to hammer a server that is legitimately gone (logged out,
+	// switched VT), short enough that a blip recovers within a couple of frames.
+	var deadSince time.Time
+
 	last := time.Now()
 
 	for {
+		// A dropped connection is the common failure and it is silent at the
+		// draw layer, so it is checked here rather than waited on. Rebuilding
+		// resets the animation clock so the first frame after recovery does not
+		// jump by however long the outage lasted.
+		in.mu.Lock()
+		dead := in.conn == nil || !in.conn.alive()
+		in.mu.Unlock()
+		if dead {
+			if deadSince.IsZero() {
+				deadSince = time.Now()
+			}
+			if time.Since(deadSince) > time.Second {
+				if in.rebuild() {
+					deadSince = time.Time{}
+					last = time.Now()
+				}
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return

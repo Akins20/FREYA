@@ -43,6 +43,20 @@ ExecStart=%s -daemon
 Restart=on-failure
 RestartSec=30
 
+# Set the microphone gain before listening. This machine's default capture gain
+# is so high that the mic's own noise floor reaches full scale — a saturated
+# signal that no software thresholding can rescue, because it has no silence left
+# to detect, and which a transcriber turns into a stream of hallucinated words.
+#
+# The gain that matters is PulseAudio's source volume, not ALSA's: they share the
+# hardware control, and PulseAudio continuously reasserts its own value over
+# anything amixer or alsactl set. So it is set here through pactl, to the level
+# (see FREYA_MIC_VOLUME in the env file) where speech clears the recorder's onset
+# threshold and silence sits below it. The volume curve is steep near the bottom,
+# so the right value is specific and worth pinning. Dash-prefixed and guarded, so
+# a machine with no pactl or no configured level just skips it.
+ExecStartPre=-/bin/sh -c 'test -n "$FREYA_MIC_VOLUME" && pactl set-source-volume @DEFAULT_SOURCE@ "$FREYA_MIC_VOLUME" || true'
+
 # Credentials. Optional: without it the daemon falls back to whatever provider
 # needs no key. Keep this file at mode 600; it holds API keys.
 EnvironmentFile=-%%h/.config/freya/env
@@ -51,6 +65,19 @@ EnvironmentFile=-%%h/.config/freya/env
 # notifications; without these the service starts and quietly does neither.
 Environment=DISPLAY=%s
 Environment=XDG_RUNTIME_DIR=/run/user/%%U
+
+# Where transient files go: recordings, generated chimes. ProtectSystem=strict
+# mounts the whole hierarchy read-only apart from /dev, /proc and /sys, so /tmp
+# — the usual home for these — cannot be written. The runtime directory can, and
+# is the right place for per-session throwaway audio anyway.
+#
+# This is pointedly NOT solved with PrivateTmp. A private /tmp is writable, but
+# it also hides the real one, and the X server's socket lives at
+# /tmp/.X11-unix — so isolating /tmp fixes recording and breaks the screen
+# light, which is how those two chased each other for an evening. Redirecting
+# TMPDIR keeps the real /tmp visible (a read-only /tmp is fine to *connect*
+# through) while giving writes somewhere to land.
+Environment=TMPDIR=/run/user/%%U
 
 # It watches the machine and speaks. It has no reason to be able to change the
 # system, so it is denied the ability.
@@ -63,14 +90,6 @@ Environment=XDG_RUNTIME_DIR=/run/user/%%U
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=no
-
-# A private /tmp, and not for isolation — for write access. ProtectSystem=strict
-# mounts the whole hierarchy read-only apart from /dev, /proc and /sys, and that
-# includes /tmp, where voice recordings and generated chimes are written. Without
-# this, sox fails on every capture with "Read-only file system", the wake-word
-# loop treats it as a transient device error, and she listens forever without
-# ever hearing anything.
-PrivateTmp=true
 
 [Install]
 WantedBy=default.target

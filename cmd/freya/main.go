@@ -18,6 +18,7 @@ import (
 	"github.com/akins/jarvis/internal/config"
 	"github.com/akins/jarvis/internal/daemon"
 	"github.com/akins/jarvis/internal/guard"
+	"github.com/akins/jarvis/internal/hotkey"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/reflect"
@@ -53,6 +54,7 @@ func main() {
 		dryRun    = flag.Bool("dry-run", false, "assess actions without executing them")
 		daemonize = flag.Bool("daemon", false, "run headless: watchers and notifications, no chat")
 		install   = flag.Bool("install-service", false, "write a systemd user unit and enable it")
+		talk      = flag.Bool("talk", false, "trigger one push-to-talk exchange in the running daemon")
 	)
 	flag.Parse()
 	initColors()
@@ -60,6 +62,27 @@ func main() {
 	if *install {
 		if err := installService(); err != nil {
 			fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// -talk is a one-shot poke at the daemon, bound to a desktop key. It does no
+	// setup of its own — it just sends one socket command and exits — so it stays
+	// snappy enough to feel like a key press rather than launching a program.
+	if *talk {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		reply, err := daemon.Ask(cfg.DataDir, "talk")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%sfreya: no daemon to talk to: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		if !reply.OK {
+			fmt.Fprintf(os.Stderr, "%sfreya: %s%s\n", cYellow, reply.Message, cReset)
 			os.Exit(1)
 		}
 		return
@@ -247,17 +270,44 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			d.Speak = func(text string) {
 				go func() { _ = vs.session.Speak(context.Background(), text) }()
 			}
+			// The desktop key binding pokes the socket, which calls this.
+			if voiceErr == nil {
+				d.Talk = func() { pushToTalk(ctx, a, vs) }
+			}
 		}
 
 		listening := "no voice"
 		if vs != nil && voiceErr == nil {
 			if err := startWakeListening(ctx, a, vs, ind); err != nil {
-				listening = "wake word unavailable: " + err.Error()
+				listening = "wake word off"
 			} else {
 				listening = `listening for "Freya"`
 			}
 		} else if voiceErr != nil {
 			listening = "no voice: " + voiceErr.Error()
+		}
+
+		// Global push-to-talk. Ctrl+Space anywhere starts one spoken exchange.
+		// This is the primary way to talk to her on hardware where always-on
+		// wake detection is unreliable: a deliberate key press needs no onset
+		// detection and cannot be triggered by a silent room. The press runs the
+		// exchange in its own goroutine so the grab keeps listening through it.
+		if vs != nil && voiceErr == nil {
+			if grab, err := hotkey.OpenCtrlSpace(); err != nil {
+				fmt.Fprintf(os.Stderr, "push-to-talk hotkey unavailable: %v\n", err)
+			} else {
+				defer grab.Close()
+				go func() {
+					err := grab.Listen(ctx, func() {
+						fmt.Printf("%s  ⌨ Ctrl+Space%s\n", cDim, cReset)
+						go pushToTalk(ctx, a, vs)
+					})
+					if err != nil && ctx.Err() == nil {
+						fmt.Fprintf(os.Stderr, "push-to-talk hotkey stopped: %v\n", err)
+					}
+				}()
+				listening += ", push-to-talk on Ctrl+Space"
+			}
 		}
 
 		// Handover. A session that starts while the daemon holds the store must

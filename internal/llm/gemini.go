@@ -345,6 +345,16 @@ const transcribePrompt = "Transcribe this audio verbatim. Output only the " +
 // audio as Ogg Vorbis took 1.8s, with identical transcripts. Callers should
 // hand this compressed audio.
 func (g *Gemini) TranscribeAudio(ctx context.Context, audio []byte, mimeType string) (string, error) {
+	return g.TranscribeAudioHinted(ctx, audio, mimeType, "")
+}
+
+// TranscribeAudioHinted implements HintedTranscriber.
+//
+// The hint is folded into the prompt as context, never as an instruction to
+// produce a particular word. "The speaker may say X" biases the acoustic
+// match; "output X" would make it hallucinate X from silence, which for a wake
+// word is the difference between helpful and unusable.
+func (g *Gemini) TranscribeAudioHinted(ctx context.Context, audio []byte, mimeType, hint string) (string, error) {
 	if len(audio) == 0 {
 		return "", fmt.Errorf("gemini: empty audio")
 	}
@@ -352,12 +362,17 @@ func (g *Gemini) TranscribeAudio(ctx context.Context, audio []byte, mimeType str
 		mimeType = "audio/ogg"
 	}
 
+	prompt := transcribePrompt
+	if hint != "" {
+		prompt = hint + " " + transcribePrompt
+	}
+
 	body := map[string]any{
 		"safetySettings": safetySettings(),
 		"contents": []map[string]any{{
 			"role": "user",
 			"parts": []map[string]any{
-				{"text": transcribePrompt},
+				{"text": prompt},
 				{"inline_data": map[string]any{
 					"mime_type": mimeType,
 					"data":      base64.StdEncoding.EncodeToString(audio),

@@ -140,6 +140,20 @@ type AudioTranscriber interface {
 	TranscribeAudio(ctx context.Context, audio []byte, mimeType string) (string, error)
 }
 
+// HintedTranscriber is an optional refinement of AudioTranscriber: it accepts a
+// short vocabulary hint that biases recognition toward expected words.
+//
+// It exists for one specific failure. An invented name spoken alone in a
+// half-second clip has no ordinary-language prior, so the model renders it as
+// whatever real words it resembles — "Freya" comes back as "a friend" or "ya".
+// Naming the expected word up front fixes it, because the model then has a
+// candidate to match the sound against. The hint is advisory: it must never
+// cause the model to invent the word when it was not said, only to spell it
+// correctly when it was.
+type HintedTranscriber interface {
+	TranscribeAudioHinted(ctx context.Context, audio []byte, mimeType, hint string) (string, error)
+}
+
 // ErrNoCredentials signals that a provider was selected but has no API key.
 var ErrNoCredentials = errors.New("llm: no API credentials configured")
 

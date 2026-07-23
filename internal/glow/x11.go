@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -75,7 +76,44 @@ type conn struct {
 	screenHeight uint16
 
 	shapeOpcode byte
+
+	// dead is set when a write fails or the drain sees the socket close. Reads
+	// are lock-free so the animation loop can check liveness on every frame
+	// without contending for the write lock.
+	dead atomic.Bool
 }
+
+// drain reads and discards everything the server sends after the handshake.
+//
+// # Why a write-only X client cannot exist
+//
+// This overlay only ever writes: it draws and never asks a question. But the
+// server still sends — errors, and any events the window generates — and an X
+// server whose output to a client cannot drain will, once its buffer fills,
+// stop servicing and eventually disconnect that client, destroying its windows.
+// That is exactly the failure this had: the bar appeared, drew a few thousand
+// requests a second with nobody reading the replies, and vanished a minute
+// later with no error, because the error was the thing that could not be read.
+//
+// So one goroutine reads into a scratch buffer forever and throws it away. The
+// point is not the bytes; it is that the server is never blocked on us.
+func (c *conn) drain() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := c.sock.Read(buf)
+		if err != nil {
+			c.dead.Store(true)
+			return
+		}
+		if n == 0 {
+			c.dead.Store(true)
+			return
+		}
+	}
+}
+
+// alive reports whether the connection is still usable.
+func (c *conn) alive() bool { return !c.dead.Load() }
 
 // authEntry is one record from .Xauthority.
 type authEntry struct {
@@ -280,6 +318,9 @@ func (c *conn) send(b []byte) error {
 	defer c.mu.Unlock()
 	c.seq++
 	_, err := c.sock.Write(b)
+	if err != nil {
+		c.dead.Store(true)
+	}
 	return err
 }
 

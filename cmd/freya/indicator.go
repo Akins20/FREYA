@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
 
 	"github.com/akins/jarvis/internal/glow"
@@ -41,7 +43,14 @@ func newIndicator(ctx context.Context) *indicator {
 
 	in, err := glow.New()
 	if err != nil {
-		// No X11, no light, no complaint.
+		// No X11 is a normal way to run — over SSH, before login — and not worth
+		// a warning in most cases. But the daemon runs where a display is
+		// expected, and a light that silently never appears is precisely the bug
+		// this just cost an evening to find, so say so once. FREYA_GLOW=off
+		// silences it for the genuinely headless.
+		if os.Getenv("FREYA_GLOW") != "off" {
+			fmt.Fprintf(os.Stderr, "screen glow unavailable: %v\n", err)
+		}
 		return ind
 	}
 	ind.in = in

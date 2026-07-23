@@ -20,6 +20,10 @@ import (
 // WhisperSTT when either matters.
 type GeminiSTT struct {
 	Transcriber llm.AudioTranscriber
+	// Hint biases recognition toward expected words — chiefly the wake word,
+	// which as an invented name transcribes badly without one. Empty is fine and
+	// leaves transcription unbiased.
+	Hint string
 }
 
 func (g *GeminiSTT) Name() string { return "gemini" }
@@ -34,7 +38,16 @@ func (g *GeminiSTT) Transcribe(ctx context.Context, path string) (string, error)
 		return "", fmt.Errorf("read recording: %w", err)
 	}
 
-	text, err := g.Transcriber.TranscribeAudio(ctx, audio, mimeForPath(path))
+	mime := mimeForPath(path)
+
+	// Use the hinted path when the transcriber supports it and a hint is set,
+	// falling back cleanly so a provider without the capability still works.
+	var text string
+	if hinted, ok := g.Transcriber.(llm.HintedTranscriber); ok && g.Hint != "" {
+		text, err = hinted.TranscribeAudioHinted(ctx, audio, mime, g.Hint)
+	} else {
+		text, err = g.Transcriber.TranscribeAudio(ctx, audio, mime)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -182,7 +195,7 @@ func NewRecognizer(preference string, provider llm.Provider, whisperModel string
 
 	case "gemini", "cloud", "":
 		if providerDoesAudio {
-			return &GeminiSTT{Transcriber: transcriber}, nil
+			return &GeminiSTT{Transcriber: transcriber, Hint: WakeHint()}, nil
 		}
 		if have(whisperBinary()) && whisperModel != "" {
 			return &WhisperSTT{Model: whisperModel}, nil

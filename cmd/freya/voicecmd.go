@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/akins/jarvis/internal/agent"
@@ -104,8 +105,18 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 		}
 	}
 
+	// Wake listening gets its own recorder, tuned short. The session recorder is
+	// sized for a full spoken request and would let a noisy room stretch every
+	// wake cycle to its ceiling; a wake word needs neither the length nor the
+	// long trailing pause. Sox is the recorder in all but the fallback case, so
+	// this is a safe narrowing rather than a new dependency.
+	wakeRecorder := v.session.Recorder
+	if _, ok := wakeRecorder.(voice.SoxRecorder); ok {
+		wakeRecorder = voice.WakeTuned()
+	}
+
 	v.listener = &voice.Listener{
-		Recorder:          v.session.Recorder,
+		Recorder:          wakeRecorder,
 		Recognizer:        v.session.Recognizer,
 		InactivityTimeout: timeout,
 		Indefinite:        indefinite,
@@ -472,6 +483,81 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// pushToTalk runs one global-hotkey exchange: a chime to confirm the key was
+// heard, record until the speaker pauses, transcribe, think, and speak.
+//
+// # Why its own recorder
+//
+// It uses the push-to-talk recorder, not the session's. The session recorder
+// waits for a loud onset before it captures, which on this hardware never fires
+// reliably — the failure that sank wake-word listening. The key press has
+// already announced that speech is coming, so the recorder starts at once and
+// stops on the pause instead of hunting for an onset that will not come.
+//
+// # Concurrency
+//
+// pttBusy drops a second press while an exchange is running. Without it, an
+// impatient double-press would start two overlapping recordings fighting for
+// the microphone. A press during an exchange is simply ignored, which is the
+// least surprising behaviour — the alternative, queueing, would have her answer
+// a question the user has probably already forgotten asking.
+var pttBusy atomic.Bool
+
+func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
+	if !pttBusy.CompareAndSwap(false, true) {
+		return // an exchange is already in flight
+	}
+	defer pttBusy.Store(false)
+
+	// Acknowledge immediately, before anything slow, so the press feels heard.
+	_ = voice.Chime()
+	done := v.indicator.working()
+	defer done()
+
+	dir := os.Getenv("TMPDIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	path := filepath.Join(dir, fmt.Sprintf("freya-ptt-%d.ogg", time.Now().UnixNano()))
+	defer os.Remove(path)
+
+	rec := voice.PushToTalkRecorder{}
+	if err := rec.Record(ctx, path); err != nil {
+		_ = voice.ChimeError()
+		fmt.Fprintf(os.Stderr, "push-to-talk record: %v\n", err)
+		return
+	}
+
+	// A press with no speech behind it — a mis-hit key, a pocket — records
+	// near-silence, and the transcriber's wake-word hint would turn that into a
+	// phantom "Freya". The energy gate stops it here, quietly: no chime, no
+	// hallucinated turn in memory.
+	if !voice.HasSpeechEnergy(ctx, path) {
+		return
+	}
+
+	transcript, err := v.session.Recognizer.Transcribe(ctx, path)
+	if err != nil {
+		_ = voice.ChimeError()
+		fmt.Fprintf(os.Stderr, "push-to-talk transcribe: %v\n", err)
+		return
+	}
+	if strings.TrimSpace(transcript) == "" {
+		return // pressed but said nothing; no chime, no fuss
+	}
+	fmt.Printf("%s  ▸ %s%s\n", cCyan, transcript, cReset)
+
+	res, err := a.Ask(ctx, transcript)
+	if err != nil {
+		_ = voice.ChimeError()
+		_ = v.session.Speak(ctx, "Something went wrong with that.")
+		return
+	}
+	fmt.Printf("\n%s\n\n", res.Reply)
+	_ = v.session.Speak(ctx, res.Reply)
+	_ = voice.ChimeDone()
 }
 
 // spokenTurn runs one push-to-talk exchange: record, verify the speaker,

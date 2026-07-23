@@ -40,6 +40,29 @@ var wakeVariants = []string{
 	"friar", "fryer", "freyah", "frida",
 }
 
+// WakeHint is the vocabulary hint handed to the transcriber so it spells the
+// name rather than guessing at it.
+//
+// # A hint, not a template
+//
+// The first version of this described "someone addressing an assistant named
+// Freya, possibly followed by a request", and that clause was a catastrophe: it
+// handed the model a fill-in-the-blank form, and given silence or noise the
+// model filled it in — "Freya, play music", "Freya, set an alarm for 7 AM" —
+// complete fabricated commands that each fired a false wake and wrote to memory.
+// A hint must help the model spell a word it actually hears. It must never
+// describe the shape of an utterance, because the model will happily produce
+// that shape from nothing.
+//
+// So this names the word and its spellings, and does exactly one more thing:
+// insists on silence for silence. Paired with the energy gate that keeps
+// non-speech from arriving here at all, that is enough.
+func WakeHint() string {
+	return "The audio may contain the name Freya (also spelled Freyja or Fraya). " +
+		"Transcribe only speech that is actually present; if there is no clear " +
+		"speech, output nothing."
+}
+
 // wakePrefixes are the forms of address that precede the name.
 var wakePrefixes = []string{"hey", "hi", "hello", "ok", "okay", "yo"}
 
@@ -218,6 +241,16 @@ func (l *Listener) loop(ctx context.Context) {
 			continue
 		}
 
+		// The energy gate. A clip that is mostly quiet — the onset threshold
+		// tripped by a single knock, or a room that drifts across the line — is
+		// discarded here, before it can be handed to a transcriber that would
+		// invent a sentence for it. This is the difference between a wake word
+		// that answers only when spoken to and one that answers the silence.
+		if !hasSpeechEnergy(ctx, path) {
+			os.Remove(path)
+			continue
+		}
+
 		transcript, err := l.Recognizer.Transcribe(ctx, path)
 		os.Remove(path)
 		if err != nil || strings.TrimSpace(transcript) == "" {
@@ -299,7 +332,69 @@ func isWakeName(word string) bool {
 			return true
 		}
 	}
+	// A near-miss still counts, because the transcriber is not deterministic
+	// and a wake word the user has to say three times is one that trains them
+	// to stop using it. The tolerance is deliberately tight — one edit against
+	// the canonical spellings — and gated on a leading "fr", so common words do
+	// not slip through: "free", "fry", "afraid" are all more than one edit away
+	// or fail the prefix.
+	if len(word) >= 4 && strings.HasPrefix(word, "fr") {
+		for _, v := range []string{"freya", "freyja", "fraya"} {
+			if editDistanceWithin(word, v, 1) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+// editDistanceWithin reports whether a and b are within max edits of each
+// other, giving up as soon as that is exceeded.
+//
+// A bounded check rather than a full matrix: the words are short and the bound
+// is one or two, so the moment a row's best possible score passes the bound
+// there is no reason to finish computing it.
+func editDistanceWithin(a, b string, max int) bool {
+	la, lb := len(a), len(b)
+	if la-lb > max || lb-la > max {
+		return false
+	}
+
+	prev := make([]int, lb+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		cur := make([]int, lb+1)
+		cur[0] = i
+		best := cur[0]
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			if cur[j] < best {
+				best = cur[j]
+			}
+		}
+		if best > max {
+			return false
+		}
+		prev = cur
+	}
+	return prev[lb] <= max
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
 }
 
 func isWakePrefix(word string) bool {
