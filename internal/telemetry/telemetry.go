@@ -64,6 +64,10 @@ type Event struct {
 	CachedTokens int `json:"cached,omitempty"`
 	// AudioTokens are input tokens that came from sound, billed at a higher rate.
 	AudioTokens int `json:"audio,omitempty"`
+	// ThoughtTokens are reasoning tokens spent with the thinking window on. They
+	// are already inside OutputTokens for billing; recorded separately so the
+	// cost of thinking can be seen on its own.
+	ThoughtTokens int `json:"thought,omitempty"`
 
 	// CostUSD is an estimate. See the package doc.
 	CostUSD float64 `json:"cost,omitempty"`
@@ -150,11 +154,14 @@ func (r *Recorder) Tool(name string, d time.Duration, err error) {
 // audio is the share of the input that came from sound, counted within in
 // rather than in addition to it. It is billed at a different rate, so a spoken
 // exchange and a typed one of the same length do not cost the same.
-func (r *Recorder) ModelCall(name string, d time.Duration, in, out, cached, audio int, err error) {
+func (r *Recorder) ModelCall(name string, d time.Duration, in, out, cached, audio, thought int, err error) {
 	e := Event{
 		Kind: KindModel, Name: name, DurationMS: d.Milliseconds(),
 		InputTokens: in, OutputTokens: out, CachedTokens: cached, AudioTokens: audio,
-		OK:      err == nil,
+		ThoughtTokens: thought,
+		OK:            err == nil,
+		// out already includes thought tokens (they bill as output), so the cost
+		// is complete; thought is passed only to record it on its own.
 		CostUSD: EstimateCostAudio(name, in, out, cached, audio),
 	}
 	if err != nil {
@@ -165,7 +172,7 @@ func (r *Recorder) ModelCall(name string, d time.Duration, in, out, cached, audi
 
 // Model records a text-only model call.
 func (r *Recorder) Model(name string, d time.Duration, in, out, cached int, err error) {
-	r.ModelCall(name, d, in, out, cached, 0, err)
+	r.ModelCall(name, d, in, out, cached, 0, 0, err)
 }
 
 // Voice records speech in or out.

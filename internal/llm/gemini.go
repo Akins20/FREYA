@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultGeminiModel is used when no model is configured.
-const DefaultGeminiModel = "gemini-2.5-flash"
+const DefaultGeminiModel = "gemini-3.5-flash-lite"
 
 const geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 
@@ -48,9 +48,26 @@ type geminiPart struct {
 	Text             string              `json:"text,omitempty"`
 	FunctionCall     *geminiFuncCall     `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
+	// Thought marks a part as the model's reasoning summary rather than its
+	// answer. Returned only when the request set includeThoughts; a thought part
+	// carries its text in Text, so parsing must check this flag before treating
+	// Text as the reply.
+	Thought bool `json:"thought,omitempty"`
 	// ThoughtSignature must be replayed on subsequent turns for Gemini 3.x
 	// thinking models to retain their reasoning across tool round-trips.
 	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+}
+
+// geminiThinkingConfig requests reasoning and, optionally, its summary text.
+type geminiThinkingConfig struct {
+	// ThinkingBudget bounds reasoning tokens: >0 a cap, -1 dynamic, 0 off.
+	ThinkingBudget int `json:"thinkingBudget,omitempty"`
+	// IncludeThoughts returns thought-summary parts (flagged Thought) for display.
+	IncludeThoughts bool `json:"includeThoughts,omitempty"`
+}
+
+type geminiGenerationConfig struct {
+	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiFuncCall struct {
@@ -70,10 +87,11 @@ type geminiContent struct {
 }
 
 type geminiRequest struct {
-	SystemInstruction *geminiContent  `json:"system_instruction,omitempty"`
-	Contents          []geminiContent `json:"contents"`
-	Tools             []geminiTool    `json:"tools,omitempty"`
-	SafetySettings    []geminiSafety  `json:"safetySettings,omitempty"`
+	SystemInstruction *geminiContent          `json:"system_instruction,omitempty"`
+	Contents          []geminiContent         `json:"contents"`
+	Tools             []geminiTool            `json:"tools,omitempty"`
+	SafetySettings    []geminiSafety          `json:"safetySettings,omitempty"`
+	GenerationConfig  *geminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 type geminiSafety struct {
@@ -165,13 +183,17 @@ func (g *geminiUsage) toUsage() Usage {
 			u.AudioTokens += d.TokenCount
 		}
 	}
-	// Reasoning tokens are billed as output but reported separately by some
-	// versions of the API. Counting them only when the totals disagree avoids
-	// double-charging when they are already included.
-	if u.OutputTokens > 0 && g.TotalTokenCount > 0 {
-		if sum := u.InputTokens + u.OutputTokens; sum < g.TotalTokenCount {
-			u.OutputTokens = g.TotalTokenCount - u.InputTokens
-		}
+	// Reasoning tokens bill as output, and with the thinking window on they are
+	// the bulk of a step's output — hundreds of tokens the user paid for. The
+	// explicit thoughtsTokenCount is the reliable source: candidatesTokenCount is
+	// the visible answer only, and this call's totalTokenCount does NOT include
+	// thoughts, so the old total-vs-sum reconciliation silently dropped them.
+	// Add the explicit count; fall back to the total only when the API reports
+	// thoughts solely through it. Never both, so nothing is double-charged.
+	if g.ThoughtsTokenCount > 0 {
+		u.OutputTokens += g.ThoughtsTokenCount
+	} else if u.OutputTokens > 0 && g.TotalTokenCount > u.InputTokens+u.OutputTokens {
+		u.OutputTokens = g.TotalTokenCount - u.InputTokens
 	}
 	return u
 }
@@ -195,6 +217,19 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 			})
 		}
 		body.Tools = []geminiTool{{FunctionDeclarations: decls}}
+	}
+
+	// Ask the model to reason before answering when the caller wants it. The
+	// budget and the summary are separate switches: a budget makes it think, the
+	// summary makes that thinking legible. Requested here so it applies to every
+	// round of the tool loop — she thinks afresh before each next step.
+	if req.ThinkingBudget != 0 || req.ShowThoughts {
+		body.GenerationConfig = &geminiGenerationConfig{
+			ThinkingConfig: &geminiThinkingConfig{
+				ThinkingBudget:  req.ThinkingBudget,
+				IncludeThoughts: req.ShowThoughts,
+			},
+		}
 	}
 
 	raw, err := json.Marshal(body)
@@ -237,10 +272,16 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	out := &Response{Usage: decoded.Usage.toUsage()}
-	var text strings.Builder
+	var text, thoughts strings.Builder
 	for i, part := range decoded.Candidates[0].Content.Parts {
 		if part.Text != "" {
-			text.WriteString(part.Text)
+			// A thought part carries its summary in Text too — keep the two apart,
+			// or her reasoning would leak into the reply she speaks.
+			if part.Thought {
+				thoughts.WriteString(part.Text)
+			} else {
+				text.WriteString(part.Text)
+			}
 		}
 		if part.FunctionCall != nil {
 			id := part.FunctionCall.ID
@@ -257,6 +298,7 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 		}
 	}
 	out.Text = strings.TrimSpace(text.String())
+	out.Reasoning = strings.TrimSpace(thoughts.String())
 	return out, nil
 }
 

@@ -20,7 +20,7 @@ func TestRecordAndLoadRoundTrip(t *testing.T) {
 
 	r.Tool("file_read", 120*time.Millisecond, nil)
 	r.Tool("web_search", 900*time.Millisecond, errors.New("timed out"))
-	r.ModelCall("gemini-3.1-flash-lite", time.Second, 5000, 200, 4000, 0, nil)
+	r.ModelCall("gemini-3.1-flash-lite", time.Second, 5000, 200, 4000, 0, 0, nil)
 	r.Guard("high", "denied", "rm -rf /")
 	r.Close()
 
@@ -126,7 +126,7 @@ func TestRecordIsSafeFromManyGoroutines(t *testing.T) {
 func TestNilRecorderIsUsable(t *testing.T) {
 	var r *Recorder
 	r.Tool("anything", time.Second, nil)
-	r.ModelCall("model", time.Second, 1, 1, 0, 0, nil)
+	r.ModelCall("model", time.Second, 1, 1, 0, 0, 0, nil)
 	r.Guard("low", "ok", "")
 	r.Voice("stt", time.Second, nil)
 	r.Record(Event{Kind: KindWatch, Name: "disk"})

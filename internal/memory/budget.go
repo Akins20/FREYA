@@ -27,7 +27,7 @@ func EstimateTokens(s string) int {
 
 // Budget describes how the context window is divided between tiers.
 //
-// The defaults target gemini-3.1-flash-lite's 1,048,576-token input window.
+// The defaults target gemini-3.5-flash-lite's 1,048,576-token input window.
 // Roughly 48K is held back for tool schemas, formatting overhead, and
 // estimation error.
 type Budget struct {

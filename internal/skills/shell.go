@@ -29,6 +29,12 @@ const maxShellOutput = 20000
 // is assessed more harshly precisely because it can. Making the safe path also
 // the convenient path is most of the battle.
 func RegisterShell(r *Registry, g *guard.Guard) {
+	// change_dir is registered unconditionally: moving her own process between
+	// folders touches nothing outside it and reaches no external service, so it
+	// never needs the guard and must stay available even in offline/mock setups
+	// where no guard is wired.
+	registerChangeDir(r)
+
 	if g == nil {
 		return
 	}
@@ -133,6 +139,74 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 	})
 }
 
+// registerChangeDir gives Freya an explicit way to move her working directory
+// mid-task. Because the process CWD is shared by every file and shell tool
+// (file tools write relative to it; resolveDir defaults to it), one os.Chdir
+// here relocates her whole toolset at once — read, write and run all follow.
+// She is told where she is at the top of every turn, so this is the only lever
+// she needs to fan out from her base into a per-task subfolder and back.
+//
+// It creates the target if it doesn't exist yet, on purpose. "Make a folder and
+// move into it" is one thought for a task-driven agent, and models issue it as
+// one thought — often batching change_dir and a separate create in a single
+// turn, where the create hasn't run when the move does. Erroring there stalled
+// the fan-out while the reply still claimed success. Creating-on-enter serves
+// the real intent; the reply names whether the folder was made or merely
+// entered, so a typo lands as a spoken "created …/reprots" rather than a
+// silent wrong turn.
+func registerChangeDir(r *Registry) {
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "change_dir",
+			Description: "Change your working directory — the folder your file and " +
+				"shell tools act in. Everything you read, write or run happens there " +
+				"until you move again, and your current directory is shown to you at " +
+				"the start of every turn. If the folder doesn't exist yet it is created " +
+				"for you (with any missing parents), so this alone is how you branch " +
+				"into a fresh subfolder for a task — no separate create step. Call it " +
+				"with no path to just report where you are.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"path": {Type: "string", Description: "Where to move to. A relative path " +
+					"resolves against where you are now; ~ is home. Created if missing. " +
+					"Omit to report the current directory."},
+			}),
+		},
+		Handler: func(_ context.Context, args map[string]any) (string, error) {
+			raw := strings.TrimSpace(argString(args, "path"))
+			if raw == "" {
+				wd, err := os.Getwd()
+				if err != nil {
+					return "", fmt.Errorf("can't read current directory: %w", err)
+				}
+				return "You're in " + wd, nil
+			}
+			target := resolveDir(raw)
+			// Distinguish making a folder from stepping into an existing one, so
+			// the spoken reply surfaces a mistyped destination instead of hiding it.
+			created := false
+			if info, err := os.Stat(target); err != nil {
+				if !os.IsNotExist(err) {
+					return "", fmt.Errorf("couldn't reach %s: %w", target, err)
+				}
+				if err := os.MkdirAll(target, 0o755); err != nil {
+					return "", fmt.Errorf("couldn't create %s: %w", target, err)
+				}
+				created = true
+			} else if !info.IsDir() {
+				return "", fmt.Errorf("%s is a file, not a folder", target)
+			}
+			if err := os.Chdir(target); err != nil {
+				return "", fmt.Errorf("couldn't move into %s: %w", target, err)
+			}
+			wd, _ := os.Getwd()
+			if created {
+				return "Created " + wd + " and moved in", nil
+			}
+			return "Working directory is now " + wd, nil
+		},
+	})
+}
+
 // runProcess executes a command and returns its combined output, truncated.
 func runProcess(ctx context.Context, dir, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, shellTimeout)
@@ -219,6 +293,16 @@ func pathLikeArgs(args []string) []string {
 // resolveDir expands a working directory, defaulting to home.
 func resolveDir(dir string) string {
 	if dir == "" {
+		// The process working directory, not home — and this is a cure, not a
+		// preference. File tools write relative to the working directory; shell
+		// tools defaulted to home; so a file written by file_write and a command
+		// run by run_shell landed in different places, and any task that created
+		// a file and then acted on it — write a script and run it, generate data
+		// and process it — broke silently: the file was here, the shell was over
+		// there. One directory for both is what makes those tasks possible at all.
+		if wd, err := os.Getwd(); err == nil {
+			return wd
+		}
 		if home, err := os.UserHomeDir(); err == nil {
 			return home
 		}

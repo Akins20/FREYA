@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/reflect"
+	"github.com/akins/jarvis/internal/schedule"
 	"github.com/akins/jarvis/internal/sentinel"
 	"github.com/akins/jarvis/internal/skills"
 	"github.com/akins/jarvis/internal/telemetry"
@@ -111,6 +113,21 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	if dryRun {
 		cfg.DryRun = true
+	}
+
+	// Anchor to her working directory before anything opens files. Both the
+	// file tools (which write relative to the process CWD) and the shell tools
+	// (which default to it) inherit this one os.Chdir, so voice-driven work
+	// always starts in the same findable place. From here she moves freely with
+	// change_dir; leaving WorkDir empty keeps her wherever she was launched,
+	// which is what the benchmark harness relies on.
+	if cfg.WorkDir != "" {
+		if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
+			return fmt.Errorf("create work dir %s: %w", cfg.WorkDir, err)
+		}
+		if err := os.Chdir(cfg.WorkDir); err != nil {
+			return fmt.Errorf("enter work dir %s: %w", cfg.WorkDir, err)
+		}
 	}
 
 	if cfg.SafetyThreshold != "" {
@@ -204,6 +221,18 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		return err
 	}
 
+	// Self-scheduling: a task she sets for her future self, which the daemon runs
+	// when due. Opened here so the tool can write it and the daemon poll (below)
+	// can read it. A failure to open just disables scheduling, never the session.
+	selfTasks, schedErr := schedule.Open(cfg.DataDir)
+	if schedErr != nil {
+		if cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "%sschedule: %v%s\n", cDim, schedErr, cReset)
+		}
+	} else {
+		skills.RegisterSchedule(reg, selfTasks)
+	}
+
 	// Voice must be constructed before the agent so its control skill can be
 	// registered alongside the others.
 	vs, voiceErr := setupVoice(cfg, provider)
@@ -218,6 +247,52 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	a := agent.New(provider, reg, store, builder, persona)
 	a.Guard = g
+	a.ThinkBudget = cfg.ThinkBudget
+
+	// What else is on the user's plate, for the quiet-moment follow-up to weigh:
+	// tasks she scheduled for herself and deadlines coming up within a few days.
+	// Composed here so the agent stays decoupled from how either is stored.
+	deadlineFeed := skills.Deadlines(store, cfg.DataDir)
+	a.StateSummary = func() string {
+		var parts []string
+		if selfTasks != nil {
+			if pending, err := selfTasks.Pending(); err == nil {
+				for _, t := range pending {
+					parts = append(parts, fmt.Sprintf("- you scheduled: %q (runs in %s)",
+						t.Prompt, time.Until(t.Due).Round(time.Minute)))
+				}
+			}
+		}
+		if items, err := deadlineFeed(); err == nil {
+			for _, it := range items {
+				if d := time.Until(it.Deadline); d > 0 && d < 3*24*time.Hour {
+					parts = append(parts, fmt.Sprintf("- due in %s: %s", d.Round(time.Minute), it.Text))
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	// What the user appears to be doing — the focused window, classified by kind
+	// (browser page, terminal directory, folder, file), with a short trail of
+	// recent switches. In the daemon this is sampled frequently in the background
+	// (below) so context is fresh; the tracker never speaks, it only grounds her
+	// proactive choices. A one-shot read is the fallback when nothing samples it.
+	activity := &skills.ActivityTracker{}
+	a.UserActivity = func() string {
+		if s := activity.Current(); s != "" {
+			return s
+		}
+		return skills.CurrentActivity()
+	}
+	// Depth for browser and folder windows: on a change, screenshot that window
+	// and have the vision model read what's actually there — the page, the folder's
+	// files — not just the title. Bounded (only those two kinds, only on a change),
+	// and skippable with FREYA_ACTIVITY_DEPTH=off since it costs a vision call and
+	// puts the window's contents in front of the model.
+	if seer, ok := provider.(llm.VisionAnalyzer); ok && os.Getenv("FREYA_ACTIVITY_DEPTH") != "off" {
+		activity.Deepen = func(kind, _ string) string { return deepenActivity(seer, kind) }
+	}
 
 	// Telemetry. Opening it can fail — a full disk, a read-only data directory
 	// — and that must not stop a session: a recorder that failed to open still
@@ -247,6 +322,18 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// lookup is filled with speech rather than silence.
 	a.OnInterim = func(text string) {
 		fmt.Printf("%s%s%s\n", cDim, text, cReset)
+	}
+
+	// The thinking window — her reasoning before each step, shown so her decisions
+	// are legible and inspectable. Rendered distinctly (a thought bubble, dim and
+	// indented) so it never reads as something she said. Printed to stdout in the
+	// REPL and, in the daemon, carried to the journal by the log wrapper below.
+	a.OnThought = func(text string) {
+		for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				fmt.Printf("%s  💭 %s%s\n", cDim, line, cReset)
+			}
+		}
 	}
 
 	if cfg.Verbose {
@@ -348,8 +435,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		}
 
 		// Handover. A session that starts while the daemon holds the store must
-		// take it, or both write to an append-only archive at once.
+		// take it, or both write to an append-only archive at once. daemonActive
+		// tracks who holds it, so the self-task poll below never runs a turn while
+		// a session owns the store.
+		daemonActive := &atomic.Bool{}
+		daemonActive.Store(true)
 		d.Yield = func() {
+			daemonActive.Store(false)
 			if vs != nil && vs.listener != nil {
 				vs.listener.Stop()
 			}
@@ -363,9 +455,122 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 				fmt.Fprintf(os.Stderr, "resume memory: %v\n", err)
 				return
 			}
+			daemonActive.Store(true)
 			if vs != nil && voiceErr == nil {
 				_ = startWakeListening(ctx, a, vs, ind)
 			}
+		}
+
+		// The self-task poll: the mechanism that turns "I'll check back in ten
+		// minutes" into something that actually happens. It runs due tasks THROUGH
+		// the agent — so each ends in work and a spoken result, not a notification.
+		//
+		// Serialisation matters. It takes pttBusy before touching the store, so a
+		// task cannot run on top of a live voice exchange (nor two tasks at once);
+		// and it only runs while daemonActive, so it never writes memory a session
+		// owns. Crucially it acquires the lock BEFORE DueNow — which marks tasks
+		// run — so a task is never marked-and-lost when the daemon is busy; it
+		// simply waits for the next tick.
+		if selfTasks != nil {
+			go func() {
+				ticker := time.NewTicker(20 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if !daemonActive.Load() {
+							continue // a session holds the store
+						}
+						if !pttBusy.CompareAndSwap(false, true) {
+							continue // a voice turn is in flight; try next tick
+						}
+						due, err := selfTasks.DueNow()
+						if err == nil {
+							for _, t := range due {
+								runSelfTask(ctx, a, vs, voiceErr == nil, t)
+							}
+						}
+						pttBusy.Store(false)
+					}
+				}
+			}()
+		}
+
+		// Ambient activity sampling: read the focused window every 45s so she keeps
+		// a fresh, classified sense of what the user is doing (a browser page, a
+		// terminal's directory, a folder, a file) with a short trail of recent
+		// switches. Passive by design — it only feeds context, it never speaks.
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			activity.Sample() // seed immediately so context isn't empty at first
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					activity.Sample()
+				}
+			}
+		}()
+
+		// Quiet-moment re-engagement. After the conversation has been quiet for a
+		// while — but before it is clearly over — she reviews the recent exchange
+		// and, if there is a genuine loose end (a task left hanging, a promise to
+		// report back), follows it up in her own voice. It happens at most once per
+		// lull, defaults to silence, and only when chattiness invites it — this is
+		// her noticing what was left undone, not filling the air.
+		if cfg.FollowupAfter > 0 && sentinel.ParseChattiness(cfg.Chattiness) != sentinel.ChattyQuiet {
+			go func() {
+				lullMin := cfg.FollowupAfter           // a pause, not a breath (tunable)
+				lullMax := lullMin + 20*time.Minute    // beyond this the conversation is over, not paused
+				tick := lullMin / 2                    // poll often enough to catch the lull promptly
+				if tick > 2*time.Minute || tick <= 0 { // but no slower than every couple of minutes
+					tick = 2 * time.Minute
+				}
+				var handled time.Time // the last-user-turn time already considered
+				ticker := time.NewTicker(tick)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if !daemonActive.Load() {
+							continue // a session holds the store
+						}
+						last := lastUserTurnTime(store.Turns())
+						if last.IsZero() {
+							continue
+						}
+						since := time.Since(last)
+						if since < lullMin || since > lullMax {
+							continue
+						}
+						if !last.After(handled) {
+							continue // this lull was already considered
+						}
+						if !pttBusy.CompareAndSwap(false, true) {
+							continue // a voice turn is in flight
+						}
+						line, err := a.Followup(ctx)
+						pttBusy.Store(false)
+						handled = last // one consideration per lull, whether she speaks or passes
+						if err != nil || line == "" {
+							continue
+						}
+						fmt.Printf("%s  ☎ %s%s\n", cDim, line, cReset)
+						if _, aerr := store.AppendTurn(memory.Turn{Role: "assistant", Text: line}); aerr != nil {
+							fmt.Fprintf(os.Stderr, "archive follow-up: %v\n", aerr)
+						}
+						if vs != nil && voiceErr == nil {
+							_ = vs.session.Speak(context.Background(), line)
+						}
+					}
+				}
+			}()
 		}
 
 		fmt.Printf("%sFreya daemon: %d watchers, chattiness %s, %s, socket %s%s\n",

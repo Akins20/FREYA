@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/akins/jarvis/internal/agent"
 	"github.com/akins/jarvis/internal/config"
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/schedule"
 	"github.com/akins/jarvis/internal/voice"
 )
 
@@ -504,6 +507,97 @@ func onOff(b bool) string {
 // least surprising behaviour — the alternative, queueing, would have her answer
 // a question the user has probably already forgotten asking.
 var pttBusy atomic.Bool
+
+// lastUserTurnTime returns when the user last spoke, ignoring the assistant's own
+// turns (including any follow-up it makes), so a lull is measured from real input
+// and a follow-up cannot reset its own clock.
+func lastUserTurnTime(turns []memory.Turn) time.Time {
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" {
+			return turns[i].Timestamp
+		}
+	}
+	return time.Time{}
+}
+
+// runSelfTask executes one scheduled self-task through the agent and reports the
+// result — printed to the journal, and spoken when voice is available. The
+// caller already holds pttBusy, so this does not re-acquire it.
+//
+// It is a self-task, not a reply to a live prompt, so it announces itself: work
+// is about to happen that the user did not just ask for, and the interim
+// narration and final result are spoken through the agent's normal hooks, so
+// "on it, checking that download…" comes out before the answer does.
+func runSelfTask(ctx context.Context, a *agent.Agent, v *voiceState, canSpeak bool, t schedule.Task) {
+	label := t.Note
+	if label == "" {
+		label = t.Prompt
+	}
+	fmt.Printf("%s  ⏰ following up: %s%s\n", cDim, label, cReset)
+
+	var done func()
+	if v != nil {
+		done = v.indicator.working()
+	}
+	res, err := a.Ask(ctx, t.Prompt)
+	if done != nil {
+		done()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "self-task %q failed: %v\n", t.ID, err)
+		return
+	}
+	reply := strings.TrimSpace(res.Reply)
+	if reply == "" {
+		return
+	}
+	fmt.Printf("%s  ▸ %s%s\n", cDim, reply, cReset)
+	if canSpeak && v != nil {
+		_ = v.session.Speak(context.Background(), reply)
+	}
+}
+
+// deepenActivity screenshots the focused window and asks the vision model for a
+// one-line read of what is actually in it — the browser page, the folder's files —
+// beyond the title. Best-effort: it returns "" on any failure, so the tracker
+// simply falls back to the title.
+func deepenActivity(seer llm.VisionAnalyzer, kind string) string {
+	var prompt string
+	switch kind {
+	case "browser":
+		prompt = "This is a screenshot of a web browser. In ONE short line (under 15 words), " +
+			"what page is this — the site and what they are viewing? No preamble, no markdown."
+	case "files":
+		prompt = "This is a screenshot of a file manager. In ONE short line (under 15 words), " +
+			"which folder is open and any notable files or subfolders? No preamble, no markdown."
+	default:
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("freya-act-%d.png", time.Now().UnixNano()))
+	if err := exec.CommandContext(ctx, "scrot", "-u", "-o", path).Run(); err != nil {
+		return ""
+	}
+	defer os.Remove(path)
+	png, err := os.ReadFile(path)
+	if err != nil || len(png) == 0 {
+		return ""
+	}
+	out, err := seer.AnalyzeImage(ctx, prompt, [][]byte{png}, []string{"image/png"})
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(out)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if len(line) > 140 {
+		line = line[:140] + "…"
+	}
+	return line
+}
 
 func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	if !pttBusy.CompareAndSwap(false, true) {

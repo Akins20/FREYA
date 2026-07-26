@@ -130,6 +130,12 @@ func (r *Runner) Run(ctx context.Context, b Benchmark) Result {
 	cmd.Env = append(append(os.Environ(), r.Env...),
 		"FREYA_DATA_DIR="+dataDir,
 		"FREYA_PROJECTS_DIR="+workspace,
+		// Neutralise any FREYA_WORK_DIR the operator's shell exports: a benchmark
+		// run must anchor to its own sandbox (cmd.Dir), never to the daemon's
+		// shared workspace, or every run would write into the same real folder
+		// and the file checks would read each other's output. Empty means "stay
+		// where you were launched", which is exactly cmd.Dir.
+		"FREYA_WORK_DIR=",
 		"NO_COLOR=1",
 	)
 

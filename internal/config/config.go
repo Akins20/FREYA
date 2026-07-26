@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds every tunable Freya reads at startup.
@@ -26,6 +28,26 @@ type Config struct {
 
 	// ProjectsDir is what the dev skills scan for repositories.
 	ProjectsDir string
+
+	// WorkDir is her working directory — the one place file and shell tools both
+	// anchor to, so a file she writes is where a command she runs looks for it.
+	// She fans out into subfolders from here. Empty leaves the process where it
+	// started (which is what the benchmark relies on); the daemon sets it to a
+	// fixed workspace so voice-driven work always lands somewhere findable.
+	WorkDir string
+
+	// ThinkBudget controls how much she reasons before each step, and whether
+	// that reasoning is surfaced. -1 (the default) lets the model decide; 0 turns
+	// thinking off; a positive value caps thinking tokens. Deeper thinking buys
+	// better decisions between tool calls at the cost of latency and output-priced
+	// tokens, so it is tunable — lower it if voice latency bites.
+	ThinkBudget int
+
+	// FollowupAfter is how long the conversation must be quiet before she reviews
+	// it and may re-engage with a loose end. Zero disables re-engagement entirely.
+	// Default is a few minutes; tune it down to be more forward, up to be more
+	// reserved, or off if unprompted follow-ups are unwanted.
+	FollowupAfter time.Duration
 
 	// Address is how Freya refers to the user ("sir", a first name, ...).
 	// Empty means she uses no honorific at all, which is the default.
@@ -81,6 +103,7 @@ func Load() (*Config, error) {
 		GeminiKey:       firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GOOGLE_API_KEY")),
 		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
 		DataDir:         os.Getenv("FREYA_DATA_DIR"),
+		WorkDir:         os.Getenv("FREYA_WORK_DIR"),
 		ProjectsDir:     os.Getenv("FREYA_PROJECTS_DIR"),
 		Address:         os.Getenv("FREYA_ADDRESS"),
 		Verbose:         isTruthy(os.Getenv("FREYA_VERBOSE")),
@@ -97,6 +120,9 @@ func Load() (*Config, error) {
 		VoicePolicy:  os.Getenv("FREYA_VOICE_POLICY"),
 		WakeAck:      os.Getenv("FREYA_WAKE_ACK"),
 	}
+
+	cfg.ThinkBudget = parseThinkBudget(os.Getenv("FREYA_THINKING"))
+	cfg.FollowupAfter = parseFollowup(os.Getenv("FREYA_FOLLOWUP"))
 
 	if cfg.DataDir == "" {
 		cfg.DataDir = filepath.Join(home, ".local", "share", "freya")
@@ -168,6 +194,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// parseThinkBudget reads FREYA_THINKING. Empty or "on"/"auto" means thinking is
+// on and the model chooses its depth (-1); "off" disables it (0); a number is a
+// hard token cap. Thinking is on by default because seeing her reason between
+// steps is the point — and a model that plans guesses less.
+func parseThinkBudget(s string) int {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "on", "auto", "dynamic", "yes", "true":
+		return -1
+	case "off", "no", "false", "0":
+		return 0
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+	return -1
+}
+
+// parseFollowup reads FREYA_FOLLOWUP: empty means the default lull (6 minutes);
+// "off"/"no"/"0" disables re-engagement; a duration ("20s", "10m") sets the lull.
+func parseFollowup(s string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return 6 * time.Minute
+	case "off", "no", "false", "0", "never":
+		return 0
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil && d > 0 {
+		return d
+	}
+	return 6 * time.Minute
 }
 
 func isTruthy(s string) bool {

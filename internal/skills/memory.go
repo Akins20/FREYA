@@ -173,3 +173,38 @@ func Commitments(store *memory.Store) func() ([]sentinel.Commitment, error) {
 		return out, nil
 	}
 }
+
+// Deadlines is the goal-aware feed for the CommitmentWatcher: it merges the two
+// places the user's deadlines actually live. The first is obligations she
+// mentioned in passing, extracted from facts (that's Commitments). The second —
+// the one people rely on — is reminders they explicitly set with a due time via
+// note_add: "quiz due tonight". Those carry a structured Due, but until now they
+// were only ever fired at the instant they came due, never surfaced with the
+// lead time that lets her offer to act *before* the deadline. Feeding them here
+// runs them through the same escalating-urgency machinery as everything else.
+func Deadlines(store *memory.Store, dir string) func() ([]sentinel.Commitment, error) {
+	factFeed := Commitments(store)
+	return func() ([]sentinel.Commitment, error) {
+		out, _ := factFeed() // never errors; ignore so notes still surface regardless
+
+		nb, err := openNoteBook(dir)
+		if err != nil {
+			return out, nil
+		}
+		nb.mu.Lock()
+		defer nb.mu.Unlock()
+		for _, n := range nb.Notes {
+			if n.Done || n.Due == nil {
+				continue
+			}
+			out = append(out, sentinel.Commitment{
+				// Keyed by note id so the same reminder is one commitment, distinct
+				// from any fact-derived one.
+				Key:      "note:" + n.ID,
+				Text:     n.Text,
+				Deadline: *n.Due,
+			})
+		}
+		return out, nil
+	}
+}

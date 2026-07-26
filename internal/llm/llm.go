@@ -75,12 +75,26 @@ type Request struct {
 	System   string
 	Messages []Message
 	Tools    []Tool
+	// ThinkingBudget asks the model to reason before it answers, and to return a
+	// summary of that reasoning. 0 leaves the provider default; a positive value
+	// is a token budget for thinking; -1 lets the model decide how much. Higher
+	// budgets buy deeper planning at the cost of latency and output-priced tokens,
+	// so callers raise it for agentic work and keep it low for conversation.
+	ThinkingBudget int
+	// ShowThoughts requests the thought summary text (Response.Reasoning). Without
+	// it the model may still think, but nothing legible comes back.
+	ShowThoughts bool
 }
 
 // Response is what the model returned: prose, tool calls, or both.
 type Response struct {
 	Text      string
 	ToolCalls []ToolCall
+	// Reasoning is the model's own account of how it reached this step — a summary
+	// of its thinking — when the request asked for it. It is shown between tool
+	// calls so her decisions are legible and inspectable, and it is empty for
+	// providers or calls that return no thoughts.
+	Reasoning string
 	// Usage is what the call cost, as reported by the provider. Zero when the
 	// provider does not report it.
 	Usage Usage

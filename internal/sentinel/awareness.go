@@ -357,8 +357,13 @@ type CommitmentWatcher struct {
 	Now func() time.Time
 }
 
-func (CommitmentWatcher) Name() string            { return "commitments" }
-func (CommitmentWatcher) Interval() time.Duration { return time.Hour }
+func (CommitmentWatcher) Name() string { return "commitments" }
+
+// Interval is minutes, not hours, because deadlines now include near-term ones
+// (a quiz due tonight, not only a dissertation due next month). An hourly poll
+// would sail past the "due in 20 minutes" window entirely; five minutes catches
+// each escalation stage while it still means something.
+func (CommitmentWatcher) Interval() time.Duration { return 5 * time.Minute }
 
 func (c CommitmentWatcher) now() time.Time {
 	if c.Now != nil {
@@ -389,18 +394,34 @@ func (c CommitmentWatcher) Check(context.Context) ([]Observation, error) {
 		// is announced once rather than every hour within it.
 		var urgency Urgency
 		var bucket, phrasing string
+		// Urgency climbs as the deadline nears, now with sub-day stages so a
+		// near-term deadline escalates instead of sitting at one coarse "within a
+		// day" for its final hours. Each stage keyed by its own bucket, so it is
+		// announced once rather than every poll while inside it.
 		switch {
 		case remaining < 0:
 			urgency, bucket = UrgencyImportant, "overdue"
 			phrasing = fmt.Sprintf("%s was due %s ago", item.Text, humanDuration(-remaining))
+		case remaining < 15*time.Minute:
+			urgency, bucket = UrgencyCritical, "15m"
+			phrasing = fmt.Sprintf("%s is due in %s", item.Text, humanDuration(remaining))
+		case remaining < time.Hour:
+			urgency, bucket = UrgencyCritical, "1h"
+			phrasing = fmt.Sprintf("%s is due within the hour — %s left", item.Text, humanDuration(remaining))
+		case remaining < 3*time.Hour:
+			urgency, bucket = UrgencyImportant, "3h"
+			phrasing = fmt.Sprintf("%s is due in about %s", item.Text, humanDuration(remaining))
+		case remaining < 12*time.Hour:
+			urgency, bucket = UrgencyImportant, "12h"
+			phrasing = fmt.Sprintf("%s is due in %s", item.Text, humanDuration(remaining))
 		case remaining < 24*time.Hour:
-			urgency, bucket = UrgencyCritical, "1d"
+			urgency, bucket = UrgencyNotable, "1d"
 			phrasing = fmt.Sprintf("%s is due within a day", item.Text)
 		case remaining < 3*24*time.Hour:
-			urgency, bucket = UrgencyImportant, "3d"
+			urgency, bucket = UrgencyNotable, "3d"
 			phrasing = fmt.Sprintf("%s is due in %d days", item.Text, int(remaining.Hours()/24))
 		case remaining < 7*24*time.Hour:
-			urgency, bucket = UrgencyNotable, "1w"
+			urgency, bucket = UrgencyAmbient, "1w"
 			phrasing = fmt.Sprintf("%s is due in about a week", item.Text)
 		case remaining < 30*24*time.Hour:
 			urgency, bucket = UrgencyAmbient, "1m"

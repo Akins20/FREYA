@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +26,13 @@ import (
 //
 // Concurrent execution makes a higher ceiling cheap: a round now costs one
 // model call regardless of how many tools it requests.
-const maxToolRounds = 25
+//
+// Raised from 25 once the thinking window showed why real tasks were dying at
+// the cap: with reasoning on she deliberates per step instead of batching tools,
+// so a full quiz — navigate in, answer five questions, submit, confirm — runs
+// past 25 and was cut off one click from done. This ceiling is for a runaway
+// model, not for honest long work; it should sit above what real tasks need.
+const maxToolRounds = 40
 
 // Agent is one configured assistant.
 type Agent struct {
@@ -48,6 +55,29 @@ type Agent struct {
 	// "hang on, let me look that up". Surfacing it is what lets her speak
 	// mid-action instead of going silent for the length of a web search.
 	OnInterim func(text string)
+	// OnThought receives her reasoning summary before each step — the visible
+	// "thinking" between tool calls. It is how her decisions become legible: she
+	// thinks, we see it, and the thought steers the very next action.
+	OnThought func(text string)
+
+	// ThinkBudget asks the model to reason before each step: >0 caps the thinking
+	// tokens, -1 lets it decide, 0 turns thinking off. Applied to every round of
+	// the loop, so she re-reasons before each tool call rather than reacting.
+	ThinkBudget int
+
+	// StateSummary, when set, returns a short account of what else is on the
+	// user's plate right now — pending self-tasks she scheduled, deadlines coming
+	// up — for the quiet-moment follow-up to weigh alongside the conversation. It
+	// keeps the agent decoupled from how that state is stored: the caller composes
+	// the summary. Empty means nothing pending.
+	StateSummary func() string
+
+	// UserActivity, when set, returns a one-line read of what the user appears to
+	// be doing right now — the focused window, or that they seem to be away — so a
+	// follow-up can be tailored to it (nudge the quiz page they're already on, keep
+	// it short when they're heads-down, or stay quiet when nobody is there). Empty
+	// when it cannot tell.
+	UserActivity func() string
 
 	// Telemetry records what ran and what it cost. Nil is fine — every method
 	// on a nil Recorder is a no-op, so instrumentation never becomes a reason
@@ -70,7 +100,7 @@ func (a *Agent) chat(ctx context.Context, req llm.Request) (*llm.Response, error
 		u = resp.Usage
 	}
 	a.Telemetry.ModelCall(a.Provider.Name(), elapsed,
-		u.InputTokens, u.OutputTokens, u.CachedTokens, u.AudioTokens, err)
+		u.InputTokens, u.OutputTokens, u.CachedTokens, u.AudioTokens, u.ThoughtTokens, err)
 	return resp, err
 }
 
@@ -112,6 +142,18 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// and the new input is appended explicitly as the final message.
 	system, history, snap := a.Builder.Build(input)
 
+	// Constant location awareness. This is read fresh every turn, so the moment
+	// she changes directory the next turn reflects it — she is never guessing
+	// where a file she wrote or a command she ran actually landed. It rides at
+	// the end of the system brief, after the stable persona, so it never
+	// invalidates the cached prompt prefix even though it changes turn to turn.
+	if wd, err := os.Getwd(); err == nil {
+		system += "\n\n# Where you are right now\n" +
+			"Working directory: " + wd + "\n" +
+			"Files you write and commands you run happen here unless you pass an " +
+			"explicit path. Call change_dir to move — the line above updates each turn."
+	}
+
 	userTurn, err := a.Store.AppendTurn(memory.Turn{Role: "user", Text: input})
 	if err != nil {
 		return nil, fmt.Errorf("archive user turn: %w", err)
@@ -128,12 +170,21 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 		result.Rounds = round
 
 		resp, err := a.chat(ctx, llm.Request{
-			System:   system,
-			Messages: msgs,
-			Tools:    tools,
+			System:         system,
+			Messages:       msgs,
+			Tools:          tools,
+			ThinkingBudget: a.ThinkBudget,
+			ShowThoughts:   a.ThinkBudget != 0,
 		})
 		if err != nil {
 			return nil, err
+		}
+
+		// Surface her reasoning before anything she does with it — this is the
+		// visible thinking between steps. Emitted every round, so across a
+		// multi-tool task you watch the plan form and adjust, not just the actions.
+		if thought := strings.TrimSpace(resp.Reasoning); thought != "" && a.OnThought != nil {
+			a.OnThought(thought)
 		}
 
 		// No tools requested: this is the final answer.
@@ -229,8 +280,16 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 		System: system + "\n\nYou have reached the tool-call limit for this exchange. " +
 			"Answer now using only what you have already gathered. Do not request more tools. " +
 			"If it is genuinely not enough, say briefly what you still need.",
-		Messages: msgs,
+		Messages:       msgs,
+		ThinkingBudget: a.ThinkBudget,
+		ShowThoughts:   a.ThinkBudget != 0,
 	})
+
+	if err == nil && final != nil {
+		if thought := strings.TrimSpace(final.Reasoning); thought != "" && a.OnThought != nil {
+			a.OnThought(thought)
+		}
+	}
 
 	reply := ""
 	if err == nil && final != nil {
@@ -246,6 +305,99 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	}
 	result.Reply = reply
 	return result, nil
+}
+
+// Followup reviews the recent conversation after a lull and returns a brief line
+// worth saying — a task left unfinished, a promise to report back, a question
+// only half-answered — or "" when nothing genuinely warrants breaking the quiet.
+// Silence is the default and, by design, the common answer.
+//
+// It is one reflective completion, not a tool-driven turn: it reasons over what
+// was said, not the world, and archives nothing itself — the caller decides
+// whether to speak and record the result. That keeps the internal prompt out of
+// memory; only a follow-up she actually makes becomes a turn.
+func (a *Agent) Followup(ctx context.Context) (string, error) {
+	turns := a.Store.Turns()
+	if len(turns) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	start := 0
+	if len(turns) > 14 { // the last handful of exchanges is enough to spot a loose end
+		start = len(turns) - 14
+	}
+	for _, t := range turns[start:] {
+		if t.Role == "tool" || strings.TrimSpace(t.Text) == "" {
+			continue // tool output is noise for judging conversational loose ends
+		}
+		sb.WriteString(t.Role)
+		sb.WriteString(": ")
+		sb.WriteString(t.Text)
+		sb.WriteString("\n")
+	}
+
+	system := a.Persona.Prompt(nil) + `
+
+# A quiet moment — re-engage if it would genuinely help
+The conversation has gone quiet for a few minutes. You are the kind of assistant
+who stays a step ahead, so look back over it and the lists below and ask: is
+there something that would genuinely help THIS person, with whatever THEY were
+doing, if I spoke up now? Their life is not one topic — work, errands, code, a
+purchase, a message they meant to send, a file downloading, anything. Judge from
+what is actually in front of you, and never fixate on one recurring subject just
+because it came up before. Lean toward engaging when there is a real hook, and
+say it warmly, briefly, in your own voice:
+- ANYTHING TIME-SENSITIVE ON THEIR PLATE. If the "on their plate" list shows a
+  deadline soon or a task you scheduled, raise THAT specific thing — whatever it
+  is — even if the conversation never mentioned it, especially if they're wrapping
+  up or stepping away. Don't let something they may be about to miss pass in
+  silence. (A generic shape: "before you go — that thing X is due in 20 minutes,
+  want to handle it first?")
+- something you said you'd do, or were both waiting on, that you can move forward
+- a question left open, or an obvious next step they'd probably want
+Use what they're doing right now as context, and follow THEIR thread, not one of
+your own. If they're focused on the very thing in question, meet them there. A
+focused window means they are present and can hear you, even if they're relaxing —
+a break is not the same as being away — so a genuinely time-sensitive item is
+worth a gentle heads-up even then. Only when there is NO focused window at all —
+they've stepped away from the machine — does a spoken nudge risk an empty room;
+prefer PASS then unless it is truly urgent.
+Do not just restate that you're standing by — that is waiting, not engaging.
+Offer a concrete next move. Reply with exactly PASS when there is honestly nothing
+worth raising — and PASS is entirely correct when they are simply doing something
+unrelated and nothing is pending; do not manufacture a reason to bring up an old
+topic.`
+
+	// Weave in the rest of her plate — scheduled tasks and approaching deadlines —
+	// so a single re-engagement can tie the conversation to what is actually
+	// pending, not just what was last said.
+	userText := "The recent conversation:\n\n" + sb.String()
+	if a.StateSummary != nil {
+		if state := strings.TrimSpace(a.StateSummary()); state != "" {
+			userText += "\nAlso on their plate right now (scheduled tasks, upcoming deadlines):\n" + state + "\n"
+		}
+	}
+	if a.UserActivity != nil {
+		if act := strings.TrimSpace(a.UserActivity()); act != "" {
+			userText += "\nWhat they appear to be doing right now: " + act + "\n"
+		}
+	}
+	userText += "\nYour brief follow-up, or PASS:"
+
+	resp, err := a.chat(ctx, llm.Request{
+		System:   system,
+		Messages: []llm.Message{{Role: llm.RoleUser, Text: userText}},
+	})
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(resp.Text)
+	// PASS, however she phrases it, and empty both mean stay quiet.
+	if line == "" || strings.HasPrefix(strings.ToUpper(line), "PASS") {
+		return "", nil
+	}
+	return line, nil
 }
 
 // reflectAfter re-examines memory once the reply is already on its way.

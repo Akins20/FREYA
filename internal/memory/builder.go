@@ -79,6 +79,16 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 		sys.WriteString("\n\n# Earlier sessions\n")
 		sys.WriteString(episodeText)
 	}
+
+	// Temporal grounding, placed AFTER the stable tiers so its every-minute change
+	// re-processes only this trailing block and leaves the cached prefix intact.
+	// It is framed as a live clock she is expected to keep in mind, not passive
+	// trivia: the hour, how long the session has run, how long since she last saw
+	// the user — all of it should colour her replies and her sense of what is
+	// time-sensitive without being asked. Read fresh here every turn, so it is
+	// always current.
+	sys.WriteString("\n\n# Right now — the time, always keep it in mind\n")
+	sys.WriteString(sentinel.TimeContext(time.Now(), b.SessionStart, b.LastSeen))
 	system = sys.String()
 
 	// --- Tier 4: working set (verbatim, append-only) ------------------------
@@ -148,12 +158,11 @@ func (b *ContextBuilder) buildIdentity(budget int) string {
 		sb.WriteString(strings.Join(pinned, "\n"))
 	}
 
-	// Temporal grounding. Knowing it is Wednesday evening, that the session has
-	// run four hours, or that they were last here a fortnight ago all change
-	// how a reply should read — none of it is worth an interruption, so it
-	// belongs in the prompt rather than in an observation.
-	sb.WriteString("\n\n# Now\n")
-	sb.WriteString(sentinel.TimeContext(time.Now(), b.SessionStart, b.LastSeen))
+	// The clock deliberately does NOT live here. This is the identity tier — the
+	// opening, most-stable bytes that Gemini caches as a prefix — and a time that
+	// changes every minute would invalidate that cache each turn and push the
+	// facts and episodes below it out of the cacheable prefix. Temporal grounding
+	// is volatile, so it trails the stable tiers instead (see Build).
 	return truncateTokens(sb.String(), budget)
 }
 

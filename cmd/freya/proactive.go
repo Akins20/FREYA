@@ -29,7 +29,10 @@ func setupSentinel(cfg *config.Config, reg *skills.Registry, store *memory.Store
 	s.Add(sentinel.TemporalWatcher{SessionStart: time.Now()})
 	s.Add(sentinel.ProcessWatcher{})
 	s.Add(&sentinel.IdleWatcher{})
-	s.Add(sentinel.CommitmentWatcher{Commitments: skills.Commitments(store)})
+	// Goal-aware deadline watching: both remembered obligations (facts) and the
+	// reminders the user explicitly set with a due time (notes), surfaced with
+	// lead time as they approach — not only when they come due.
+	s.Add(sentinel.CommitmentWatcher{Commitments: skills.Deadlines(store, cfg.DataDir)})
 	return s
 }
 
