@@ -44,17 +44,10 @@ type point struct {
 // clicks whatever happens to be at that spot instead.
 func (c *Client) locate(ctx context.Context, selector string) (point, error) {
 	expr := deepPrelude + fmt.Sprintf(`(() => {
-      const sel = %q;
-      let el = null, bad = false;
-      const rec = (root) => {
-        if (el || bad) return;
-        let m; try { m = root.querySelector(sel); } catch (e) { bad = true; return; }
-        if (m) { el = m; return; }
-        for (const x of root.querySelectorAll('*')) { const s = __descend(x); if (s) rec(s); if (el || bad) return; }
-      };
-      rec(document);
-      if (bad) return JSON.stringify({error:'bad-selector'});
-      if (!el) return JSON.stringify({error:'not-found'});
+      const f = __find(%q);
+      if (f.bad) return JSON.stringify({error:'bad-selector'});
+      if (!f.el) return JSON.stringify({error:'not-found'});
+      const el = f.el;
       el.scrollIntoView({block:'center', inline:'center'});
       const r = el.getBoundingClientRect();
       const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -248,19 +241,34 @@ func (c *Client) TypeText(ctx context.Context, selector, text string) error {
 
 // Focus puts the caret in an element.
 func (c *Client) Focus(ctx context.Context, selector string) error {
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return 'not-found';
-      el.scrollIntoView({block:'center'});
-      el.focus();
-      return 'ok';
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (f.bad) return 'bad-selector';
+      if (!f.el) return 'not-found';
+      f.el.scrollIntoView({block:'center'});
+      f.el.focus();
+      // Focus can be refused — a disabled control, a container that is not
+      // focusable — and silently leave the caret where it was, which then sends
+      // every subsequent keystroke somewhere unintended.
+      //
+      // Check against the element's OWN root, not the document: inside a shadow
+      // root document.activeElement reports the host component, so a perfectly
+      // focused field there looks unfocused from the top.
+      const root = (f.el.getRootNode && f.el.getRootNode()) || document;
+      const active = root.activeElement || (f.el.ownerDocument || document).activeElement;
+      return active === f.el ? 'ok' : 'not-focusable';
     })()`, selector)
 	res, err := c.EvalString(ctx, expr)
 	if err != nil {
 		return err
 	}
-	if res == "not-found" {
-		return fmt.Errorf("no element matches %q", selector)
+	switch res {
+	case "bad-selector":
+		return fmt.Errorf("%q is not a valid CSS selector; take one from browser_inspect", selector)
+	case "not-found":
+		return fmt.Errorf("no element matches %q anywhere, including iframes and shadow DOM", selector)
+	case "not-focusable":
+		return fmt.Errorf("%q would not take focus — it may be disabled or not a focusable control", selector)
 	}
 	return nil
 }
@@ -271,9 +279,11 @@ func (c *Client) Focus(ctx context.Context, selector string) error {
 // person asking for "Nigeria" knows the label and not the country code the page
 // happens to use for it.
 func (c *Client) SelectOption(ctx context.Context, selector, choice string) (string, error) {
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return JSON.stringify({error:'not-found'});
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (f.bad) return JSON.stringify({error:'bad-selector'});
+      if (!f.el) return JSON.stringify({error:'not-found'});
+      const el = f.el;
       if (el.tagName !== 'SELECT')
         return JSON.stringify({error:'not-a-select', tag: el.tagName});
 
@@ -333,9 +343,10 @@ func (c *Client) SelectOption(ctx context.Context, selector, choice string) (str
 // Clicking is preferred over setting .checked because a radio group's other
 // members must be updated too, and only a click does that.
 func (c *Client) SetChecked(ctx context.Context, selector string, want bool) (string, error) {
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return 'not-found';
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (!f.el) return 'not-found';
+      const el = f.el;
       if (el.type !== 'checkbox' && el.type !== 'radio') return 'wrong-type:' + el.type;
       el.scrollIntoView({block:'center'});
       if (el.checked === %t) return 'already';
@@ -384,10 +395,10 @@ func (c *Client) Scroll(ctx context.Context, selector string, dx, dy float64) er
 		return err
 	}
 
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return 'not-found';
-      el.scrollBy(%f, %f);
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (!f.el) return 'not-found';
+      f.el.scrollBy(%f, %f);
       return 'ok';
     })()`, selector, dx, dy)
 	res, err := c.EvalString(ctx, expr)
@@ -429,10 +440,10 @@ func (c *Client) ScrollTo(ctx context.Context, where string) error {
 		c.WaitStable(ctx, 3*time.Second)
 		return err
 	default:
-		expr := fmt.Sprintf(`(() => {
-          const el = document.querySelector(%q);
-          if (!el) return 'not-found';
-          el.scrollIntoView({block:'center', behavior:'instant'});
+		expr := deepPrelude + fmt.Sprintf(`(() => {
+          const f = __find(%q);
+          if (!f.el) return 'not-found';
+          f.el.scrollIntoView({block:'center', behavior:'instant'});
           return 'ok';
         })()`, where)
 		res, err := c.EvalString(ctx, expr)
@@ -457,10 +468,10 @@ func (c *Client) WaitFor(ctx context.Context, selector string, timeout time.Dura
 		timeout = 15 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return 'no';
-      const r = el.getBoundingClientRect();
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (!f.el) return 'no';
+      const r = f.el.getBoundingClientRect();
       return (r.width > 0 || r.height > 0) ? 'yes' : 'no';
     })()`, selector)
 
@@ -483,7 +494,7 @@ func (c *Client) WaitForText(ctx context.Context, phrase string, timeout time.Du
 		timeout = 15 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
-	expr := fmt.Sprintf(`(document.body && document.body.innerText || '').toLowerCase().includes(%q)`,
+	expr := deepPrelude + fmt.Sprintf(`__deepText().toLowerCase().includes(%q)`,
 		strings.ToLower(phrase))
 
 	for time.Now().Before(deadline) {
@@ -526,9 +537,10 @@ func (c *Client) Submit(ctx context.Context, selector string) error {
 	if selector == "" {
 		selector = "form"
 	}
-	expr := fmt.Sprintf(`(() => {
-      let el = document.querySelector(%q);
-      if (!el) return 'not-found';
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (!f.el) return 'not-found';
+      const el = f.el;
       const form = el.tagName === 'FORM' ? el : el.closest('form');
       if (!form) return 'no-form';
       // requestSubmit runs validation and fires submit handlers; form.submit()
@@ -657,9 +669,10 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
 
 // ReadElement returns the text of one element.
 func (c *Client) ReadElement(ctx context.Context, selector string) (string, error) {
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
-      if (!el) return '\x00not-found';
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const f = __find(%q);
+      if (!f.el) return '\x00not-found';
+      const el = f.el;
       return (el.innerText || el.value || el.textContent || '').trim();
     })()`, selector)
 	res, err := c.EvalString(ctx, expr)

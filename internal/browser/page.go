@@ -222,6 +222,58 @@ const deepPrelude = `
     try { if ((el.tagName === 'IFRAME' || el.tagName === 'FRAME') && el.contentDocument) return el.contentDocument; } catch (e) {}
     return null;
   };
+  // __find is THE selector lookup. Every tool that takes a selector must use it,
+  // because the alternative is what actually happened: browser_inspect walked
+  // shadow roots and iframes and handed back selectors from inside them, while
+  // check, select, submit, wait, focus and read_element used a plain
+  // document.querySelector and could not reach a single one. She scouted exactly
+  // as instructed, copied a selector verbatim, and was told "no element matches" —
+  // then blamed for guessing. The tools disagreed about what the page was.
+  //
+  // Returns {el, bad}: bad marks a selector the engine itself rejected (jQuery's
+  // :contains() is the usual culprit), which deserves a different message from an
+  // honest miss.
+  globalThis.__find = function (sel) {
+    let found = null, bad = false;
+    const rec = (root) => {
+      if (found || bad) return;
+      let m;
+      try { m = root.querySelector(sel); } catch (e) { bad = true; return; }
+      if (m) { found = m; return; }
+      let list;
+      try { list = root.querySelectorAll('*'); } catch (e) { return; }
+      for (const x of list) {
+        const sub = __descend(x);
+        if (sub) rec(sub);
+        if (found || bad) return;
+      }
+    };
+    rec(document);
+    return {el: found, bad: bad};
+  };
+  // __deepText is the text of the whole page including shadow roots and
+  // same-origin frames. Waiting on text has to look where reading looks, or she
+  // waits out the timeout for content that is already on screen.
+  //
+  // A document exposes innerText via its body; a shadow root has no body, so its
+  // text comes from textContent — which is a superset, since it also includes
+  // hidden nodes. That asymmetry is deliberate for a wait: erring towards seeing
+  // the phrase means a wait ends early rather than never, and the read that
+  // follows is the one that decides what is genuinely visible.
+  globalThis.__deepText = function () {
+    let out = '';
+    const rec = (root) => {
+      try {
+        if (root.body) out += ' ' + (root.body.innerText || '');
+        else if (root.textContent) out += ' ' + root.textContent;
+      } catch (e) {}
+      let list;
+      try { list = root.querySelectorAll('*'); } catch (e) { return; }
+      for (const el of list) { const sub = __descend(el); if (sub) rec(sub); }
+    };
+    rec(document);
+    return out;
+  };
 `
 
 // readableText extracts what a person would actually read on the page, now
@@ -304,20 +356,11 @@ func (c *Client) SessionHints(ctx context.Context) (string, error) {
 // on an app with opaque, generated ids.
 func (c *Client) Click(ctx context.Context, selector string) error {
 	expr := deepPrelude + fmt.Sprintf(`(() => {
-      const sel = %q;
-      let el = null, bad = false;
-      const rec = (root) => {
-        if (el || bad) return;
-        let m;
-        try { m = root.querySelector(sel); } catch (e) { bad = true; return; }
-        if (m) { el = m; return; }
-        for (const x of root.querySelectorAll('*')) { const s = __descend(x); if (s) rec(s); if (el || bad) return; }
-      };
-      rec(document);
-      if (bad) return 'bad-selector';
-      if (!el) return 'not-found';
-      el.scrollIntoView({block:'center'});
-      el.click();
+      const f = __find(%q);
+      if (f.bad) return 'bad-selector';
+      if (!f.el) return 'not-found';
+      f.el.scrollIntoView({block:'center'});
+      f.el.click();
       return 'ok';
     })()`, selector)
 	res, err := c.EvalString(ctx, expr)
@@ -504,30 +547,45 @@ func (c *Client) ClickText(ctx context.Context, text string) error {
 // ignore a value that changed without the corresponding input event.
 func (c *Client) Fill(ctx context.Context, selector, value string) error {
 	expr := deepPrelude + fmt.Sprintf(`(() => {
-      const sel = %q;
-      let el = null;
-      const rec = (root) => {
-        if (el) return;
-        let m; try { m = root.querySelector(sel); } catch (e) { return; }
-        if (m) { el = m; return; }
-        for (const x of root.querySelectorAll('*')) { const s = __descend(x); if (s) rec(s); if (el) return; }
-      };
-      rec(document);
-      if (!el) return 'not-found';
+      const f = __find(%q);
+      if (f.bad) return 'bad-selector';
+      if (!f.el) return 'not-found';
+      const el = f.el;
+      const tag = el.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && !el.isContentEditable)
+        return 'not-a-field:' + tag.toLowerCase();
+      if (el.disabled) return 'disabled';
+      if (el.readOnly) return 'readonly';
       const setter = Object.getOwnPropertyDescriptor(
-        el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
-                                  : window.HTMLInputElement.prototype, 'value').set;
+        tag === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
+                           : window.HTMLInputElement.prototype, 'value').set;
       setter.call(el, %q);
       el.dispatchEvent(new Event('input', {bubbles:true}));
       el.dispatchEvent(new Event('change', {bubbles:true}));
-      return 'ok';
+      // Read it back. A field that silently rejects or reformats what was typed —
+      // a masked input, a component that resets on blur — used to report a clean
+      // success, and the first anyone knew of it was a form that would not submit.
+      return 'ok:' + String(el.value == null ? '' : el.value);
     })()`, selector, value)
 	res, err := c.EvalString(ctx, expr)
 	if err != nil {
 		return err
 	}
-	if res == "not-found" {
-		return fmt.Errorf("no field matches %q", selector)
+	switch {
+	case res == "bad-selector":
+		return fmt.Errorf("%q is not a valid CSS selector; take one from browser_inspect", selector)
+	case res == "not-found":
+		return fmt.Errorf("no field matches %q anywhere, including iframes and shadow DOM", selector)
+	case res == "disabled":
+		return fmt.Errorf("%q is disabled — something has to enable it first", selector)
+	case res == "readonly":
+		return fmt.Errorf("%q is read-only", selector)
+	case strings.HasPrefix(res, "not-a-field:"):
+		return fmt.Errorf("%q is a <%s>, not a text field", selector, strings.TrimPrefix(res, "not-a-field:"))
+	}
+	if got := strings.TrimPrefix(res, "ok:"); got != value {
+		return fmt.Errorf("typed into %q but it now reads %q, not %q — the field rewrote or rejected the value",
+			selector, got, value)
 	}
 	return nil
 }

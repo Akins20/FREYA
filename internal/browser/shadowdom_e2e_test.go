@@ -475,6 +475,264 @@ func TestTrustedClickByText(t *testing.T) {
 	t.Logf("FIX: click-by-text fired the trusted-only link inside the iframe ✓")
 }
 
+// deepFormOuterHTML puts a form inside a shadow root AND another inside an
+// iframe — the two places browser_inspect could see into and every other
+// selector-taking tool could not.
+const deepFormOuterHTML = `<!doctype html><html><head><meta charset="utf-8"><title>Deep form</title></head>
+<body>
+<h1>Enrolment</h1>
+<shadow-form></shadow-form>
+<iframe id="ff" src="/frameform" style="width:600px;height:300px;border:0"></iframe>
+<script>
+  class ShadowForm extends HTMLElement {
+    connectedCallback() {
+      const r = this.attachShadow({mode:'open'});
+      r.innerHTML =
+        '<form id="sform">' +
+        '  <input type="checkbox" id="agree">' +
+        '  <select id="course">' +
+        '    <option value="a">Basic Accounting</option>' +
+        '    <option value="b">Macroeconomics</option>' +
+        '  </select>' +
+        '  <input type="text" id="who">' +
+        '  <p id="motto">Shadow motto: PERSIST</p>' +
+        '</form>';
+      r.getElementById('sform').addEventListener('submit', (e) => {
+        e.preventDefault();
+        window.top.document.title = 'SHADOW_SUBMITTED';
+      });
+    }
+  }
+  customElements.define('shadow-form', ShadowForm);
+  // Appears late, so a wait has something real to wait for.
+  setTimeout(() => {
+    const d = document.createElement('div');
+    d.id = 'late';
+    d.textContent = 'LATE_CONTENT_READY';
+    document.querySelector('shadow-form').shadowRoot.appendChild(d);
+  }, 700);
+</script>
+</body></html>`
+
+const deepFrameFormHTML = `<!doctype html><html><head><meta charset="utf-8"><title>frameform</title></head>
+<body><form id="iform">
+  <input type="checkbox" id="fagree">
+  <select id="fcourse">
+    <option value="x">Frame Option X</option>
+    <option value="y">Frame Option Y</option>
+  </select>
+  <p id="fmotto">Frame motto: NESTED</p>
+</form>
+<script>
+  document.getElementById('iform').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.top.document.title = 'FRAME_SUBMITTED';
+  });
+</script>
+</body></html>`
+
+// TestDeepSelectorToolsReachShadowAndFrames is the regression test for the
+// substrate's own inconsistency: browser_inspect walked shadow roots and iframes
+// and handed back selectors from inside them, while check, select, submit, wait,
+// focus and read_element used a plain document.querySelector and could not reach
+// one of them. She scouted as instructed, copied a selector verbatim, and was
+// told "no element matches" — then blamed for guessing. Every tool exercised here
+// failed against this page before the shared deep lookup.
+func TestDeepSelectorToolsReachShadowAndFrames(t *testing.T) {
+	if os.Getenv("FREYA_BROWSER_E2E") != "1" {
+		t.Skip("set FREYA_BROWSER_E2E=1 to run the headless-Chrome deep-selector measurement")
+	}
+	bin := chromeBinary()
+	if bin == "" {
+		t.Skip("no Chrome/Chromium on PATH")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if r.URL.Path == "/frameform" {
+			_, _ = io.WriteString(w, deepFrameFormHTML)
+			return
+		}
+		_, _ = io.WriteString(w, deepFormOuterHTML)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	const port = 9416
+	profile, _ := os.MkdirTemp("", "freya-deep-e2e-*")
+	defer os.RemoveAll(profile)
+	chrome := exec.Command(bin, "--headless=new",
+		fmt.Sprintf("--remote-debugging-port=%d", port),
+		"--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
+		"--window-size=1280,900", "about:blank")
+	if err := chrome.Start(); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	defer func() { _ = chrome.Process.Kill(); _, _ = chrome.Process.Wait() }()
+
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if !waitForDevtools(t, base, 20*time.Second) {
+		t.Fatal("devtools down")
+	}
+	client, err := Connect(ContextGuest, newTabDirect(t, base, srv.URL))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	if err := client.Navigate(ctx, srv.URL); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// Precondition: the top document genuinely cannot see any of this, so the
+	// test is exercising the descent and not a page that was flat all along.
+	flat, _ := client.EvalString(ctx, "String(document.querySelectorAll('#agree,#fagree').length)")
+	if flat != "0" {
+		t.Fatalf("precondition broken: top document already sees the controls (%s)", flat)
+	}
+
+	// --- inside a shadow root ---------------------------------------------------
+	if got, err := client.SetChecked(ctx, "#agree", true); err != nil {
+		t.Fatalf("SetChecked in shadow root: %v", err)
+	} else if !strings.Contains(got, "checked") {
+		t.Fatalf("SetChecked reported %q, want it checked", got)
+	}
+	if got, err := client.SelectOption(ctx, "#course", "Macroeconomics"); err != nil {
+		t.Fatalf("SelectOption in shadow root: %v", err)
+	} else if !strings.Contains(got, "Macroeconomics") {
+		t.Fatalf("SelectOption chose %q", got)
+	}
+	if err := client.Focus(ctx, "#who"); err != nil {
+		t.Fatalf("Focus in shadow root: %v", err)
+	}
+	if err := client.Fill(ctx, "#who", "Elijah"); err != nil {
+		t.Fatalf("Fill in shadow root: %v", err)
+	}
+	if got, err := client.ReadElement(ctx, "#motto"); err != nil {
+		t.Fatalf("ReadElement in shadow root: %v", err)
+	} else if !strings.Contains(got, "PERSIST") {
+		t.Fatalf("ReadElement returned %q", got)
+	}
+	t.Logf("shadow root: check, select, focus, fill, read all reached it ✓")
+
+	// A wait must see what a read sees — the late element arrives inside the
+	// shadow root, which the old top-document-only wait could never observe.
+	if err := client.WaitFor(ctx, "#late", 5*time.Second); err != nil {
+		t.Fatalf("WaitFor on a shadow-root element: %v", err)
+	}
+	if err := client.WaitForText(ctx, "LATE_CONTENT_READY", 5*time.Second); err != nil {
+		t.Fatalf("WaitForText on shadow-root text: %v", err)
+	}
+	t.Logf("waits observe shadow-root content ✓")
+
+	// --- inside an iframe -------------------------------------------------------
+	if got, err := client.SetChecked(ctx, "#fagree", true); err != nil {
+		t.Fatalf("SetChecked in iframe: %v", err)
+	} else if !strings.Contains(got, "checked") {
+		t.Fatalf("SetChecked in iframe reported %q", got)
+	}
+	if got, err := client.SelectOption(ctx, "#fcourse", "Frame Option Y"); err != nil {
+		t.Fatalf("SelectOption in iframe: %v", err)
+	} else if !strings.Contains(got, "Frame Option Y") {
+		t.Fatalf("SelectOption in iframe chose %q", got)
+	}
+	if got, err := client.ReadElement(ctx, "#fmotto"); err != nil {
+		t.Fatalf("ReadElement in iframe: %v", err)
+	} else if !strings.Contains(got, "NESTED") {
+		t.Fatalf("ReadElement in iframe returned %q", got)
+	}
+	t.Logf("iframe: check, select, read all reached it ✓")
+
+	// Submitting a form that lives inside the frame.
+	if err := client.Submit(ctx, "#iform"); err != nil {
+		t.Fatalf("Submit inside iframe: %v", err)
+	}
+	if title, _ := client.Title(ctx); title != "FRAME_SUBMITTED" {
+		t.Fatalf("in-frame submit did not fire; title=%q", title)
+	}
+	t.Logf("submit reached the form inside the iframe ✓")
+
+	// And one that lives inside the shadow root.
+	if err := client.Submit(ctx, "#sform"); err != nil {
+		t.Fatalf("Submit inside shadow root: %v", err)
+	}
+	if title, _ := client.Title(ctx); title != "SHADOW_SUBMITTED" {
+		t.Fatalf("shadow submit did not fire; title=%q", title)
+	}
+	t.Logf("submit reached the form inside the shadow root ✓")
+}
+
+// TestFillReadsBackWhatItTyped pins the postcondition: a field that rejects or
+// rewrites the value must not report a clean success.
+func TestFillReadsBackWhatItTyped(t *testing.T) {
+	if os.Getenv("FREYA_BROWSER_E2E") != "1" {
+		t.Skip("set FREYA_BROWSER_E2E=1 to run the headless-Chrome fill measurement")
+	}
+	bin := chromeBinary()
+	if bin == "" {
+		t.Skip("no Chrome/Chromium on PATH")
+	}
+
+	const page = `<!doctype html><html><head><meta charset="utf-8"><title>fields</title></head><body>
+	<input type="text" id="good">
+	<input type="text" id="shouty" oninput="this.value=this.value.toUpperCase()">
+	<input type="text" id="locked" disabled>
+	<div id="notafield">just text</div>
+	</body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, page)
+	}))
+	defer srv.Close()
+
+	const port = 9417
+	profile, _ := os.MkdirTemp("", "freya-fill-e2e-*")
+	defer os.RemoveAll(profile)
+	chrome := exec.Command(bin, "--headless=new",
+		fmt.Sprintf("--remote-debugging-port=%d", port),
+		"--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
+		"--window-size=1280,900", "about:blank")
+	if err := chrome.Start(); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	defer func() { _ = chrome.Process.Kill(); _, _ = chrome.Process.Wait() }()
+
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if !waitForDevtools(t, base, 20*time.Second) {
+		t.Fatal("devtools down")
+	}
+	client, err := Connect(ContextGuest, newTabDirect(t, base, srv.URL))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Navigate(ctx, srv.URL); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	if err := client.Fill(ctx, "#good", "hello"); err != nil {
+		t.Fatalf("an ordinary field should fill cleanly: %v", err)
+	}
+	// A field that rewrites what was typed is a silent failure today; it must be
+	// reported, because the form will not carry the value she thinks it has.
+	if err := client.Fill(ctx, "#shouty", "hello"); err == nil {
+		t.Error("a field that rewrote the value reported success")
+	} else {
+		t.Logf("rewritten value reported: %v", err)
+	}
+	if err := client.Fill(ctx, "#locked", "hello"); err == nil {
+		t.Error("a disabled field reported success")
+	}
+	if err := client.Fill(ctx, "#notafield", "hello"); err == nil {
+		t.Error("a <div> reported success as a text field")
+	}
+}
+
 // waitForDevtools polls the devtools HTTP endpoint until it answers.
 func waitForDevtools(t *testing.T, base string, timeout time.Duration) bool {
 	t.Helper()
