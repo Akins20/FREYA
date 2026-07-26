@@ -65,6 +65,33 @@ archive. Re-measure these after each phase rather than re-arguing from memory.
 | **Prompt-cache hit rate** | **70.5%** (31.2M cached of 44.3M input) — the canary; a drop means tier ordering broke |
 | Spend to date | $4.63 over 701 model calls |
 
+## Track A result — measured 24 Jul 2026
+
+The substrate work (deep selector lookup, truthful outcomes, verify-after-act,
+affordances on failure, the loop breaker, retry/backoff) against the two browser
+categories, which are the exact surface where 229 of ~230 real tool failures came
+from:
+
+| Metric | Baseline | After |
+|---|---|---|
+| Weighted pass-rate, browser + browser-edge | — | **100%** (11/11) |
+| Runs that exhausted the round cap | 11% | **0%** (0/11) |
+| Runs that thrashed (>3 identical failing calls) | — | **0** (0/11) |
+| Worst repeat run | **19** | **1** |
+| Silent no-ops | unmeasurable | **0** |
+| Failed tool calls | ~230 (229 browser) | 4 across 11 runs, all recovered from |
+| Prompt-cache hit rate (canary) | 70.5% | 70.0% all-time — stable |
+
+Passing includes the hardest cases: the ★★★★★ pagination task behind an
+untrusted-click-resistant "Next", and the ★★★★★ token inside an iframe.
+
+**A defect found while measuring, worth remembering:** the harness ran every
+benchmark against the *offline mock model* and graded the results — a confident
+0% that said nothing about her. Freya reads `.env` relative to her working
+directory, and each benchmark's working directory is a throwaway workspace, so
+the key never arrived. The harness now forwards `.env` itself and refuses to
+grade a run that reached the mock.
+
 ## Chosen direction
 
 Attack **1** and **2**. Both are ours to fix: build a substrate strong enough that

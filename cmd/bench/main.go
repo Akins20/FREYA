@@ -120,7 +120,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	runner := &bench.Runner{Binary: bin, KeepWorkdirs: *keep, Verbose: *verbose}
+	// Forward .env from where bench was invoked. Freya reads .env relative to her
+	// working directory, which for a benchmark is a throwaway workspace, so
+	// without this the whole suite runs against the offline mock and grades it.
+	runner := &bench.Runner{Binary: bin, KeepWorkdirs: *keep, Verbose: *verbose,
+		Env: bench.DotEnv(".env")}
+	if os.Getenv("GEMINI_API_KEY") == "" && os.Getenv("ANTHROPIC_API_KEY") == "" &&
+		len(runner.Env) == 0 {
+		fmt.Fprintln(os.Stderr,
+			"bench: no API key in the environment and no .env here — every run would use "+
+				"the offline mock and measure nothing. Export a key, or run from the repo root.")
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

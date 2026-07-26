@@ -87,6 +87,56 @@ func PassRateReport(benchmarks []Benchmark, results map[string][]Result) string 
 	}
 	b.WriteString("\n---------------------------------------------\n")
 	fmt.Fprintf(&b, "WEIGHTED PASS-RATE  %.0f%%  (harder benchmarks count more)\n", pct)
+	b.WriteString(reliabilityReport(results))
+	return b.String()
+}
+
+// reliabilityReport summarises HOW she worked, not just whether the artifact
+// landed. A task can pass while burning thirty rounds guessing — that is a task
+// completed and a substrate that failed her, and it belongs in the score.
+//
+// Everything here comes from the run's own telemetry, read back out of the
+// workspace, so it costs nothing to collect.
+func reliabilityReport(results map[string][]Result) string {
+	var runs, capped, thrashy, noops, failedTools, wasted int
+	worstRun, worstTool, worstName := 0, "", ""
+
+	for name, rs := range results {
+		for _, r := range rs {
+			if r.World == nil {
+				continue
+			}
+			runs++
+			wasted += r.World.WastedRounds()
+			noops += r.World.SilentNoops()
+			failedTools += r.World.FailedTools()
+			if strings.Contains(r.World.Reply, "tool rounds without landing") {
+				capped++
+			}
+			if n, tool := r.World.LongestRepeatRun(); n > 0 {
+				if n > 3 {
+					thrashy++
+				}
+				if n > worstRun {
+					worstRun, worstTool, worstName = n, tool, name
+				}
+			}
+		}
+	}
+	if runs == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\nRELIABILITY  (how she worked, not just what landed)\n")
+	fmt.Fprintf(&b, "  ran out of rounds      %d/%d runs (%.0f%%)\n", capped, runs, 100*float64(capped)/float64(runs))
+	fmt.Fprintf(&b, "  runs that thrashed     %d/%d  (>3 identical failing calls in a row)\n", thrashy, runs)
+	if worstRun > 0 {
+		fmt.Fprintf(&b, "  worst repeat run       %d × %s  (in %s)\n", worstRun, worstTool, worstName)
+	}
+	fmt.Fprintf(&b, "  wasted rounds          %d  (every tool call in the round failed)\n", wasted)
+	fmt.Fprintf(&b, "  failed tool calls      %d\n", failedTools)
+	fmt.Fprintf(&b, "  silent no-ops          %d  (succeeded and returned nothing)\n", noops)
 	return b.String()
 }
 

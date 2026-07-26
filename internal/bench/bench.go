@@ -187,6 +187,42 @@ type Result struct {
 
 const defaultTimeout = 4 * time.Minute
 
+// DotEnv reads KEY=VALUE lines from a .env file into "KEY=VALUE" strings,
+// skipping any that are already set in the real environment.
+//
+// The harness has to do this itself. Freya loads .env relative to her working
+// directory, and every benchmark run has a throwaway workspace as its working
+// directory — so an operator whose API key lives only in .env would silently run
+// the entire suite against the offline mock and grade the results. Forwarding
+// them here is what makes `go run ./cmd/bench` from the repo root behave the way
+// anyone would expect.
+func DotEnv(path string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if _, already := os.LookupEnv(key); already {
+			continue // a real environment variable wins, as it does everywhere else
+		}
+		out = append(out, key+"="+strings.Trim(strings.TrimSpace(value), `"'`))
+	}
+	return out
+}
+
 // Runner executes benchmarks against a freya binary.
 type Runner struct {
 	// Binary is the path to the freya executable under test.
@@ -255,6 +291,16 @@ func (r *Runner) Run(ctx context.Context, b Benchmark) Result {
 	out, runErr := cmd.CombinedOutput()
 	w.Duration = time.Since(start)
 	w.Trace = string(out)
+
+	// A benchmark that ran against the offline stand-in measured nothing, and
+	// would otherwise be graded — reporting a confident 0% that says nothing about
+	// her at all. This is easy to hit: config reads .env from the working
+	// directory, and every run's working directory is a throwaway workspace, so an
+	// operator whose key lives only in .env gets a whole suite of silent mock runs.
+	if strings.Contains(w.Trace, "offline stand-in") || strings.Contains(w.Trace, "provider mock") {
+		res.Reason = "ran against the offline mock model — no API key reached the run, so this measured nothing"
+		return res
+	}
 	w.ExitOK = runErr == nil
 	w.TimedOut = runCtx.Err() == context.DeadlineExceeded
 	w.Reply = extractReply(w.Trace)
