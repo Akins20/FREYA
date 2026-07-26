@@ -59,7 +59,7 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 				return "", fmt.Errorf("command is required")
 			}
 			argv := splitArgs(argString(args, "args"))
-			dir := resolveDir(argString(args, "dir"))
+			dir := resolveDir(ctx, argString(args, "dir"))
 
 			action := guard.Action{
 				Kind:     guard.KindExec,
@@ -93,7 +93,7 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 			if script == "" {
 				return "", fmt.Errorf("script is required")
 			}
-			dir := resolveDir(argString(args, "dir"))
+			dir := resolveDir(ctx, argString(args, "dir"))
 
 			action := guard.Action{
 				Kind:     guard.KindExec,
@@ -140,11 +140,14 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 }
 
 // registerChangeDir gives Freya an explicit way to move her working directory
-// mid-task. Because the process CWD is shared by every file and shell tool
-// (file tools write relative to it; resolveDir defaults to it), one os.Chdir
-// here relocates her whole toolset at once — read, write and run all follow.
-// She is told where she is at the top of every turn, so this is the only lever
-// she needs to fan out from her base into a per-task subfolder and back.
+// mid-task. Every file and shell tool resolves against the scope's directory, so
+// moving the scope relocates her whole toolset at once — read, write and run all
+// follow. She is told where she is at the top of every turn, so this is the only
+// lever she needs to fan out from her base into a per-task subfolder and back.
+//
+// It moves the scope rather than the process. os.Chdir would drag every other
+// thread of work along with it, which is precisely why the process directory
+// could not survive her doing two things at once.
 //
 // It creates the target if it doesn't exist yet, on purpose. "Make a folder and
 // move into it" is one thought for a task-driven agent, and models issue it as
@@ -171,16 +174,13 @@ func registerChangeDir(r *Registry) {
 					"Omit to report the current directory."},
 			}),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			scope := ScopeFrom(ctx)
 			raw := strings.TrimSpace(argString(args, "path"))
 			if raw == "" {
-				wd, err := os.Getwd()
-				if err != nil {
-					return "", fmt.Errorf("can't read current directory: %w", err)
-				}
-				return "You're in " + wd, nil
+				return "You're in " + scope.Dir(), nil
 			}
-			target := resolveDir(raw)
+			target := resolveDir(ctx, raw)
 			// Distinguish making a folder from stepping into an existing one, so
 			// the spoken reply surfaces a mistyped destination instead of hiding it.
 			created := false
@@ -195,14 +195,14 @@ func registerChangeDir(r *Registry) {
 			} else if !info.IsDir() {
 				return "", fmt.Errorf("%s is a file, not a folder", target)
 			}
-			if err := os.Chdir(target); err != nil {
-				return "", fmt.Errorf("couldn't move into %s: %w", target, err)
-			}
-			wd, _ := os.Getwd()
+			// Move this thread of work, not the process. os.Chdir would drag every
+			// other thread along with it — the reason the process directory could
+			// not survive concurrency.
+			scope.SetDir(target)
 			if created {
-				return "Created " + wd + " and moved in", nil
+				return "Created " + target + " and moved in", nil
 			}
-			return "Working directory is now " + wd, nil
+			return "Working directory is now " + target, nil
 		},
 	})
 }
@@ -290,28 +290,23 @@ func pathLikeArgs(args []string) []string {
 	return out
 }
 
-// resolveDir expands a working directory, defaulting to home.
-func resolveDir(dir string) string {
+// resolveDir expands a working directory, defaulting to the caller's scope.
+//
+// The default is the scope's directory, not home, and that is a cure rather than
+// a preference. File tools write relative to it and shell tools default to it, so
+// a file written by file_write and a command run by run_shell land in the same
+// place. When they disagreed — shell defaulting to home — any task that created a
+// file and then acted on it broke silently: the file was here, the shell was over
+// there. Reading it from the scope rather than the process is what lets two
+// threads of work each have their own, without either moving the other.
+func resolveDir(ctx context.Context, dir string) string {
 	if dir == "" {
-		// The process working directory, not home — and this is a cure, not a
-		// preference. File tools write relative to the working directory; shell
-		// tools defaulted to home; so a file written by file_write and a command
-		// run by run_shell landed in different places, and any task that created
-		// a file and then acted on it — write a script and run it, generate data
-		// and process it — broke silently: the file was here, the shell was over
-		// there. One directory for both is what makes those tasks possible at all.
-		if wd, err := os.Getwd(); err == nil {
-			return wd
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			return home
-		}
-		return "."
+		return ScopeFrom(ctx).Dir()
 	}
 	if strings.HasPrefix(dir, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(home, strings.TrimPrefix(dir, "~"))
 		}
 	}
-	return os.ExpandEnv(dir)
+	return expandIn(ctx, dir)
 }

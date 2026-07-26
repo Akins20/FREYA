@@ -499,7 +499,30 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
       };
       rec(document);
       if (!best) return JSON.stringify({error:'not-found'});
-      const el = best.el;
+
+      // Descend to the most specific element that still carries the whole label.
+      //
+      // Scoring alone cannot separate a control from its container when both hold
+      // the same words: D2L wraps its start button in <d2l-floating-buttons>, whose
+      // tag contains "button" and whose text is the button's text, so it read as
+      // clickable, tied on specificity, and won on document order. The wrapper spans
+      // the page; the real button is 163px floated to one edge. The click landed in
+      // the middle of an empty bar, the page did not move, and the tool reported
+      // success. Walking inward to the innermost element that still says the same
+      // thing puts the pointer on the control rather than on the furniture around it.
+      let el = best.el;
+      for (let depth = 0; depth < 8; depth++) {
+        let inner = null;
+        const kids = el.children || [];
+        for (const c of kids) {
+          if (!__vis(c)) continue;
+          const ct = ((c.innerText || c.textContent) || '').trim().replace(/\s+/g, ' ').toLowerCase();
+          if (ct && ct.includes(needle)) { inner = c; break; }
+        }
+        if (!inner) break;
+        el = inner;
+      }
+
       el.scrollIntoView({block:'center', inline:'center'});
       const label = ((el.innerText || el.textContent) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
       const r = el.getBoundingClientRect();
@@ -514,12 +537,76 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
         try { el.click(); } catch (e) {}
         return JSON.stringify({synthetic:true, label:label});
       }
+      // Aim, then check what is actually under the pointer before committing.
+      //
+      // A coordinate click is only as good as the coordinate. The element's centre
+      // is the obvious aim point and it is wrong whenever something overlaps the
+      // element, or the element is a wide container whose middle is empty space.
+      // Asking the document what sits at the point turns a silent miss into either
+      // a better aim or an honest report, and it is the general form of the bug
+      // that cost a whole session: the click "succeeded" onto nothing.
+      const doc = el.ownerDocument || document;
+      // elementFromPoint stops at a shadow boundary and hands back the HOST, not
+      // the element inside it — so a perfectly clickable item nested two shadow
+      // roots deep reads as "something else is there". Descend through each host
+      // to find what is really under the pointer.
+      const deepFromPoint = (px, py) => {
+        let node = null;
+        try { node = doc.elementFromPoint(px, py); } catch (e) { return null; }
+        for (let i = 0; i < 12 && node && node.shadowRoot; i++) {
+          let inner = null;
+          try { inner = node.shadowRoot.elementFromPoint(px, py); } catch (e) { break; }
+          if (!inner || inner === node) break;
+          node = inner;
+        }
+        return node;
+      };
+      // Containment has to cross shadow and frame boundaries too, for the same
+      // reason: Node.contains does not.
+      const encloses = (outer, inner) => {
+        let n = inner;
+        for (let i = 0; i < 40 && n; i++) {
+          if (n === outer) return true;
+          n = n.parentElement || __host(n) ||
+              (n.ownerDocument && n.ownerDocument.defaultView && n.ownerDocument.defaultView.frameElement);
+        }
+        return false;
+      };
+      const lands = (px, py) => {
+        const hp = deepFromPoint(px, py);
+        if (!hp) return false;
+        // Either the pointer is on the target, inside it, or on an ancestor that
+        // wraps it — all of which deliver the click to the right handler.
+        return hp === el || encloses(el, hp) || encloses(hp, el);
+      };
+      let lx = r.left + r.width/2, ly = r.top + r.height/2;
+      if (!lands(lx, ly)) {
+        // Try a few points inside the element before giving up: near each edge,
+        // which is where a floated or inline control actually sits.
+        const candidates = [
+          [r.left + Math.min(20, r.width/2),  r.top + r.height/2],
+          [r.right - Math.min(20, r.width/2), r.top + r.height/2],
+          [r.left + r.width/2, r.top + Math.min(12, r.height/2)],
+          [r.left + r.width/2, r.bottom - Math.min(12, r.height/2)],
+        ];
+        let found = false;
+        for (const [cx, cy] of candidates) {
+          if (lands(cx, cy)) { lx = cx; ly = cy; found = true; break; }
+        }
+        if (!found) {
+          let blocker = '';
+          const hp = deepFromPoint(lx, ly);
+          blocker = hp ? hp.tagName.toLowerCase() + (hp.id ? '#' + hp.id : '') : 'nothing';
+          return JSON.stringify({error:'occluded', label:label, blocker:blocker});
+        }
+      }
+
       // Return top-window viewport coordinates so Go can dispatch a REAL, trusted
       // mouse click. A synthetic el.click() is isTrusted:false, and many portal
       // links (D2L's quiz list) navigate only on a genuine gesture — which is why
       // clicking a quiz by name "succeeded" yet the page never moved. Add each
       // ancestor frame's offset so an in-iframe target maps to the top viewport.
-      let x = r.left + r.width/2, y = r.top + r.height/2;
+      let x = lx, y = ly;
       let w = (el.ownerDocument && el.ownerDocument.defaultView) || window;
       while (w && w.frameElement) {
         const fr = w.frameElement.getBoundingClientRect();
@@ -535,6 +622,7 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
 		X, Y      float64
 		Label     string
 		Error     string
+		Blocker   string
 		Synthetic bool
 	}
 	if err := json.Unmarshal([]byte(raw), &hit); err != nil {
@@ -545,6 +633,12 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
 		return ClickHit{}, fmt.Errorf("no text given to click")
 	case "not-found":
 		return ClickHit{}, fmt.Errorf("nothing on the page reads %q (searched shadow DOM and iframes too)", text)
+	case "occluded":
+		// Reporting this is the point. The click would have landed on something
+		// else, and dispatching it anyway is how an action "succeeds" onto nothing.
+		return ClickHit{}, fmt.Errorf("found %q but %s is covering it, so a click would hit that instead — "+
+			"scroll it into view, close whatever is on top, or click something else",
+			hit.Label, hit.Blocker)
 	}
 	if hit.Synthetic {
 		// Already clicked in the page; just let it settle. The caller is told it

@@ -43,7 +43,7 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
 			program := argString(args, "program")
-			dir := expand(argString(args, "dir"))
+			dir := expandIn(ctx, argString(args, "dir"))
 
 			action := guard.Action{
 				Kind:    guard.KindExec,
@@ -89,11 +89,19 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 			// buys nothing: "run this in a terminal called build" is a complete
 			// instruction, and failing it on a technicality just wastes a turn.
 			s, ok := m.Get(name)
+			// Whether this session already existed changes what the output means.
+			// Opening on demand is right — "run this in a terminal called build" is a
+			// complete instruction — but a MISTYPED name silently opens a pristine
+			// login shell instead, so the venv, the cd and everything else set up in
+			// the real session are gone, and the command's output looks perfectly
+			// normal. Saying which happened is the difference between a fresh start
+			// and a mystery.
+			fresh := !ok
 			if !ok || s.Done() {
 				if ok && s.Done() {
 					_ = m.Close(name)
 				}
-				opened, err := m.Start(name, "", expand(argString(args, "dir")))
+				opened, err := m.Start(name, "", expandIn(ctx, argString(args, "dir")))
 				if err != nil {
 					return "", fmt.Errorf("could not open session %q: %w", name, err)
 				}
@@ -101,7 +109,6 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 				opened.Drain()
 				s = opened
 			}
-
 			timeout := time.Duration(clamp(argInt(args, "timeout", 30), 1, 600)) * time.Second
 
 			// Assessed exactly like any other command: a persistent session is
@@ -120,7 +127,11 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 				}
 				cleaned := term.Clean(out)
 				if cleaned == "" {
-					return "(no output yet — still working? use terminal_read)", nil
+					cleaned = "(no output yet — still working? use terminal_read)"
+				}
+				if fresh {
+					cleaned += fmt.Sprintf("\n(Session %q did not exist, so this ran in a brand-new shell — "+
+						"nothing another session had set up applies here. Use terminal_list to see the open ones.)", name)
 				}
 				return clipText(cleaned, 20000), nil
 			})
@@ -137,7 +148,7 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 				"clear": {Type: "boolean", Description: "Clear the buffer after reading. Default true."},
 			}, "name"),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			s, ok := m.Get(argString(args, "name"))
 			if !ok {
 				return "", fmt.Errorf("no session named %q", argString(args, "name"))
@@ -215,7 +226,7 @@ func RegisterTerminal(r *Registry, g *guard.Guard, m *term.Manager) {
 			Description: "List open terminal sessions and whether they are still running.",
 			Params:      llm.ObjectSchema(nil),
 		},
-		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
 			sessions := m.List()
 			if len(sessions) == 0 {
 				return "No terminal sessions open.", nil

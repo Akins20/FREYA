@@ -138,6 +138,12 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 		return "", err
 	}
 
+	// Record every identifier this result showed her. Harvesting from the output
+	// is what makes provenance affordable: a tool that printed a URL has, by
+	// definition, shown her that URL, so forty producer tools feed the ledger
+	// without one of them being modified.
+	ScopeFrom(ctx).Ledger().harvest(out.Text)
+
 	// An action that reported success while the world stayed identical is the
 	// failure the model cannot see. Only fill in what the skill did not already
 	// determine for itself — a skill that knows better outranks the fingerprint.

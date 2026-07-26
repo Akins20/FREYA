@@ -53,7 +53,7 @@ func RegisterVision(r *Registry, analyzer llm.VisionAnalyzer) {
 			var paths []string
 			for _, p := range strings.Split(raw, ",") {
 				if p = strings.TrimSpace(p); p != "" {
-					paths = append(paths, expand(p))
+					paths = append(paths, expandIn(ctx, p))
 				}
 			}
 			if len(paths) > maxImagesPerCall {

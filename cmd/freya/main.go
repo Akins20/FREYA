@@ -115,12 +115,14 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		cfg.DryRun = true
 	}
 
-	// Anchor to her working directory before anything opens files. Both the
-	// file tools (which write relative to the process CWD) and the shell tools
-	// (which default to it) inherit this one os.Chdir, so voice-driven work
-	// always starts in the same findable place. From here she moves freely with
-	// change_dir; leaving WorkDir empty keeps her wherever she was launched,
-	// which is what the benchmark harness relies on.
+	// Anchor to her working directory before anything opens files, so voice-driven
+	// work always starts somewhere findable. Leaving WorkDir empty keeps her where
+	// she was launched, which is what the benchmark harness relies on.
+	//
+	// The process is moved as well as the scope. The scope is what her file and
+	// shell tools actually read, but a child process still inherits the process
+	// directory, and anything that shells out without an explicit dir should land
+	// in the same place rather than wherever the daemon happened to start.
 	if cfg.WorkDir != "" {
 		if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
 			return fmt.Errorf("create work dir %s: %w", cfg.WorkDir, err)
@@ -129,6 +131,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			return fmt.Errorf("enter work dir %s: %w", cfg.WorkDir, err)
 		}
 	}
+	// The foreground conversation's own scope. Background jobs get their own, so
+	// one moving folders cannot move another.
+	rootScope := skills.NewScope(skills.NewWorkspace(cfg.WorkDir), "", "")
 
 	if cfg.SafetyThreshold != "" {
 		llm.SafetyThreshold = cfg.SafetyThreshold
@@ -248,6 +253,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	a := agent.New(provider, reg, store, builder, persona)
 	a.Guard = g
 	a.ThinkBudget = cfg.ThinkBudget
+	a.Scope = rootScope
 
 	// What else is on the user's plate, for the quiet-moment follow-up to weigh:
 	// tasks she scheduled for herself and deadlines coming up within a few days.

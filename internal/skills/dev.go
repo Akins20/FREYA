@@ -212,6 +212,13 @@ func (d *devSkills) find(ctx context.Context, args map[string]any) (string, erro
 
 	lines := splitNonEmpty(out)
 	if len(lines) == 0 {
+		// "Nothing there" and "you named a directory that does not exist" are
+		// different answers, and conflating them hands back a confident false
+		// negative: she reads "No files matching" as having checked. The search
+		// only means anything if the place searched was real.
+		if _, statErr := os.Stat(dir); statErr != nil {
+			return "", fmt.Errorf("there is no %q to search — check the project name with dev_projects", argString(args, "project"))
+		}
 		return fmt.Sprintf("No files matching %q.", pattern), nil
 	}
 	truncated := false
@@ -284,6 +291,9 @@ func (d *devSkills) grep(ctx context.Context, args map[string]any) (string, erro
 
 	lines := splitNonEmpty(out)
 	if len(lines) == 0 {
+		if _, statErr := os.Stat(dir); statErr != nil {
+			return "", fmt.Errorf("there is no %q to search — check the project name with dev_projects", argString(args, "project"))
+		}
 		return fmt.Sprintf("No matches for %q.", query), nil
 	}
 	truncated := false

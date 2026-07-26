@@ -780,3 +780,81 @@ func oneLine(s string) string {
 	}
 	return s
 }
+
+// floatingButtonsHTML reproduces D2L's start control exactly as the live page
+// serves it: a <d2l-floating-buttons> wrapper spanning the width of the page,
+// with the real button floated to one edge inside it. Both carry the same text.
+//
+// This is the shape that defeated a trusted click-by-text. The wrapper's tag
+// contains "button", so it was judged clickable; it holds the same label, so it
+// tied on specificity; and it comes first in document order, so it won. The click
+// then landed at the CENTRE of a 1165-pixel-wide bar — empty space — while the
+// real 163-pixel button sat at the far left. The page did not move, the tool
+// reported success, and she spent the rest of the turn concluding the click had
+// failed for some other reason.
+const floatingButtonsHTML = `<!doctype html><html><head><meta charset="utf-8"><title>Summary</title>
+<style>
+  #bar { width: 1000px; height: 70px; border: 1px solid #ccc; }
+  #real { float: left; width: 160px; height: 40px; }
+</style></head>
+<body>
+<h1>Self-Quiz Unit 6</h1>
+<d2l-floating-buttons id="bar">
+  <button type="button" id="real" onclick="document.title='QUIZ_STARTED'">Continue Quiz...</button>
+</d2l-floating-buttons>
+</body></html>`
+
+// TestClickTextHitsTheButtonNotItsWrapper pins the cure: the click must land on
+// the control, not on a container that merely contains its words.
+func TestClickTextHitsTheButtonNotItsWrapper(t *testing.T) {
+	if os.Getenv("FREYA_BROWSER_E2E") != "1" {
+		t.Skip("set FREYA_BROWSER_E2E=1 to run the headless-Chrome wrapper measurement")
+	}
+	bin := chromeBinary()
+	if bin == "" {
+		t.Skip("no Chrome/Chromium on PATH")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, floatingButtonsHTML)
+	}))
+	defer srv.Close()
+
+	const port = 9418
+	profile, _ := os.MkdirTemp("", "freya-wrapper-e2e-*")
+	defer os.RemoveAll(profile)
+	chrome := exec.Command(bin, "--headless=new",
+		fmt.Sprintf("--remote-debugging-port=%d", port),
+		"--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
+		"--window-size=1280,900", "about:blank")
+	if err := chrome.Start(); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	defer func() { _ = chrome.Process.Kill(); _, _ = chrome.Process.Wait() }()
+
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if !waitForDevtools(t, base, 20*time.Second) {
+		t.Fatal("devtools down")
+	}
+	client, err := Connect(ContextGuest, newTabDirect(t, base, srv.URL))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Navigate(ctx, srv.URL); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	hit, err := client.ClickText(ctx, "Continue Quiz")
+	if err != nil {
+		t.Fatalf("ClickText: %v", err)
+	}
+	if title, _ := client.Title(ctx); title != "QUIZ_STARTED" {
+		t.Fatalf("the click did not reach the button (resolved label %q, synthetic=%v); title=%q",
+			hit.Label, hit.Synthetic, title)
+	}
+	t.Logf("click landed on the real button inside the wrapper ✓")
+}

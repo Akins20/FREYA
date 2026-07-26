@@ -216,19 +216,8 @@ type fileSkills struct {
 	places *PlaceBook
 }
 
-// expand resolves ~ and environment variables in a path.
-func expand(p string) string {
-	p = os.ExpandEnv(strings.TrimSpace(p))
-	if strings.HasPrefix(p, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, strings.TrimPrefix(p, "~"))
-		}
-	}
-	return p
-}
-
-func (f *fileSkills) read(_ context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+func (f *fileSkills) read(ctx context.Context, args map[string]any) (string, error) {
+	path := expandIn(ctx, argString(args, "path"))
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -269,7 +258,7 @@ func (f *fileSkills) read(_ context.Context, args map[string]any) (string, error
 }
 
 func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+	path := expandIn(ctx, argString(args, "path"))
 	content := argRaw(args, "content")
 	if path == "" {
 		return "", fmt.Errorf("path is required")
@@ -297,7 +286,7 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 }
 
 func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+	path := expandIn(ctx, argString(args, "path"))
 	oldText := argRaw(args, "old_text")
 	newText := argRaw(args, "new_text")
 	if path == "" || oldText == "" {
@@ -357,7 +346,7 @@ func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, err
 }
 
 func (f *fileSkills) append(ctx context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+	path := expandIn(ctx, argString(args, "path"))
 	content := argRaw(args, "content")
 	if path == "" {
 		return "", fmt.Errorf("path is required")
@@ -378,8 +367,8 @@ func (f *fileSkills) append(ctx context.Context, args map[string]any) (string, e
 	})
 }
 
-func (f *fileSkills) info(_ context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+func (f *fileSkills) info(ctx context.Context, args map[string]any) (string, error) {
+	path := expandIn(ctx, argString(args, "path"))
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", err
@@ -412,8 +401,8 @@ func (f *fileSkills) info(_ context.Context, args map[string]any) (string, error
 	return sb.String(), nil
 }
 
-func (f *fileSkills) list(_ context.Context, args map[string]any) (string, error) {
-	path := f.placeAware(argString(args, "path"))
+func (f *fileSkills) list(ctx context.Context, args map[string]any) (string, error) {
+	path := f.placeAware(ctx, argString(args, "path"))
 	if path == "" {
 		path = "."
 	}
@@ -508,7 +497,7 @@ func (f *fileSkills) list(_ context.Context, args map[string]any) (string, error
 }
 
 func (f *fileSkills) mkdir(ctx context.Context, args map[string]any) (string, error) {
-	path := expand(argString(args, "path"))
+	path := expandIn(ctx, argString(args, "path"))
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -523,8 +512,8 @@ func (f *fileSkills) mkdir(ctx context.Context, args map[string]any) (string, er
 }
 
 func (f *fileSkills) copy(ctx context.Context, args map[string]any) (string, error) {
-	src := expand(argString(args, "source"))
-	dst := expand(argString(args, "destination"))
+	src := expandIn(ctx, argString(args, "source"))
+	dst := expandIn(ctx, argString(args, "destination"))
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("source and destination are required")
 	}
@@ -541,8 +530,8 @@ func (f *fileSkills) copy(ctx context.Context, args map[string]any) (string, err
 }
 
 func (f *fileSkills) move(ctx context.Context, args map[string]any) (string, error) {
-	src := expand(argString(args, "source"))
-	dst := expand(argString(args, "destination"))
+	src := expandIn(ctx, argString(args, "source"))
+	dst := expandIn(ctx, argString(args, "destination"))
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("source and destination are required")
 	}
@@ -565,7 +554,7 @@ func (f *fileSkills) move(ctx context.Context, args map[string]any) (string, err
 }
 
 func (f *fileSkills) remove(ctx context.Context, args map[string]any) (string, error) {
-	pattern := expand(argString(args, "path"))
+	pattern := expandIn(ctx, argString(args, "path"))
 	if pattern == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -611,8 +600,8 @@ func (f *fileSkills) remove(ctx context.Context, args map[string]any) (string, e
 }
 
 func (f *fileSkills) archive(ctx context.Context, args map[string]any) (string, error) {
-	src := expand(argString(args, "source"))
-	dst := expand(argString(args, "destination"))
+	src := expandIn(ctx, argString(args, "source"))
+	dst := expandIn(ctx, argString(args, "destination"))
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("source and destination are required")
 	}
@@ -632,8 +621,8 @@ func (f *fileSkills) archive(ctx context.Context, args map[string]any) (string, 
 }
 
 func (f *fileSkills) extract(ctx context.Context, args map[string]any) (string, error) {
-	src := expand(argString(args, "path"))
-	dst := expand(argString(args, "destination"))
+	src := expandIn(ctx, argString(args, "path"))
+	dst := expandIn(ctx, argString(args, "destination"))
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("path and destination are required")
 	}
@@ -850,7 +839,7 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			path := expand(argString(args, "path"))
+			path := expandIn(ctx, argString(args, "path"))
 			content := argRaw(args, "content")
 			if path == "" || content == "" {
 				return "", fmt.Errorf("path and content are required")
@@ -898,7 +887,7 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			path := expand(argString(args, "path"))
+			path := expandIn(ctx, argString(args, "path"))
 			content := argRaw(args, "content")
 			if path == "" || content == "" {
 				return "", fmt.Errorf("path and content are required")
@@ -940,7 +929,7 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}, "path", "format"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			src := expand(argString(args, "path"))
+			src := expandIn(ctx, argString(args, "path"))
 			format := argString(args, "format")
 			if src == "" || format == "" {
 				return "", fmt.Errorf("path and format are required")
@@ -948,7 +937,7 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			if _, err := os.Stat(src); err != nil {
 				return "", fmt.Errorf("no such file: %s", src)
 			}
-			outDir := expand(argString(args, "destination"))
+			outDir := expandIn(ctx, argString(args, "destination"))
 			if outDir == "" {
 				outDir = filepath.Dir(src)
 			}
@@ -1018,7 +1007,7 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			path := expand(argString(args, "path"))
+			path := expandIn(ctx, argString(args, "path"))
 			content := argRaw(args, "content")
 			if path == "" || content == "" {
 				return "", fmt.Errorf("path and content are required")
@@ -1118,8 +1107,8 @@ func splitCSVLine(line string) []string {
 func (f *fileSkills) ResolvePlaces(pb *PlaceBook) { f.places = pb }
 
 // placeAware resolves a path, falling back to the place book by name.
-func (f *fileSkills) placeAware(path string) string {
-	resolved := expand(path)
+func (f *fileSkills) placeAware(ctx context.Context, path string) string {
+	resolved := expandIn(ctx, path)
 	if _, err := os.Stat(resolved); err == nil {
 		return resolved
 	}

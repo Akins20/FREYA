@@ -97,12 +97,12 @@ func normalisePlaceName(s string) string {
 // Refusing to remember a path that is not there is the point: a place book full
 // of stale entries is worse than an empty one, because it answers confidently
 // and wrongly.
-func (pb *PlaceBook) Remember(name, path string) (Place, error) {
+func (pb *PlaceBook) Remember(ctx context.Context, name, path string) (Place, error) {
 	key := normalisePlaceName(name)
 	if key == "" {
 		return Place{}, fmt.Errorf("a place needs a name")
 	}
-	resolved := expand(path)
+	resolved := expandIn(ctx, path)
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return Place{}, fmt.Errorf("cannot remember %q: %s does not exist", name, resolved)
@@ -221,8 +221,8 @@ func RegisterPlaces(r *Registry, dir string) (*PlaceBook, error) {
 				"path": {Type: "string", Description: "The actual path. Must exist."},
 			}, "name", "path"),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
-			p, err := pb.Remember(argString(args, "name"), argString(args, "path"))
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			p, err := pb.Remember(ctx, argString(args, "name"), argString(args, "path"))
 			if err != nil {
 				return "", err
 			}
@@ -240,7 +240,7 @@ func RegisterPlaces(r *Registry, dir string) (*PlaceBook, error) {
 				"name": {Type: "string", Description: "The name they used."},
 			}, "name"),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
 			p, ok := pb.Resolve(name)
 			if !ok {
@@ -257,6 +257,16 @@ func RegisterPlaces(r *Registry, dir string) (*PlaceBook, error) {
 					"Ask the user rather than searching the disk.",
 					name, strings.Join(names, ", ")), nil
 			}
+			// Say which place answered when it is not the one asked for. The lookup
+			// is deliberately forgiving — prefix and substring, either direction —
+			// so "cs401 assignment folder" can resolve to a place stored under
+			// "assignments" from an entirely different course. Returning the bare
+			// path hid that, and every later file and shell call in the thread then
+			// happened somewhere she never chose.
+			if !strings.EqualFold(strings.TrimSpace(p.Name), strings.TrimSpace(name)) {
+				return fmt.Sprintf("%s\n(That is the place saved as %q — the closest match to %q, not an exact one.)",
+					p.Path, p.Name, name), nil
+			}
 			return p.Path, nil
 		},
 	})
@@ -267,7 +277,7 @@ func RegisterPlaces(r *Registry, dir string) (*PlaceBook, error) {
 			Description: "List every remembered location.",
 			Params:      llm.ObjectSchema(nil),
 		},
-		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
 			places := pb.All()
 			if len(places) == 0 {
 				return "No places learned yet.", nil
@@ -288,7 +298,7 @@ func RegisterPlaces(r *Registry, dir string) (*PlaceBook, error) {
 				"name": {Type: "string", Description: "The place to forget."},
 			}, "name"),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
 			removed, err := pb.Forget(name)
 			if err != nil {

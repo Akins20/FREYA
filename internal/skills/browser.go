@@ -62,6 +62,29 @@ func (t *Tabs) CloseAll() {
 	}
 }
 
+// resolve is get, plus a note when the tab handed back is not the one named.
+//
+// The fallback itself is right and stays: a blank name is a routine omission,
+// there is almost always one tab, and erroring on it once sent her into a loop of
+// reopening — and reloading — the page every round. What was wrong was doing it
+// silently when the name was WRONG rather than absent. With two tabs open,
+// asking for "portal" when the tab is called "d2l" quietly drove the other page,
+// and every subsequent report was about a page she was not thinking about.
+func (t *Tabs) resolve(name string) (*openTab, string, bool) {
+	tab, ok := t.get(name)
+	if !ok || tab == nil {
+		return tab, "", ok
+	}
+	t.mu.Lock()
+	ambiguous := len(t.byName) > 1
+	t.mu.Unlock()
+	if name != "" && !strings.EqualFold(name, tab.name) && ambiguous {
+		return tab, fmt.Sprintf("\n(There is no tab called %q. This is tab %q — the one most recently "+
+			"used. Check browser_tabs if that is not the page you meant.)", name, tab.name), true
+	}
+	return tab, "", true
+}
+
 func (t *Tabs) get(name string) (*openTab, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -113,6 +136,17 @@ func (t *Tabs) list() []*openTab {
 	return out
 }
 
+// tabNoted resolves the tab an argument names, returning any disclosure that the
+// tab handed back is not the one asked for.
+func tabNoted(tabs *Tabs, args map[string]any) (*openTab, string, error) {
+	name := argString(args, "name")
+	tab, note, ok := tabs.resolve(name)
+	if !ok {
+		return nil, "", fmt.Errorf("no tab named %q — open one with browser_open first", name)
+	}
+	return tab, note, nil
+}
+
 // RegisterBrowser adds browser skills.
 func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	// History and page interaction live in their own files; they are part of the
@@ -146,6 +180,11 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
 			url := argString(args, "url")
+			// Opening mints the tab every later browser call works on, so a guessed
+			// deep link here poisons the whole session's working surface.
+			if err := CheckURL(ctx, url); err != nil {
+				return "", err
+			}
 			bctx := browser.ContextGuest
 			if strings.EqualFold(argString(args, "context"), "auth") {
 				bctx = browser.ContextAuth
@@ -238,11 +277,17 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			}, "name", "url"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			tab, ok := tabs.get(argString(args, "name"))
-			if !ok {
-				return "", fmt.Errorf("no tab named %q", argString(args, "name"))
+			tab, tabNote, err := tabNoted(tabs, args)
+			if err != nil {
+				return "", err
 			}
 			url := argString(args, "url")
+			// A deep link she was never shown is a guess, and a guess here SUCCEEDS:
+			// a wrong id returns a real page with a real title, which is how forty
+			// rounds get spent walking ids that were never right.
+			if err := CheckURL(ctx, url); err != nil {
+				return "", err
+			}
 			action := guard.Action{Kind: guard.KindBrowser, Command: "navigate " + url,
 				Reason: fmt.Sprintf("navigate tab %q (%s context)", tab.name, tab.ctx)}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
@@ -252,7 +297,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				title, _ := tab.client.Title(ctx)
 				current, _ := tab.client.URL(ctx)
 				tab.lastURL = current
-				return fmt.Sprintf("%q\n%s", title, current), nil
+				return fmt.Sprintf("%q\n%s%s", title, current, tabNote), nil
 			})
 		},
 	})
@@ -314,9 +359,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		Observe:     tabs.observe,
 		Affordances: tabs.affordances,
 		Act: func(ctx context.Context, args map[string]any) (Outcome, error) {
-			tab, ok := tabs.get(argString(args, "name"))
-			if !ok {
-				return Outcome{}, fmt.Errorf("no tab named %q", argString(args, "name"))
+			tab, tabNote, terr := tabNoted(tabs, args)
+			if terr != nil {
+				return Outcome{}, terr
 			}
 			text := argString(args, "text")
 			if strings.TrimSpace(text) == "" {
@@ -342,7 +387,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return Outcome{}, err
 			}
 
-			o := Outcome{Text: out}
+			o := Outcome{Text: out + tabNote}
 			// Say what was actually hit when it differs from what was asked for.
 			// The match is fuzzy — exact wins, else the shortest containing label —
 			// so "Submit" can land on "Submit and add another", and echoing back the

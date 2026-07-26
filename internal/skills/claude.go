@@ -99,7 +99,7 @@ func RegisterClaude(r *Registry, g *guard.Guard, c *claude.Client) {
 				"and what they have cost. Check here before delegating something similar.",
 			Params: llm.ObjectSchema(nil),
 		},
-		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
 			sessions := c.Sessions()
 			if len(sessions) == 0 {
 				return "No Claude sessions yet.", nil
@@ -152,7 +152,7 @@ func RegisterClaude(r *Registry, g *guard.Guard, c *claude.Client) {
 				"label":   {Type: "string", Description: "The new name."},
 			}, "session", "label"),
 		},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			s, ok := c.Find(argString(args, "session"))
 			if !ok {
 				return "", fmt.Errorf("no session matching %q", argString(args, "session"))
@@ -222,7 +222,7 @@ func delegate(ctx context.Context, g *guard.Guard, c *claude.Client,
 	opts := claude.Options{
 		Prompt:          task,
 		Resume:          resume,
-		Dir:             expand(argString(args, "dir")),
+		Dir:             expandIn(ctx, argString(args, "dir")),
 		Model:           plan.Model,
 		Effort:          plan.Effort,
 		PermissionMode:  permMode,

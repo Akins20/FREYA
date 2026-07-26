@@ -22,13 +22,12 @@ import (
 // RegisterBrowserInteract adds the page-interaction skills.
 func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 	// tabFor is the same lookup every handler needs.
+	// tabFor is the same lookup every handler needs. The note it discards is
+	// surfaced by the callers that act on a page; a read that lands on the wrong
+	// tab reports that page's own title, which is disclosure enough.
 	tabFor := func(args map[string]any) (*openTab, error) {
-		name := argString(args, "name")
-		tab, ok := tabs.get(name)
-		if !ok {
-			return nil, fmt.Errorf("no tab named %q — open one with browser_open first", name)
-		}
-		return tab, nil
+		tab, _, err := tabNoted(tabs, args)
+		return tab, err
 	}
 
 	r.Register(Skill{

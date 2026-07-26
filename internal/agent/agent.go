@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +79,13 @@ type Agent struct {
 	// when it cannot tell.
 	UserActivity func() string
 
+	// Scope is where this thread of work happens: the directory its file and
+	// shell tools resolve against, and the namespace for its browser tabs. The
+	// zero value falls back to the process directory, so a plain session behaves
+	// exactly as it did before scopes existed; a background job gets its own, so
+	// two threads can be in two folders without moving each other.
+	Scope skills.Scope
+
 	// Telemetry records what ran and what it cost. Nil is fine — every method
 	// on a nil Recorder is a no-op, so instrumentation never becomes a reason
 	// for the agent to fail.
@@ -147,6 +153,10 @@ func (a *attemptLog) record(key string, err error) {
 	a.failed[key]++
 }
 
+// scope returns this agent's execution scope, falling back to the process-wide
+// default so an agent built without one behaves exactly as before.
+func (a *Agent) scope() skills.Scope { return a.Scope.OrDefault() }
+
 // Result is the outcome of one user exchange.
 type Result struct {
 	Reply     string
@@ -185,12 +195,24 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// and the new input is appended explicitly as the final message.
 	system, history, snap := a.Builder.Build(input)
 
+	// Every tool call this exchange makes inherits the scope, so file and shell
+	// tools resolve relative paths against THIS thread's directory rather than a
+	// process-global one that another thread could move underneath it.
+	scope := a.scope()
+	ctx = skills.WithScope(ctx, scope)
+
+	// A URL the user typed is an observed URL. They are the most authoritative
+	// source there is, and refusing to open an address they just gave would be
+	// absurd — the provenance rules exist to stop her inventing identifiers, not
+	// to stop her listening.
+	scope.Ledger().ObserveText(input)
+
 	// Constant location awareness. This is read fresh every turn, so the moment
 	// she changes directory the next turn reflects it — she is never guessing
 	// where a file she wrote or a command she ran actually landed. It rides at
 	// the end of the system brief, after the stable persona, so it never
 	// invalidates the cached prompt prefix even though it changes turn to turn.
-	if wd, err := os.Getwd(); err == nil {
+	if wd := a.scope().Dir(); wd != "" {
 		system += "\n\n# Where you are right now\n" +
 			"Working directory: " + wd + "\n" +
 			"Files you write and commands you run happen here unless you pass an " +
