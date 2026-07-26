@@ -42,6 +42,16 @@ type PortalState struct {
 	loginDone   atomic.Bool
 }
 
+// Reset clears what a previous run accomplished, so the next one has to earn its
+// own pass. Called from the Setup of every benchmark that reads this state —
+// without it the record is cumulative across runs and the second run of a
+// benchmark passes on the first run's work.
+func (p *PortalState) Reset() {
+	p.OpenedQuiz.Store(0)
+	p.SubmittedTo.Store("")
+	p.loginDone.Store(false)
+}
+
 // TestServer is a running fake portal.
 type TestServer struct {
 	URL   string

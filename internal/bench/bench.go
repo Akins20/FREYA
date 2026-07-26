@@ -27,8 +27,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/akins/jarvis/internal/telemetry"
 )
 
 // Benchmark is one task with a verifiable outcome.
@@ -50,6 +53,13 @@ type Benchmark struct {
 	// Check inspects the world after the run and reports pass plus a one-line
 	// reason. This is where strictness lives: verify the artifact, not the reply.
 	Check func(w *World) (bool, string)
+	// Exclusive marks a benchmark whose Check reads state living outside its own
+	// workspace — the fake portal's record of which quiz page was reached, say.
+	// Those cannot overlap: with the driver running jobs in parallel, and the same
+	// benchmark enqueued once per run, one run's progress would satisfy another
+	// run's Check and report a pass nobody earned. Exclusive benchmarks are
+	// serialised against each other; everything else still runs in parallel.
+	Exclusive bool
 }
 
 // World is what a Check inspects: the workspace, and what the agent did.
@@ -62,6 +72,109 @@ type World struct {
 	Duration  time.Duration // wall-clock for the run
 	ExitOK    bool          // the process exited cleanly
 	TimedOut  bool
+
+	// Events is the run's own telemetry, read back from the workspace.
+	//
+	// This costs nothing to collect: FREYA_DATA_DIR already points inside the
+	// workspace, so she has always been writing a machine-readable record of every
+	// tool call and model call there — and it was always thrown away with the temp
+	// directory. Parsing it turns questions the text trace cannot answer ("how many
+	// rounds achieved nothing", "did she call the same thing twenty times", "did a
+	// tool succeed and return nothing") into ordinary checks.
+	Events []telemetry.Event
+}
+
+// toolEvents returns the run's tool calls in the order they were recorded.
+// Concurrent tool goroutines mean file order is not causal order, so this sorts
+// by the sequence number stamped at record time.
+func (w *World) toolEvents() []telemetry.Event {
+	var out []telemetry.Event
+	for _, e := range w.Events {
+		if e.Kind == telemetry.KindTool {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
+}
+
+// WastedRounds counts rounds in which every tool call failed — a whole model
+// call spent achieving nothing. This is the shape of the thrash that used to eat
+// a 40-round budget: not one catastrophic error, but twenty rounds of near-misses.
+func (w *World) WastedRounds() int {
+	type tally struct{ total, failed int }
+	rounds := map[int]*tally{}
+	for _, e := range w.toolEvents() {
+		if e.Round == 0 {
+			continue // pre-correlation event; cannot attribute it
+		}
+		t := rounds[e.Round]
+		if t == nil {
+			t = &tally{}
+			rounds[e.Round] = t
+		}
+		t.total++
+		if !e.OK {
+			t.failed++
+		}
+	}
+	n := 0
+	for _, t := range rounds {
+		if t.total > 0 && t.total == t.failed {
+			n++
+		}
+	}
+	return n
+}
+
+// LongestRepeatRun returns the longest run of consecutive calls to the same tool
+// with the same arguments that all failed, and the tool's name.
+//
+// Identical arguments are the point: twenty different selectors is exploration,
+// twenty of the same one is a stuck loop, and only the argument fingerprint tells
+// them apart.
+func (w *World) LongestRepeatRun() (int, string) {
+	best, bestName := 0, ""
+	run, key, name := 0, "", ""
+	for _, e := range w.toolEvents() {
+		k := e.Name + "|" + e.ArgsHash
+		if !e.OK && k == key {
+			run++
+		} else {
+			run, key, name = 1, k, e.Name
+			if e.OK {
+				run, key = 0, ""
+			}
+		}
+		if run > best {
+			best, bestName = run, name
+		}
+	}
+	return best, bestName
+}
+
+// SilentNoops counts calls that reported success and returned nothing at all —
+// the failure mode that is invisible to the model, because an empty success and
+// a real one arrive looking identical.
+func (w *World) SilentNoops() int {
+	n := 0
+	for _, e := range w.toolEvents() {
+		if e.Outcome == telemetry.OutcomeEmpty {
+			n++
+		}
+	}
+	return n
+}
+
+// FailedTools counts tool calls that returned an error.
+func (w *World) FailedTools() int {
+	n := 0
+	for _, e := range w.toolEvents() {
+		if !e.OK {
+			n++
+		}
+	}
+	return n
 }
 
 // Result is the graded outcome of one benchmark.
@@ -147,6 +260,9 @@ func (r *Runner) Run(ctx context.Context, b Benchmark) Result {
 	w.Reply = extractReply(w.Trace)
 	w.ToolCalls = extractToolCalls(w.Trace)
 	w.Rounds = extractRounds(w.Trace)
+	// Her own telemetry, written into this workspace during the run. Best-effort:
+	// a run that crashed before flushing still has a trace to grade on.
+	w.Events, _ = telemetry.Load(filepath.Join(dataDir, "telemetry.jsonl"), time.Time{})
 
 	if r.Verbose {
 		fmt.Printf("  [%s] %d tools, %d rounds, %s\n", b.Name, len(w.ToolCalls), w.Rounds, w.Duration.Round(time.Second))
@@ -178,8 +294,11 @@ func extractToolCalls(trace string) []string {
 	return calls
 }
 
-// roundLine matches the "  1.2s · N round(s)" footer the verbose REPL prints.
-var roundLine = regexp.MustCompile(`(\d+)\s+round`)
+// roundLine matches the "· N round(s)" field the verbose accounting line carries.
+//
+// Anchored on the literal "round(s)" rather than a bare "round", so a tool that
+// happens to print "3 rounds" of its own cannot be mistaken for the footer.
+var roundLine = regexp.MustCompile(`(\d+)\s+round\(s\)`)
 
 func extractRounds(trace string) int {
 	m := roundLine.FindStringSubmatch(trace)
@@ -197,6 +316,13 @@ func extractRounds(trace string) int {
 // interleaves tool lines; the reply is the run of non-trace text before the
 // timing footer. This is a heuristic, and Checks that need the reply should be
 // forgiving — the artifacts are the real signal.
+//
+// Her *reasoning* must be filtered as hard as her tool trace. Thinking is on by
+// default and prints as "💭 …", so leaving it in let a Check pass on a token she
+// only thought about, and fail on a stalling phrase she considered and rejected —
+// both of which make the instrument lie about the thing it is measuring. The
+// "tools:" accounting line is dropped for the same reason: it names every tool
+// she called, so a reply check could match on a tool name rather than an answer.
 func extractReply(trace string) string {
 	var b strings.Builder
 	sc := bufio.NewScanner(strings.NewReader(trace))
@@ -209,7 +335,11 @@ func extractReply(trace string) string {
 			continue
 		case strings.HasPrefix(t, "→"), strings.HasPrefix(t, "✓"), strings.HasPrefix(t, "✗"):
 			continue
+		case strings.HasPrefix(t, "💭"):
+			continue
 		case strings.HasPrefix(t, "context:"), strings.Contains(t, "round(s)"):
+			continue
+		case strings.HasPrefix(t, "tools:"):
 			continue
 		case strings.Contains(t, "deferring background"):
 			continue

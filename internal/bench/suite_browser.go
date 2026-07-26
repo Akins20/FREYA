@@ -33,12 +33,19 @@ func BrowserBenchmarks(ts *TestServer) []Benchmark {
 		}
 	}
 
+	// resetPortal clears the server's record of what a previous run reached, so
+	// each run has to get there itself. Paired with Exclusive below: the reset
+	// only means anything if no other run is racing this one.
+	resetPortal := func(string) error { ts.State.Reset(); return nil }
+
 	return []Benchmark{
 		{
 			Name:       "portal-find-across-pagination",
 			Category:   "browser",
 			Difficulty: 5,
 			Timeout:    5 * time.Minute,
+			Exclusive:  true,
+			Setup:      resetPortal,
 			Prompt: fmt.Sprintf("Open %s/portal in the browser. It's a work-to-do list that loads "+
 				"its items a moment after the page and is split across several pages. Find the "+
 				"'Self-Quiz Unit 5 for BUS 1102 Basic Accounting' — it is NOT on the first page, so "+
@@ -58,6 +65,8 @@ func BrowserBenchmarks(ts *TestServer) []Benchmark {
 			Category:   "browser",
 			Difficulty: 3,
 			Timeout:    4 * time.Minute,
+			Exclusive:  true,
+			Setup:      resetPortal,
 			Prompt: fmt.Sprintf("Open %s/portal and tell me the exact title of the FIRST work item in "+
 				"the list. The list loads a moment after the page, so make sure you're reading the "+
 				"real content, not the loading placeholders.", ts.URL),
@@ -72,6 +81,8 @@ func BrowserBenchmarks(ts *TestServer) []Benchmark {
 			Category:   "browser",
 			Difficulty: 4,
 			Timeout:    5 * time.Minute,
+			Exclusive:  true,
+			Setup:      resetPortal,
 			Prompt: fmt.Sprintf("Go to %s/quiz/5 in the browser and read me back, exactly, the "+
 				"password printed on that page.", ts.URL),
 			Check: func(w *World) (bool, string) {

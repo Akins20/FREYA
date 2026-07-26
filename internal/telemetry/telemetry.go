@@ -22,7 +22,11 @@ package telemetry
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,10 +73,72 @@ type Event struct {
 	// cost of thinking can be seen on its own.
 	ThoughtTokens int `json:"thought,omitempty"`
 
+	// --- correlation ---
+	//
+	// Without these, the log answers "how many calls failed" but not "what did
+	// she do next" — and the second question is the one that says whether she
+	// recovered or thrashed. Tool calls run in concurrent goroutines, so wall
+	// order is not causal order; Seq is stamped as the event is recorded, and
+	// ExchangeID plus Round place it in the conversation.
+
+	// ExchangeID groups every event produced by one Ask().
+	ExchangeID string `json:"xid,omitempty"`
+	// Round is the agent-loop iteration the event belongs to, 1-based.
+	Round int `json:"round,omitempty"`
+	// Seq is a process-monotonic counter stamped at record time, so a reader can
+	// reconstruct the order events were produced in.
+	Seq int64 `json:"seq,omitempty"`
+	// ArgsHash fingerprints what a tool was called WITH, so twenty attempts at the
+	// same thing are distinguishable from twenty different attempts. A hash, not
+	// the arguments: they routinely carry page content and must not be logged.
+	ArgsHash string `json:"args,omitempty"`
+	// Outcome is what actually happened, one level finer than OK: an empty result
+	// with no error is a silent no-op, and it used to be indistinguishable from
+	// success.
+	Outcome Outcome `json:"outcome,omitempty"`
+
 	// CostUSD is an estimate. See the package doc.
 	CostUSD float64 `json:"cost,omitempty"`
 	// Detail carries anything else worth keeping, kept short.
 	Detail string `json:"detail,omitempty"`
+}
+
+// Outcome classifies how a call ended, finer than a success bool.
+type Outcome string
+
+const (
+	// OutcomeOK is a call that returned something.
+	OutcomeOK Outcome = "ok"
+	// OutcomeEmpty is a call that succeeded and returned nothing — the silent
+	// no-op that reads as success to the model and is invisible in a pass/fail log.
+	OutcomeEmpty Outcome = "empty"
+	// OutcomeError is a call that failed.
+	OutcomeError Outcome = "error"
+	// OutcomeRefused is a call a guard or a budget declined to run.
+	OutcomeRefused Outcome = "refused"
+	// OutcomeTimeout is a call that ran out of time.
+	OutcomeTimeout Outcome = "timeout"
+)
+
+// ClassifyOutcome derives the outcome of a tool call from what it returned.
+func ClassifyOutcome(output string, err error) Outcome {
+	switch {
+	case err == nil && strings.TrimSpace(output) == "":
+		return OutcomeEmpty
+	case err == nil:
+		return OutcomeOK
+	case errors.Is(err, context.DeadlineExceeded):
+		return OutcomeTimeout
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "declined"), strings.Contains(low, "refus"),
+		strings.Contains(low, "is off for this page"):
+		return OutcomeRefused
+	case strings.Contains(low, "timed out"), strings.Contains(low, "timeout"):
+		return OutcomeTimeout
+	}
+	return OutcomeError
 }
 
 // bufferSize is how many events may queue before dropping begins.
@@ -86,6 +152,7 @@ type Recorder struct {
 	events  chan Event
 	dropped atomic.Int64
 	written atomic.Int64
+	seq     atomic.Int64
 
 	mu     sync.Mutex
 	file   *os.File
@@ -131,6 +198,13 @@ func (r *Recorder) Record(e Event) {
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
+	// Stamp the sequence here, before the hand-off. Events are produced by
+	// concurrent tool goroutines and drained by one writer, so the order they
+	// land in the file is not the order they happened; this is what lets a reader
+	// put them back in causal order.
+	if e.Seq == 0 {
+		e.Seq = r.seq.Add(1)
+	}
 	select {
 	case r.events <- e:
 	default:
@@ -142,11 +216,47 @@ func (r *Recorder) Record(e Event) {
 
 // Tool records a skill execution.
 func (r *Recorder) Tool(name string, d time.Duration, err error) {
-	e := Event{Kind: KindTool, Name: name, DurationMS: d.Milliseconds(), OK: err == nil}
+	e := Event{Kind: KindTool, Name: name, DurationMS: d.Milliseconds(), OK: err == nil,
+		Outcome: ClassifyOutcome("", err)}
 	if err != nil {
 		e.Error = clip(err.Error(), 200)
 	}
 	r.Record(e)
+}
+
+// ToolCall records a tool call with the correlation a reader needs to tell
+// recovery from thrashing: which exchange and round it belonged to, a
+// fingerprint of its arguments, and how it actually ended.
+func (r *Recorder) ToolCall(name, exchangeID string, round int, args map[string]any,
+	d time.Duration, output string, err error) {
+	e := Event{
+		Kind: KindTool, Name: name, DurationMS: d.Milliseconds(), OK: err == nil,
+		ExchangeID: exchangeID, Round: round, ArgsHash: HashArgs(args),
+		Outcome: ClassifyOutcome(output, err),
+	}
+	if err != nil {
+		e.Error = clip(err.Error(), 200)
+	}
+	r.Record(e)
+}
+
+// HashArgs fingerprints a tool's arguments so repeated identical calls are
+// recognisable without ever writing the arguments themselves to disk — they
+// routinely carry page text, file contents and search queries.
+func HashArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // map order is random; the hash must not be
+	h := sha1.New()
+	for _, k := range keys {
+		fmt.Fprintf(h, "%s=%v\x00", k, args[k])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // ModelCall records a language-model call.

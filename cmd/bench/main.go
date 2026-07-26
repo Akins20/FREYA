@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,11 +87,22 @@ func main() {
 	}
 
 	if *list {
-		fmt.Printf("%d benchmarks across %d categories:\n", len(bench.AllBenchmarks()), len(bench.Categories()))
-		for _, c := range bench.Categories() {
-			bs := bench.InCategory(c)
-			fmt.Printf("\n%s (%d)\n", c, len(bs))
-			for _, b := range bs {
+		// Group `all`, not the static registry: the browser and browser-edge
+		// benchmarks are built at run time against the live portal, so listing the
+		// registry alone under-reports the suite by eleven.
+		byCat := map[string][]bench.Benchmark{}
+		var cats []string
+		for _, b := range all {
+			if _, seen := byCat[b.Category]; !seen {
+				cats = append(cats, b.Category)
+			}
+			byCat[b.Category] = append(byCat[b.Category], b)
+		}
+		sort.Strings(cats)
+		fmt.Printf("%d benchmarks across %d categories:\n", len(all), len(cats))
+		for _, c := range cats {
+			fmt.Printf("\n%s (%d)\n", c, len(byCat[c]))
+			for _, b := range byCat[c] {
 				fmt.Printf("  %-30s %s\n", b.Name, strings.Repeat("★", b.Difficulty))
 			}
 		}
@@ -134,6 +147,13 @@ func main() {
 		mu      sync.Mutex
 		wg      sync.WaitGroup
 		results = map[string][]bench.Result{} // benchmark name -> its runs
+		// exclusiveMu serialises benchmarks whose Check reads state outside their
+		// own workspace. Without it, two runs of the same portal benchmark overlap
+		// and one satisfies the other's Check — a pass nobody earned.
+		exclusiveMu sync.Mutex
+		// interrupted records that the suite was cut short, so a Ctrl-C cannot
+		// exit green just because the benchmarks that would have failed never ran.
+		interrupted atomic.Bool
 	)
 	sem := make(chan struct{}, maxi(1, *parallel))
 	for _, jb := range jobs {
@@ -143,7 +163,12 @@ func main() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if ctx.Err() != nil {
+				interrupted.Store(true)
 				return
+			}
+			if jb.b.Exclusive {
+				exclusiveMu.Lock()
+				defer exclusiveMu.Unlock()
 			}
 			r := runner.Run(ctx, jb.b)
 			mu.Lock()
@@ -161,10 +186,23 @@ func main() {
 	fmt.Printf("\n%s\n", bench.PassRateReport(all, results))
 	fmt.Printf("(suite took %s)\n", time.Since(start).Round(time.Second))
 
+	// An interrupted suite is not a green suite. The gate below only inspects
+	// benchmarks that produced a result, so without this a Ctrl-C during the run
+	// would skip the ones about to fail and exit 0.
+	if interrupted.Load() || ctx.Err() != nil {
+		fmt.Println("suite was interrupted — results are incomplete")
+		os.Exit(1)
+	}
+
 	// Exit non-zero if any benchmark never passed across its runs, so this can
 	// gate a release. A flaky benchmark (some passes) does not fail the gate; a
 	// total miss does.
-	for _, rs := range results {
+	for _, b := range all {
+		rs := results[b.Name]
+		if len(rs) == 0 {
+			fmt.Printf("%s never ran\n", b.Name)
+			os.Exit(1)
+		}
 		anyPass := false
 		for _, r := range rs {
 			if r.Pass {

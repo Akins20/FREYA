@@ -166,6 +166,10 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	tools := a.Skills.Tools()
 	result := &Result{Snapshot: snap}
 
+	// One id for everything this exchange produces, so its events can be pulled
+	// back out of a shared log as a single story rather than a shuffled pile.
+	exchangeID := fmt.Sprintf("x%d", time.Now().UnixNano())
+
 	for round := 1; round <= maxToolRounds; round++ {
 		result.Rounds = round
 
@@ -234,7 +238,12 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 
 				started := time.Now()
 				output, err := a.Skills.Execute(ctx, call.Name, call.Args)
-				a.Telemetry.Tool(call.Name, time.Since(started), err)
+				// Recorded with the exchange, the round and a fingerprint of the
+				// arguments, so the log can answer "what did she do after this
+				// failed": twenty attempts at the same thing look nothing like
+				// twenty different attempts, and only the args hash tells them apart.
+				a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args,
+					time.Since(started), output, err)
 				if err != nil {
 					// Errors go back to the model as text: a failed tool is
 					// information it can act on, not a reason to abort the turn.

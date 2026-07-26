@@ -954,9 +954,13 @@ func personaCommand(rest string, a *agent.Agent, cfg *config.Config) error {
 
 func printSnapshot(res *agent.Result) {
 	s := res.Snapshot
-	fmt.Printf("%s  context: %d tok (identity %d · facts %d · episodes %d · working %d/%d turns · recalled %d)%s\n",
+	// Rounds ride on the accounting line, which every verbose path prints — the
+	// one-shot -ask path included. Without it the benchmark harness, which drives
+	// exactly that path, read every run as "0 rounds" and any measure of wasted
+	// effort built on it was silently always zero.
+	fmt.Printf("%s  context: %d tok (identity %d · facts %d · episodes %d · working %d/%d turns · recalled %d) · %d round(s)%s\n",
 		cDim, s.TotalTokens, s.IdentityTokens, s.FactTokens, s.EpisodeTokens,
-		s.WorkingTokens, s.WorkingTurns, s.RetrievedCount, cReset)
+		s.WorkingTokens, s.WorkingTurns, s.RetrievedCount, res.Rounds, cReset)
 	if len(res.ToolCalls) > 0 {
 		fmt.Printf("%s  tools: %s%s\n", cDim, strings.Join(res.ToolCalls, ", "), cReset)
 	}

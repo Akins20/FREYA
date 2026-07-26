@@ -216,6 +216,61 @@ func FinishedCleanly() func(*World) (bool, string) {
 	}
 }
 
+// ---- reliability predicates -------------------------------------------------
+//
+// These grade *how* she worked, not just whether the artifact landed. They read
+// the run's own telemetry (World.Events), which carries the exchange, the round,
+// an argument fingerprint and a richer outcome than success/failure — so they can
+// distinguish exploring from thrashing, and a real result from an empty one.
+//
+// A task can pass its artifact check while burning thirty rounds guessing; that
+// is a task she completed and a substrate that failed her, and it should be
+// visible in the score.
+
+// NoThrash fails a run that called the same tool with the same arguments, and
+// failed, more than max times in a row. The baseline before the substrate work
+// was 19.
+func NoThrash(max int) func(*World) (bool, string) {
+	return func(w *World) (bool, string) {
+		n, name := w.LongestRepeatRun()
+		if n <= max {
+			return true, fmt.Sprintf("no thrash (longest identical failing run %d)", n)
+		}
+		return false, fmt.Sprintf("thrashed: %d consecutive identical failing %s calls (max %d)", n, name, max)
+	}
+}
+
+// MaxWastedRounds fails a run that spent more than max rounds in which every
+// tool call failed — whole model calls that achieved nothing.
+func MaxWastedRounds(max int) func(*World) (bool, string) {
+	return func(w *World) (bool, string) {
+		n := w.WastedRounds()
+		if n <= max {
+			return true, fmt.Sprintf("%d wasted round(s)", n)
+		}
+		return false, fmt.Sprintf("%d rounds achieved nothing (max %d)", n, max)
+	}
+}
+
+// NoSilentNoops fails a run in which a tool reported success and returned
+// nothing — the failure the model cannot see, because an empty success is
+// indistinguishable from a real one.
+func NoSilentNoops() func(*World) (bool, string) {
+	return func(w *World) (bool, string) {
+		if n := w.SilentNoops(); n > 0 {
+			return false, fmt.Sprintf("%d tool call(s) succeeded but returned nothing", n)
+		}
+		return true, "no silent no-ops"
+	}
+}
+
+// Efficiently wraps a check with the reliability floor every task should clear:
+// it must pass, without thrashing and without burning rounds on nothing. Use it
+// to hold a benchmark to the standard rather than only to the outcome.
+func Efficiently(check func(*World) (bool, string)) func(*World) (bool, string) {
+	return All(check, NoThrash(3), MaxWastedRounds(2))
+}
+
 // All passes only when every sub-check passes; the reason names the first
 // failure, or summarises success.
 func All(checks ...func(*World) (bool, string)) func(*World) (bool, string) {
