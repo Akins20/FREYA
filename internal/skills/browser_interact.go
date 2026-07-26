@@ -48,6 +48,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			if err != nil {
 				return "", err
 			}
+			tab.sawReality() // scouting the real controls lifts the selector block
 			return tab.client.Inspect(ctx, argInt(args, "limit", 60))
 		},
 	})
@@ -211,13 +212,16 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "browser_click_real",
-			Description: "Click using genuine mouse events rather than a scripted click. Try " +
-				"this when browser_click appeared to work but the page did not respond — " +
-				"custom dropdowns, drag handles and some login buttons only accept real " +
-				"mouse input.",
+			Description: "Click a CSS selector using genuine mouse events. NOTE: " +
+				"browser_click_text already does a real, trusted click by visible text — " +
+				"prefer it for anything you can name by its wording (links, buttons, quiz " +
+				"titles, answers). Use this only for something with no text you can target " +
+				"(a drag handle, an icon) AND only with an EXACT selector from " +
+				"browser_inspect. Never invent a selector or guess an id/href from a " +
+				"pattern — it will miss and waste the turn.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
-				"selector": {Type: "string", Description: "CSS selector."},
+				"selector": {Type: "string", Description: "An EXACT CSS selector from browser_inspect. Not made up."},
 			}, "name", "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -229,10 +233,15 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
 				Reason: fmt.Sprintf("click %q with real mouse events in tab %q (%s context)",
 					sel, tab.name, tab.ctx)}
+			if err := selectorBudget(ctx, tab); err != nil {
+				return "", err
+			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.ClickReal(ctx, sel); err != nil {
-					return "", err
+					tab.misses++
+					return "", clickHint(ctx, tab, err)
 				}
+				tab.misses = 0
 				time.Sleep(900 * time.Millisecond)
 				url, _ := tab.client.URL(ctx)
 				title, _ := tab.client.Title(ctx)

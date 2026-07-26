@@ -43,16 +43,35 @@ type point struct {
 // domain expects — dispatching at document coordinates on a scrolled page
 // clicks whatever happens to be at that spot instead.
 func (c *Client) locate(ctx context.Context, selector string) (point, error) {
-	expr := fmt.Sprintf(`(() => {
-      const el = document.querySelector(%q);
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const sel = %q;
+      let el = null, bad = false;
+      const rec = (root) => {
+        if (el || bad) return;
+        let m; try { m = root.querySelector(sel); } catch (e) { bad = true; return; }
+        if (m) { el = m; return; }
+        for (const x of root.querySelectorAll('*')) { const s = __descend(x); if (s) rec(s); if (el || bad) return; }
+      };
+      rec(document);
+      if (bad) return JSON.stringify({error:'bad-selector'});
       if (!el) return JSON.stringify({error:'not-found'});
       el.scrollIntoView({block:'center', inline:'center'});
       const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return JSON.stringify({error:'not-visible'});
-      const style = window.getComputedStyle(el);
-      if (style.visibility === 'hidden' || style.display === 'none')
+      const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      const style = win.getComputedStyle(el);
+      if ((r.width === 0 && r.height === 0) || style.visibility === 'hidden' || style.display === 'none')
         return JSON.stringify({error:'not-visible'});
-      return JSON.stringify({x: r.left + r.width/2, y: r.top + r.height/2});
+      // getBoundingClientRect is relative to the element's OWN document. If it
+      // lives in an iframe, add each ancestor frame's offset so the coordinates
+      // are in the top window's viewport — which is the space CDP Input clicks in.
+      let x = r.left + r.width/2, y = r.top + r.height/2;
+      let w = win;
+      while (w && w.frameElement) {
+        const fr = w.frameElement.getBoundingClientRect();
+        x += fr.left; y += fr.top;
+        w = w.parent;
+      }
+      return JSON.stringify({x: x, y: y});
     })()`, selector)
 
 	raw, err := c.EvalString(ctx, expr)
@@ -69,7 +88,10 @@ func (c *Client) locate(ctx context.Context, selector string) (point, error) {
 	}
 	switch result.Error {
 	case "not-found":
-		return point{}, fmt.Errorf("no element matches %q", selector)
+		return point{}, fmt.Errorf("no element matches %q anywhere, including iframes and shadow DOM; "+
+			"if you know what it says, use browser_click_text", selector)
+	case "bad-selector":
+		return point{}, fmt.Errorf("%q is not a valid CSS selector (no jQuery :contains()); use browser_click_text", selector)
 	case "not-visible":
 		return point{}, fmt.Errorf("%q exists but is not visible", selector)
 	}
@@ -545,24 +567,36 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
 	if limit <= 0 {
 		limit = 60
 	}
-	expr := fmt.Sprintf(`(() => {
+	expr := deepPrelude + fmt.Sprintf(`(() => {
       const out = [];
       const seen = new Set();
+
+      // Gather every document to search: the top page, each same-origin iframe,
+      // and every open shadow root, so radios and buttons that live inside the
+      // quiz frame are listed like any other. Without this the quiz looked empty.
+      const roots = [];
+      const collect = (root) => {
+        roots.push(root);
+        let list; try { list = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const x of list) { const s = __descend(x); if (s) collect(s); }
+      };
+      collect(document);
+      const inFrame = (el) => { try { return el.ownerDocument !== document; } catch (e) { return false; } };
+      const qsa = (q) => { let r = []; for (const root of roots) { try { r = r.concat(Array.from(root.querySelectorAll(q))); } catch (e) {} } return r; };
 
       // A stable, short way to refer back to an element. Prefer whatever the
       // page already gives us over a generated path.
       const sel = el => {
-        if (el.id && !/^[0-9]/.test(el.id) && document.querySelectorAll('#'+CSS.escape(el.id)).length === 1)
+        const doc = el.ownerDocument || document;
+        if (el.id && !/^[0-9]/.test(el.id) && doc.querySelectorAll('#'+CSS.escape(el.id)).length === 1)
           return '#' + CSS.escape(el.id);
         for (const a of ['name','data-testid','aria-label','placeholder']) {
           const v = el.getAttribute && el.getAttribute(a);
           if (v) {
             const s = el.tagName.toLowerCase() + '[' + a + '=' + JSON.stringify(v) + ']';
-            try { if (document.querySelectorAll(s).length === 1) return s; } catch (e) {}
+            try { if (doc.querySelectorAll(s).length === 1) return s; } catch (e) {}
           }
         }
-        // Fall back to nth-of-type within the parent, which is stable enough
-        // for the lifetime of one interaction.
         const p = el.parentElement;
         if (!p) return el.tagName.toLowerCase();
         const same = Array.from(p.children).filter(x => x.tagName === el.tagName);
@@ -571,15 +605,8 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
         return parentSel + ' > ' + el.tagName.toLowerCase() + ':nth-of-type(' + i + ')';
       };
 
-      const visible = el => {
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) return false;
-        const s = getComputedStyle(el);
-        return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0';
-      };
-
       const label = el => {
-        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+        if (el.getAttribute && el.getAttribute('aria-label')) return el.getAttribute('aria-label');
         if (el.labels && el.labels.length) return (el.labels[0].innerText||'').trim();
         if (el.placeholder) return el.placeholder;
         if (el.name) return el.name;
@@ -588,14 +615,15 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
       };
 
       const add = (el, kind, extra) => {
-        if (out.length >= %d || !visible(el)) return;
+        if (out.length >= %d || !__vis(el)) return;
         const s = sel(el);
-        if (seen.has(s)) return;
-        seen.add(s);
-        out.push(kind + ' | ' + s + ' | ' + (label(el)||'(no label)') + (extra||''));
+        const key = (inFrame(el) ? 'f:' : '') + s + '|' + label(el);
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(kind + ' | ' + s + ' | ' + (label(el)||'(no label)') + (extra||'') + (inFrame(el) ? ' | in iframe — click by text' : ''));
       };
 
-      document.querySelectorAll('input,textarea').forEach(el => {
+      qsa('input,textarea').forEach(el => {
         const t = (el.type||'text').toLowerCase();
         if (t === 'hidden') return;
         let extra = '';
@@ -605,14 +633,14 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
         add(el, t === 'password' ? 'password' : 'field(' + t + ')', extra);
       });
 
-      document.querySelectorAll('select').forEach(el => {
+      qsa('select').forEach(el => {
         const opts = Array.from(el.options).slice(0,12).map(o => (o.text||'').trim()).filter(Boolean);
         add(el, 'dropdown', ' | options: ' + opts.join(', ') +
             (el.options.length > 12 ? ' …+' + (el.options.length-12) : ''));
       });
 
-      document.querySelectorAll('button,[role=button],input[type=submit],input[type=button]')
-        .forEach(el => add(el, 'button', el.disabled ? ' | DISABLED' : ''));
+      qsa('button,[role=button],[role=radio],[role=checkbox],input[type=submit],input[type=button],a[href]')
+        .forEach(el => add(el, el.tagName.toLowerCase() === 'a' ? 'link' : 'button', el.disabled ? ' | DISABLED' : ''));
 
       return out.join('\n');
     })()`, limit)
@@ -622,7 +650,7 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(res) == "" {
-		return "No interactive elements found — the page may still be loading, or its content may be inside an iframe.", nil
+		return "No interactive elements found — the page may still be loading.", nil
 	}
 	return "kind | selector | label\n" + res, nil
 }
