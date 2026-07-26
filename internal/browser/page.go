@@ -74,26 +74,6 @@ func (c *Client) WaitStable(ctx context.Context, timeout time.Duration) {
 		timeout = 8 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
-	// The signature must count what is inside shadow roots too. A shadow-DOM app
-	// renders its skeleton in the light DOM and swaps the real content into shadow
-	// trees; a light-DOM-only element count barely moves when that happens, so the
-	// old signature reported "settled" while the page was still empty and she read
-	// too early. Walking shadow roots makes the count jump when content actually
-	// lands. Text length is a second, cheaper mover for skeleton→content.
-	const sigExpr = deepPrelude + `(() => {
-      let elems = 0;
-      const rec = (root) => {
-        let list;
-        try { list = root.querySelectorAll('*'); } catch (e) { return; }
-        elems += list.length;
-        for (const el of list) { const s = __descend(el); if (s) rec(s); }
-      };
-      rec(document);
-      const b = document.body;
-      const textLen = b ? b.innerText.length : 0;
-      return elems + ":" + textLen;
-    })()`
-
 	var last string
 	stable := 0
 	for time.Now().Before(deadline) {
@@ -116,6 +96,41 @@ func (c *Client) WaitStable(ctx context.Context, timeout time.Duration) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// sigExpr fingerprints the page: how many elements it has, across shadow roots
+// and same-origin frames, and how much text.
+//
+// The count must reach into shadow roots. A component app renders its skeleton
+// in the light DOM and swaps the real content into shadow trees, so a
+// light-DOM-only count barely moves when the content lands — the page read as
+// "settled" while it was still empty. Text length is a second, cheaper mover for
+// skeleton→content.
+const sigExpr = deepPrelude + `(() => {
+      let elems = 0;
+      const rec = (root) => {
+        let list;
+        try { list = root.querySelectorAll('*'); } catch (e) { return; }
+        elems += list.length;
+        for (const el of list) { const s = __descend(el); if (s) rec(s); }
+      };
+      rec(document);
+      const b = document.body;
+      const textLen = b ? b.innerText.length : 0;
+      return elems + ":" + textLen + ":" + location.href;
+    })()`
+
+// Signature returns that fingerprint, for comparing the page before and after an
+// action. It is deliberately richer than URL and title: those miss a route change
+// inside a single-page app, a modal opening, a row expanding, and a radio button
+// selecting — every one of which is a real effect that used to read as "nothing
+// happened", and, worse, whose absence used to read as success.
+func (c *Client) Signature(ctx context.Context) string {
+	sig, err := c.EvalString(ctx, sigExpr)
+	if err != nil {
+		return ""
+	}
+	return sig
 }
 
 // Eval runs JavaScript and returns the raw result value.
@@ -381,6 +396,22 @@ func (c *Client) Click(ctx context.Context, selector string) error {
 	return nil
 }
 
+// ClickHit is what a click-by-text actually resolved to.
+//
+// The label matters because the match is fuzzy: an exact hit wins, but otherwise
+// the shortest containing label does, and that can be a different control from
+// the one intended. Reporting what was really clicked — rather than echoing back
+// the text that was asked for — is the difference between "Clicked Submit" and
+// "Clicked, and what it actually hit was 'Submit and add another'".
+//
+// Synthetic marks the fallback path: an element with no box to aim at gets a
+// scripted click, which carries isTrusted=false and is exactly the click portals
+// ignore. It used to return an unqualified success.
+type ClickHit struct {
+	Label     string
+	Synthetic bool
+}
+
 // ClickText clicks the element whose visible text matches, searching light DOM
 // and open shadow roots. This is the primitive an LLM should reach for first:
 // a person clicks "Self-Quiz Unit 5", not "#d2l_1_5_130". It prefers an exact
@@ -388,7 +419,7 @@ func (c *Client) Click(ctx context.Context, selector string) error {
 // leaf label, not its whole container), climbs to the nearest clickable ancestor
 // (crossing shadow boundaries) when the text sits in a non-clickable node, and
 // fires a full pointer/mouse sequence so framework handlers actually run.
-func (c *Client) ClickText(ctx context.Context, text string) error {
+func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
 	expr := deepPrelude + fmt.Sprintf(`(() => {
       const needle = %q.trim().toLowerCase();
       if (!needle) return 'empty';
@@ -498,7 +529,7 @@ func (c *Client) ClickText(ctx context.Context, text string) error {
     })()`, text)
 	raw, err := c.EvalString(ctx, expr)
 	if err != nil {
-		return err
+		return ClickHit{}, err
 	}
 	var hit struct {
 		X, Y      float64
@@ -507,38 +538,40 @@ func (c *Client) ClickText(ctx context.Context, text string) error {
 		Synthetic bool
 	}
 	if err := json.Unmarshal([]byte(raw), &hit); err != nil {
-		return fmt.Errorf("click %q: %w", text, err)
+		return ClickHit{}, fmt.Errorf("click %q: %w", text, err)
 	}
 	switch hit.Error {
 	case "empty":
-		return fmt.Errorf("no text given to click")
+		return ClickHit{}, fmt.Errorf("no text given to click")
 	case "not-found":
-		return fmt.Errorf("nothing on the page reads %q (searched shadow DOM and iframes too)", text)
+		return ClickHit{}, fmt.Errorf("nothing on the page reads %q (searched shadow DOM and iframes too)", text)
 	}
 	if hit.Synthetic {
-		// Already clicked in the page; just let it settle.
+		// Already clicked in the page; just let it settle. The caller is told it
+		// was the untrusted kind — this is the click that silently does nothing on
+		// portals that gate on isTrusted, and it used to return a bare success.
 		c.WaitStable(ctx, 5*time.Second)
-		return nil
+		return ClickHit{Label: hit.Label, Synthetic: true}, nil
 	}
 	// A genuine mouse click at the element's centre — move, press, pause, release
 	// — so isTrusted-gated navigation actually fires.
 	if _, err := c.Call(ctx, "Input.dispatchMouseEvent", map[string]any{
 		"type": "mouseMoved", "x": hit.X, "y": hit.Y,
 	}); err != nil {
-		return err
+		return ClickHit{}, err
 	}
 	for _, phase := range []string{"mousePressed", "mouseReleased"} {
 		if _, err := c.Call(ctx, "Input.dispatchMouseEvent", map[string]any{
 			"type": phase, "x": hit.X, "y": hit.Y, "button": "left", "clickCount": 1,
 		}); err != nil {
-			return err
+			return ClickHit{}, err
 		}
 		if phase == "mousePressed" {
 			sleepCtx(ctx, 45*time.Millisecond)
 		}
 	}
 	c.WaitStable(ctx, 5*time.Second)
-	return nil
+	return ClickHit{Label: hit.Label}, nil
 }
 
 // Fill sets a form field's value and fires the events frameworks listen for.

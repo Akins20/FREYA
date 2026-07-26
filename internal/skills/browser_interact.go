@@ -238,10 +238,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.ClickReal(ctx, sel); err != nil {
-					tab.misses++
+					tab.missed()
 					return "", clickHint(ctx, tab, err)
 				}
-				tab.misses = 0
+				tab.sawReality()
 				time.Sleep(900 * time.Millisecond)
 				url, _ := tab.client.URL(ctx)
 				title, _ := tab.client.Title(ctx)

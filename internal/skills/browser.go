@@ -37,6 +37,9 @@ type openTab struct {
 	client  *browser.Client
 	opened  time.Time
 	lastURL string
+	// mu guards the mutable fields below: tool calls within one round run
+	// concurrently, so two clicks on the same tab race the counter.
+	mu sync.Mutex
 	// misses counts consecutive selector clicks that found nothing. It powers a
 	// circuit breaker: shown the real options after a miss, this model still tries
 	// another selector, and another — so after a couple of misses selector clicking
@@ -281,10 +284,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.Click(ctx, sel); err != nil {
-					tab.misses++
+					tab.missed()
 					return "", clickHint(ctx, tab, err)
 				}
-				tab.misses = 0
+				tab.sawReality()
 				time.Sleep(900 * time.Millisecond)
 				url, _ := tab.client.URL(ctx)
 				title, _ := tab.client.Title(ctx)
@@ -307,40 +310,53 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"text": {Type: "string", Description: "The visible text to click, e.g. 'Work To Do' or 'Self-Quiz Unit 5'. An exact match wins; otherwise the closest label containing it."},
 			}, "name", "text"),
 		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Mutates:     true,
+		Observe:     tabs.observe,
+		Affordances: tabs.affordances,
+		Act: func(ctx context.Context, args map[string]any) (Outcome, error) {
 			tab, ok := tabs.get(argString(args, "name"))
 			if !ok {
-				return "", fmt.Errorf("no tab named %q", argString(args, "name"))
+				return Outcome{}, fmt.Errorf("no tab named %q", argString(args, "name"))
 			}
 			text := argString(args, "text")
 			if strings.TrimSpace(text) == "" {
-				return "", fmt.Errorf("text is required")
+				return Outcome{}, fmt.Errorf("text is required")
 			}
 			action := guard.Action{Kind: guard.KindBrowser, Command: "click text " + text,
 				Reason: fmt.Sprintf("click the element reading %q in tab %q (%s context)", text, tab.name, tab.ctx)}
 			tab.sawReality() // she's using the right primitive; clear the guess counter
-			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				beforeURL, _ := tab.client.URL(ctx)
-				beforeTitle, _ := tab.client.Title(ctx)
-				if err := tab.client.ClickText(ctx, text); err != nil {
+
+			var hit browser.ClickHit
+			out, err := g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				h, err := tab.client.ClickText(ctx, text)
+				if err != nil {
 					return "", err
 				}
+				hit = h
 				time.Sleep(900 * time.Millisecond)
 				url, _ := tab.client.URL(ctx)
 				title, _ := tab.client.Title(ctx)
-				msg := fmt.Sprintf("Clicked %q. Now on %q\n%s", text, title, url)
-				// Report the observable fact — the page didn't navigate — without
-				// claiming what it means; the site decides that, not this tool. On a
-				// commit-type click that "nothing moved" is ambiguous (a confirmation
-				// revealed in place, a blocked required field, or a no-op), so prompt
-				// her to read rather than re-click blindly, which is how she gets stuck.
-				if url == beforeURL && title == beforeTitle && looksLikeCommit(text) {
-					msg += "\n(The page didn't navigate. Read it to see what the click actually " +
-						"did — a confirmation, a warning, or nothing — and decide from that; don't " +
-						"re-click the same thing or guess a button id.)"
-				}
-				return msg, nil
+				return fmt.Sprintf("Clicked %q. Now on %q\n%s", text, title, url), nil
 			})
+			if err != nil {
+				return Outcome{}, err
+			}
+
+			o := Outcome{Text: out}
+			// Say what was actually hit when it differs from what was asked for.
+			// The match is fuzzy — exact wins, else the shortest containing label —
+			// so "Submit" can land on "Submit and add another", and echoing back the
+			// requested text hid that entirely.
+			if lbl := strings.TrimSpace(hit.Label); lbl != "" && !strings.EqualFold(lbl, strings.TrimSpace(text)) {
+				o = o.WithEvidence("The element it actually hit reads %q.", lbl)
+			}
+			// A synthetic click is the untrusted kind portals ignore. It used to
+			// return an unqualified success.
+			if hit.Synthetic {
+				o.Evidence = strings.TrimSpace(o.Evidence + "\nThat element had no clickable box, so this was a " +
+					"scripted click rather than a real one — pages that require a genuine gesture will have ignored it.")
+			}
+			return o, nil
 		},
 	})
 
@@ -547,21 +563,75 @@ const maxSelectorMisses = 2
 // real clickable options so the forced pivot to browser_click_text is trivial.
 // Scouting or clicking by text (which reset misses) lifts the block immediately.
 func selectorBudget(ctx context.Context, tab *openTab) error {
-	if tab.misses < maxSelectorMisses {
+	if tab.missCount() < maxSelectorMisses {
 		return nil
 	}
 	opts, _ := tab.client.Links(ctx, 25)
 	return fmt.Errorf("selector clicking is OFF for this page: %d guesses in a row missed, and guesses "+
 		"do not converge — you are pattern-matching CSS, not driving the page. Click one of these by its "+
-		"text with browser_click_text, or run browser_inspect to see the real controls:\n%s", tab.misses, opts)
+		"text with browser_click_text, or run browser_inspect to see the real controls:\n%s", tab.missCount(), opts)
 }
 
 // sawReality resets the miss counter: she scouted (read/inspect) or clicked by
 // text, so she is working from what is actually on the page again.
+//
+// Guarded, because tool calls in one round run concurrently and this counter is
+// read and written from several of them.
 func (t *openTab) sawReality() {
-	if t != nil {
-		t.misses = 0
+	if t == nil {
+		return
 	}
+	t.mu.Lock()
+	t.misses = 0
+	t.mu.Unlock()
+}
+
+// missed records a selector that found nothing, and reports the running count.
+func (t *openTab) missed() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.misses++
+	return t.misses
+}
+
+// missCount reads the counter without changing it.
+func (t *openTab) missCount() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.misses
+}
+
+// observe fingerprints the page the active tab is showing, for the framework's
+// before/after comparison. Empty when there is no tab, which switches the
+// verification off rather than inventing a change.
+func (t *Tabs) observe(ctx context.Context) string {
+	tab, ok := t.get("")
+	if !ok {
+		return ""
+	}
+	return tab.client.Signature(ctx)
+}
+
+// affordances lists what is genuinely clickable on the active tab, attached to
+// any browser failure. This is the generalisation of the ad-hoc click hint: a
+// miss should hand back the page's real options rather than leave her to invent
+// another selector.
+func (t *Tabs) affordances(ctx context.Context) []string {
+	tab, ok := t.get("")
+	if !ok {
+		return nil
+	}
+	links, err := tab.client.Links(ctx, 20)
+	if err != nil || strings.TrimSpace(links) == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSpace(links), "\n")
 }
 
 // looksLikeCommit reports whether a clicked label is a commit-type action — the

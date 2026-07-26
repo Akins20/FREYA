@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -104,6 +105,48 @@ func (a *Agent) chat(ctx context.Context, req llm.Request) (*llm.Response, error
 	return resp, err
 }
 
+// repeatLimit is how many times the same call, with the same arguments, may fail
+// before the next one is refused rather than run.
+//
+// Two, so the third is refused. The evidence for the number is her own logs: the
+// worst run was nineteen consecutive identical failing calls, and being shown the
+// page's real options after the first miss did not stop the second or the
+// twelfth. A third attempt at something that has failed twice unchanged is not
+// persistence, it is a loop, and the only thing that reliably breaks it is
+// declining to make the call.
+const repeatLimit = 2
+
+// errRepeatedCall marks a call declined for repeating a known failure, so the
+// telemetry can tell a refusal apart from a genuine error.
+var errRepeatedCall = errors.New("refused: same call already failed twice this exchange")
+
+// attemptLog counts consecutive failures per (tool, arguments) within a single
+// exchange. It is per-Ask deliberately: a call that failed in a previous
+// exchange, against a page that has since changed, deserves a fresh try.
+type attemptLog struct {
+	mu     sync.Mutex
+	failed map[string]int
+}
+
+func newAttemptLog() *attemptLog { return &attemptLog{failed: map[string]int{}} }
+
+func (a *attemptLog) failures(key string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.failed[key]
+}
+
+// record updates the count: a success clears it, because the world moved.
+func (a *attemptLog) record(key string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err == nil {
+		delete(a.failed, key)
+		return
+	}
+	a.failed[key]++
+}
+
 // Result is the outcome of one user exchange.
 type Result struct {
 	Reply     string
@@ -169,6 +212,9 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// One id for everything this exchange produces, so its events can be pulled
 	// back out of a shared log as a single story rather than a shuffled pile.
 	exchangeID := fmt.Sprintf("x%d", time.Now().UnixNano())
+	// And one record of what has already failed in it, so the same call with the
+	// same arguments cannot be tried indefinitely.
+	attempts := newAttemptLog()
 
 	for round := 1; round <= maxToolRounds; round++ {
 		result.Rounds = round
@@ -234,10 +280,31 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			wg.Add(1)
 			go func(i int, call llm.ToolCall) {
 				defer wg.Done()
+
+				// Refuse a call that has already failed twice, unchanged, in this
+				// exchange. Running it a third time cannot inform her — the answer is
+				// already known — and every attempt costs a round she needs for the work.
+				key := call.Name + "|" + telemetry.HashArgs(call.Args)
+				if attempts.failures(key) >= repeatLimit {
+					refusal := fmt.Sprintf("REFUSED: %s has already failed twice in this "+
+						"exchange with exactly these arguments, so it was not run again. "+
+						"Repeating it cannot tell you anything new. Look at what is actually "+
+						"there — read the page, list the directory, inspect the controls — and "+
+						"then do something different.", call.Name)
+					if opts := a.Skills.AffordancesFor(ctx, call.Name); len(opts) > 0 {
+						refusal += "\n\nWhat is actually available here:\n- " + strings.Join(opts, "\n- ")
+					}
+					a.trace("error", call.Name, "refused: same call already failed twice")
+					a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args, 0, "", errRepeatedCall)
+					outputs[i] = refusal
+					return
+				}
+
 				a.trace("start", call.Name, formatArgs(call.Args))
 
 				started := time.Now()
 				output, err := a.Skills.Execute(ctx, call.Name, call.Args)
+				attempts.record(key, err)
 				// Recorded with the exchange, the round and a fingerprint of the
 				// arguments, so the log can answer "what did she do after this
 				// failed": twenty attempts at the same thing look nothing like

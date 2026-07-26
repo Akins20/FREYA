@@ -161,7 +161,7 @@ func TestShadowDOMPortal(t *testing.T) {
 	}
 
 	// --- ClickText activates an item nested two shadow roots deep --------------
-	if err := client.ClickText(ctx, "Self-Quiz Unit 5 for Basic Accounting"); err != nil {
+	if _, err := client.ClickText(ctx, "Self-Quiz Unit 5 for Basic Accounting"); err != nil {
 		t.Fatalf("ClickText: %v", err)
 	}
 	title, _ := client.Title(ctx)
@@ -271,7 +271,7 @@ func TestIframeQuiz(t *testing.T) {
 	t.Logf("INSPECT sees the in-frame controls ✓")
 
 	// Select an answer by its visible text — the reliable primitive.
-	if err := client.ClickText(ctx, "Overstated"); err != nil {
+	if _, err := client.ClickText(ctx, "Overstated"); err != nil {
 		t.Fatalf("ClickText answer: %v", err)
 	}
 	if title, _ := client.Title(ctx); title != "PICKED: Overstated" {
@@ -372,7 +372,7 @@ func TestModalInIframe(t *testing.T) {
 	}
 
 	// Open the submission notice.
-	if err := client.ClickText(ctx, "Submit Quiz"); err != nil {
+	if _, err := client.ClickText(ctx, "Submit Quiz"); err != nil {
 		t.Fatalf("open modal: %v", err)
 	}
 
@@ -385,7 +385,7 @@ func TestModalInIframe(t *testing.T) {
 	t.Logf("READ the modal warning once open ✓ (\"2 unanswered questions…\")")
 
 	// Its real button — "Back to Questions" — must be clickable inside the frame.
-	if err := client.ClickText(ctx, "Back to Questions"); err != nil {
+	if _, err := client.ClickText(ctx, "Back to Questions"); err != nil {
 		t.Fatalf("click modal button: %v", err)
 	}
 	if title, _ := client.Title(ctx); title != "WENT_BACK" {
@@ -466,7 +466,7 @@ func TestTrustedClickByText(t *testing.T) {
 	t.Logf("CONTROL: synthetic click did NOT fire the isTrusted-gated link ✓")
 
 	// The fix: click-by-text does a real, trusted click through the frame offset.
-	if err := client.ClickText(ctx, "Self-Quiz Unit 2"); err != nil {
+	if _, err := client.ClickText(ctx, "Self-Quiz Unit 2"); err != nil {
 		t.Fatalf("ClickText: %v", err)
 	}
 	if title, _ := client.Title(ctx); title != "NAVIGATED" {

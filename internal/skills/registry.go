@@ -23,9 +23,29 @@ import (
 type Handler func(ctx context.Context, args map[string]any) (string, error)
 
 // Skill couples a tool declaration with its implementation.
+//
+// Handler is the original contract and still works untouched. The three optional
+// fields below let a skill opt into being verified by the framework rather than
+// being trusted: they exist because the playbooks were full of instructions to
+// check your own work ("after ANY click, read again to confirm it did what you
+// expected") which the substrate could do itself, in the same round, instead of
+// spending a round asking the model to remember.
 type Skill struct {
 	Tool    llm.Tool
 	Handler Handler
+	// Act is Handler's richer form, reporting an Outcome. Preferred when set.
+	Act Acting
+	// Mutates marks a skill that changes the world, so the framework verifies it.
+	Mutates bool
+	// Observe returns a cheap fingerprint of whatever this skill touches. When it
+	// is set on a mutating skill, Execute samples it before and after: identical
+	// readings mean nothing happened, and the result says so.
+	Observe func(ctx context.Context) string
+	// Affordances lists what is genuinely available right now — the clickable
+	// things on this page, the open terminal sessions, the files in this
+	// directory. Attached automatically when the skill fails, so a miss hands back
+	// the state needed to succeed instead of an invitation to guess again.
+	Affordances func(ctx context.Context) []string
 }
 
 // Registry holds the registered skills.
@@ -73,7 +93,13 @@ func (r *Registry) Names() []string {
 	return out
 }
 
-// Execute runs a skill by name.
+// Execute runs a skill by name, verifying it where the skill allows.
+//
+// Three things happen around the call that used to be left to the model's
+// discretion, one round at a time: a mutating skill's effect on the world is
+// sampled before and after, so "it ran and nothing moved" is stated rather than
+// implied; a failure carries what IS available; and the result keeps the
+// distinction between what was asked for and what actually happened.
 func (r *Registry) Execute(ctx context.Context, name string, args map[string]any) (string, error) {
 	r.mu.RLock()
 	s, ok := r.skills[name]
@@ -81,7 +107,59 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	if !ok {
 		return "", fmt.Errorf("no such skill %q", name)
 	}
-	return s.Handler(ctx, args)
+
+	// Sample the world first. Only for skills that change it — a read has nothing
+	// to verify, and the sample costs a round-trip to the page.
+	var before string
+	watching := s.Mutates && s.Observe != nil
+	if watching {
+		before = s.Observe(ctx)
+	}
+
+	var (
+		out Outcome
+		err error
+	)
+	if s.Act != nil {
+		out, err = s.Act(ctx, args)
+	} else {
+		var text string
+		text, err = s.Handler(ctx, args)
+		out = Outcome{Text: text}
+	}
+
+	if err != nil {
+		if len(out.Options) > 0 {
+			return "", withOptions(err, out.Options)
+		}
+		if s.Affordances != nil {
+			return "", withOptions(err, s.Affordances(ctx))
+		}
+		return "", err
+	}
+
+	// An action that reported success while the world stayed identical is the
+	// failure the model cannot see. Only fill in what the skill did not already
+	// determine for itself — a skill that knows better outranks the fingerprint.
+	if watching && out.Changed == nil {
+		if after := s.Observe(ctx); after != "" && before != "" {
+			changed := after != before
+			out.Changed = &changed
+		}
+	}
+	return out.Render(), nil
+}
+
+// AffordancesFor reports what a named skill says is available right now, or nil.
+// The agent uses it when refusing a call, so a refusal still points somewhere.
+func (r *Registry) AffordancesFor(ctx context.Context, name string) []string {
+	r.mu.RLock()
+	s, ok := r.skills[name]
+	r.mu.RUnlock()
+	if !ok || s.Affordances == nil {
+		return nil
+	}
+	return s.Affordances(ctx)
 }
 
 // --- argument helpers -------------------------------------------------------
