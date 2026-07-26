@@ -664,6 +664,112 @@ by hand, stated plainly when used.
 - [x] `claude_advise` — capability-gap skill returning an executable plan
 - [x] Persona guidance: capability not difficulty, plan mode by default,
       never delegate to avoid admitting ignorance
+- [x] Working-directory cure: file tools (CWD) and shell tools (resolveDir)
+      now share one directory, so write-a-file-then-run-it stops landing in two
+      places. `resolveDir` defaults to `os.Getwd()`, not home.
+- [x] Fixed working dir + on-the-fly moves: `FREYA_WORK_DIR` anchors her at
+      startup (daemon → `~/freya-workspace`); a `change_dir` tool relocates the
+      whole toolset mid-task and creates the folder on enter so "make a folder
+      and move in" is one step; her current directory is injected into every
+      turn's system brief so she is never guessing where she is.
+
+- [x] Shadow-DOM cure (the real "she does nothing on the portal" root cause):
+      innerText/querySelector are blind to shadow roots, so on D2L/Brightspace
+      (all `<d2l-*>` web components) she read empty placeholders, waited on
+      elements that "never appeared", fell back to viewport screenshots, and
+      invented CSS ids that errored — burning all 25 rounds. Fixed: `readableText`,
+      the `WaitStable` signature, and `Links` now walk light DOM + open shadow
+      roots + same-origin iframes; `Click`/`Fill` pierce shadow DOM and no longer
+      hard-error on invalid selectors; new `browser_click_text` clicks by visible
+      text. Measured end-to-end against a nested-shadow-root portal page
+      (`shadowdom_e2e_test.go`, gated by FREYA_BROWSER_E2E=1): before, naive read
+      saw 22 chars; after, full list read + click-by-text fired the right item.
+
+- [x] Iframe interaction cure (the "found the quiz but can't do anything" case):
+      D2L serves a quiz attempt inside an iframe, so radios/labels/Submit were
+      invisible to the interaction tools — click/click_text/fill/inspect/locate
+      queried only the top document. She could read the questions (reads already
+      descend iframes) but every click died "no element matches", burning all 25
+      rounds. Fixed with a shared `__descend` (open shadow root OR same-origin
+      iframe document) now used by the WaitStable signature, Click, ClickText,
+      Fill, Links, Inspect, and locate; locate adds frame-offset math so a
+      coordinate click (browser_click_real) lands in the top viewport. Measured
+      in `shadowdom_e2e_test.go` (TestIframeQuiz): before, 0 radios seen; after,
+      inspect lists the in-frame controls, click-by-text selects the answer, and
+      a real click hits Submit through the frame offset.
+
+- [x] Modal-in-iframe + two click-targeting bugs it exposed. The quiz's submit
+      notice is an informational modal inside the iframe; she never read it and
+      brute-forced past it. Root findings: (a) `__vis` only checked an element's
+      own style, so a closed modal's buttons (inside display:none) read as visible
+      to the flat scans — fixed with a getClientRects rendered-check; (b) ClickText
+      tie-broke by DOM order, so when a button's text was the only visible text the
+      iframe `<body>` tied and won, and the click was a no-op — this was the real
+      reason her first "Submit Quiz" clicks did nothing; fixed by preferring a
+      clickable target (and an open dialog) over a bare container. Measured in
+      `shadowdom_e2e_test.go` TestModalInIframe: closed-modal text doesn't leak,
+      open-modal warning reads, its real button clicks — all in the frame.
+- [x] Judgment as a first-class behaviour. New persona block "Read the situation
+      and use judgment — everywhere": act on what the page/output tells you
+      (warnings, unanswered questions, empty results), think one step past any
+      irreversible click, research when unsure instead of guessing, sanity-check
+      your own result. Plus an 'assessments' playbook (finish every question, read
+      the confirmation, don't guess, verify it landed) consulted before any
+      quiz/test/form.
+
+- [x] Proactivity — self-task engine wired. `internal/schedule` (set → persist →
+      poll → fire once → run) was fully built but dead code: never imported, no
+      tool. Now the daemon polls it every 20s and runs due tasks THROUGH the
+      agent (so each ends in work + a spoken result), serialised via pttBusy and
+      gated on daemonActive so it never collides with a voice turn or a session's
+      store. New `schedule_self`/`scheduled_list`/`scheduled_cancel` tools + a
+      persona nudge to use them for genuine follow-ups. Store/tool unit-tested
+      (at-most-once, restart-survival, parseWhen); proven live in the journal.
+- [x] Proactivity — goal-aware deadline watching. Watchers were all system
+      health (disk/battery/git). The CommitmentWatcher read deadlines from facts
+      only, never from the reminders users actually set (notes with a Due). New
+      `skills.Deadlines` merges both; CommitmentWatcher gained sub-day buckets
+      (15m/1h/3h/12h) and a 5-min interval so "due tonight" escalates instead of
+      sitting at one coarse "within a day". Unit-tested; proven live (a seeded
+      note surfaced as "[critical] … due in 9 minutes", and real notes surfaced
+      with lead-time buckets).
+
+- [x] Proactivity — quiet-moment re-engagement. After a conversational lull (not
+      desktop-idle; measured from the last USER turn) the daemon reviews the recent
+      exchange via `Agent.Followup` — one reflection-only completion (~5K tokens,
+      no tools, archives nothing but her line) that returns a warm follow-up on a
+      genuine loose end or PASS. Once per lull, bounded 6–25m (tunable via
+      `FREYA_FOLLOWUP`, `off` disables), gated by chattiness, serialised via
+      pttBusy. Prompt tuned to engage on real hooks (a deadline you're behind on)
+      not to sit mute. Unit-tested (speak vs PASS vs empty history); proven live —
+      PASSed on "take your time", spoke "your accounting final's Friday and you
+      haven't started — want to jump into Unit 1 now?".
+- [x] Proactivity — follow-up weaves in overall state. `Agent.StateSummary` hook
+      (composed in the daemon from pending self-tasks + deadlines within 3 days)
+      is folded into the follow-up review, so a single re-engagement ties the
+      conversation to what's actually pending. Unit-tested (state reaches the
+      review prompt); proven live — with a deadline only in state (never in the
+      chat), she raised "before you head out — your Unit 7 quiz is due in twenty
+      minutes, want to knock it out before your coffee?".
+
+- [x] Proactivity — ambient activity awareness. `skills.ActivityTracker` samples
+      the focused window every 45s in the background (daemon), classifies it
+      (browser / terminal / files / editor via WM class, falling back to the app
+      name in the title since Chrome sometimes reports no class), pulls the
+      meaningful content from the title (page, path/command, folder, file), and
+      keeps a deduped trail of recent switches. Passive — never speaks; it feeds
+      `Agent.UserActivity` so the quiet-moment follow-up (and future features) are
+      grounded in what's actually on screen. Handles both title separators (hyphen
+      / Firefox em-dash). Unit-tested (classification + trail dedup); live classifier
+      confirmed. Follow-up prompt also generalised — follow THEIR thread, don't
+      fixate on one recurring topic — and a "close the loop when they say it's
+      done" persona rule (note_done / scheduled_cancel on their own initiative).
+- [x] Proactivity — activity DEPTH for browser + folder. Interval 45s → 60s. On a
+      browser/folder change, `deepenActivity` screenshots that window (scrot -u)
+      and vision-reads the real content, not just the title — proven live: the
+      AnimeHeaven tab read back as "streaming 'That Time I Got Reincarnated as a
+      Slime S4'", not just "AnimeHeaven.Me". Bounded (those two kinds, on change
+      only), `FREYA_ACTIVITY_DEPTH=off` disables. Terminal/editor stay title-level.
 
 ## Phase 17 — remaining
 
@@ -687,6 +793,11 @@ by hand, stated plainly when used.
 - [ ] Proactivity: watchers, salience scoring, dedup against memory
 
 ## Known limitations (accepted for now)
+
+- **`internal/reflect` is dead in production.** `Agent.reflectAfter` is never called,
+  so `builder.Insights` always returns empty and tier 6 (reflection) never reaches any
+  prompt; `/reflect` shows a permanently empty list. 16 tests pass on unused code.
+  Either wire it or remove it — but attribute no behaviour change to it meanwhile.
 
 - Archive loads fully into RAM at startup. Fine to ~100k turns; revisit after that.
 - Episode summaries are mechanical, not model-written (Phase 4).

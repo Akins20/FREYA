@@ -42,9 +42,13 @@ variables always win.
 | `SERPER_API_KEY` | Web search, news, page scraping. |
 | `ANTHROPIC_API_KEY` | Alternative provider. |
 | `FREYA_PROVIDER` | `gemini` \| `anthropic` \| `mock`. Auto-detects from available keys. |
-| `FREYA_MODEL` | Defaults to `gemini-3.1-flash-lite`. |
+| `FREYA_MODEL` | Defaults to `gemini-3.5-flash-lite`. |
+| `FREYA_THINKING` | Reasoning-before-acting + the visible thinking window. `on`/empty (default) lets the model decide depth; `off` disables; a number caps thinking tokens. Thoughts surface via `OnThought` (shown as `💭` in the REPL, journalled by the daemon). Thinking tokens bill at the output rate, so lower it if latency/cost bite. |
+| `FREYA_FOLLOWUP` | Quiet-moment re-engagement: after this long without conversation (default 6m; a duration like `5m`; `off` disables), the daemon reviews the recent exchange and, once per lull, follows up on a genuine loose end (a deadline you're behind on, a task worth starting). Reflection-only (no tools), gated by chattiness, silence by default. |
+| `FREYA_ACTIVITY_DEPTH` | The daemon samples the focused window every 60s (classified: browser/terminal/files/editor) for ambient context. For a **browser or folder** that just changed, it also screenshots that window and vision-reads the actual content (page, files) — set `off` to disable that deeper read (it costs a vision call and shows the window to the model); title-level sampling stays on regardless. |
 | `FREYA_DATA_DIR` | Memory location. Defaults to `~/.local/share/freya`. |
 | `FREYA_PROJECTS_DIR` | What the dev skills scan. Defaults to the repo's parent. |
+| `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
