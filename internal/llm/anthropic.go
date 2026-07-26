@@ -1,11 +1,9 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -107,26 +105,13 @@ func (a *Anthropic) Chat(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("anthropic: encode request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint, bytes.NewReader(raw))
+	payload, err := postJSON(ctx, a.HTTP, "anthropic", anthropicEndpoint, map[string]string{
+		"Content-Type":      "application/json",
+		"x-api-key":         a.APIKey,
+		"anthropic-version": anthropicVersion,
+	}, raw)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", a.APIKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
-
-	resp, err := a.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &APIError{Provider: "anthropic", Status: resp.StatusCode, Body: string(payload)}
+		return nil, err
 	}
 
 	var decoded anthResponse

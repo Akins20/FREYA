@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akins/jarvis/internal/browser"
@@ -31,7 +32,13 @@ import (
 
 // historyCache avoids re-reading and re-parsing an 8MB file on every call
 // within a conversation.
+//
+// Guarded: tool calls inside one round run concurrently, so two history skills
+// requested together read and write this at the same time. It was a real data
+// race, not a theoretical one — the fix is a mutex rather than an atomic because
+// the slice and its timestamp have to move as a pair.
 var historyCache struct {
+	mu     sync.Mutex
 	visits []browser.Visit
 	loaded time.Time
 }
@@ -43,9 +50,15 @@ var historyCache struct {
 const historyTTL = 2 * time.Minute
 
 func loadVisits() ([]browser.Visit, error) {
+	historyCache.mu.Lock()
+	defer historyCache.mu.Unlock()
+
 	if time.Since(historyCache.loaded) < historyTTL && historyCache.visits != nil {
 		return historyCache.visits, nil
 	}
+	// The read happens under the lock on purpose. Two concurrent callers finding
+	// the cache cold would otherwise both parse the 8MB file; holding it means the
+	// second waits and then gets the first one's result.
 	visits, err := browser.LoadHistory("")
 	if err != nil {
 		return nil, err

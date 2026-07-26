@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,9 @@ import (
 
 // voiceState holds the spoken-mode machinery for a REPL session.
 type voiceState struct {
+	// mu guards style, which voice_adjust can change from inside a tool goroutine
+	// while another goroutine is speaking.
+	mu       sync.Mutex
 	session  *voice.Session
 	verifier *voice.MFCCVerifier
 	policy   voice.Policy
@@ -34,13 +38,25 @@ type voiceState struct {
 }
 
 // Style implements skills.VoiceController.
-func (v *voiceState) Style() voice.Style { return v.style }
+//
+// Guarded because the pair below is genuinely concurrent: SetStyle is reachable
+// from the voice_adjust skill, which runs inside a tool goroutine, while Style
+// and the synthesiser are read from whichever goroutine is speaking. She can
+// retune her own voice mid-sentence, which is the point — but the read and the
+// write have to not overlap.
+func (v *voiceState) Style() voice.Style {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.style
+}
 
 // SetStyle applies new delivery settings to the live synthesiser and persists
 // them, so a change Freya makes mid-conversation takes effect on her next
 // sentence rather than after a restart.
 func (v *voiceState) SetStyle(s voice.Style) error {
+	v.mu.Lock()
 	v.style = s
+	v.mu.Unlock()
 	voice.Restyle(v.session.Synth, s)
 	return voice.SaveStyle(v.dataDir, s)
 }
@@ -271,7 +287,7 @@ func voiceCommand(ctx context.Context, rest string, v *voiceState, a *agent.Agen
 
 	case "style":
 		if arg == "" {
-			fmt.Printf("  %s\n", v.style.Describe())
+			fmt.Printf("  %s\n", v.Style().Describe())
 			return false, nil
 		}
 		return false, v.setStyleField(arg)
@@ -438,7 +454,7 @@ func (v *voiceState) gate(ctx context.Context, audioPath string) bool {
 func (v *voiceState) setStyleField(arg string) error {
 	field, value, _ := strings.Cut(strings.TrimSpace(arg), " ")
 	value = strings.TrimSpace(value)
-	style := v.style
+	style := v.Style()
 
 	switch strings.ToLower(field) {
 	case "pace", "speed":

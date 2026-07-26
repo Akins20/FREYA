@@ -238,26 +238,13 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	url := fmt.Sprintf(geminiEndpoint, g.Model)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	payload, err := postJSON(ctx, g.HTTP, "gemini", url, map[string]string{
+		"Content-Type": "application/json",
+		// Header rather than ?key= so the secret stays out of URLs and proxy logs.
+		"x-goog-api-key": g.APIKey,
+	}, raw)
 	if err != nil {
-		return nil, fmt.Errorf("gemini: build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	// Header rather than ?key= so the secret stays out of URLs and proxy logs.
-	httpReq.Header.Set("x-goog-api-key", g.APIKey)
-
-	resp, err := g.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("gemini: request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("gemini: read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &APIError{Provider: "gemini", Status: resp.StatusCode, Body: string(payload)}
+		return nil, err
 	}
 
 	var decoded geminiResponse
