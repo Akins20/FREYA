@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/akins/jarvis/internal/claude"
 	"github.com/akins/jarvis/internal/config"
 	"github.com/akins/jarvis/internal/daemon"
+	"github.com/akins/jarvis/internal/defect"
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/hotkey"
 	"github.com/akins/jarvis/internal/llm"
@@ -28,6 +28,8 @@ import (
 	"github.com/akins/jarvis/internal/skills"
 	"github.com/akins/jarvis/internal/telemetry"
 	"github.com/akins/jarvis/internal/term"
+	"github.com/akins/jarvis/internal/voice"
+	"github.com/akins/jarvis/internal/work"
 )
 
 // ANSI styling, disabled when output is not a terminal or NO_COLOR is set.
@@ -366,6 +368,48 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Background work. Registered before anything can call it and shut down on
+	// the way out, so a job never outlives the process that would have reported
+	// it — an orphaned job is work the user is never told about.
+	// The failures write themselves down, and the bad ones get looked at. Wired
+	// before anything can fail, so nothing is missed during startup.
+	defects, derr := defect.Open(cfg.DataDir)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "%swarning: defect journal unavailable: %v%s\n", cYellow, derr, cReset)
+	}
+	problems = defects
+	eng := newEngineer(defects, claudeClient, cfg.SourceDir, cfg.ProjectsDir, cfg.DataDir)
+	if defects != nil {
+		// Filing goes through the engineer when there is one and straight to the
+		// journal otherwise: noticing a failure is worth doing even on a machine
+		// where nothing can be done about it automatically.
+		a.OnFailure = func(f agent.Failure) {
+			if eng != nil {
+				eng.file(f)
+				return
+			}
+			_, _ = defects.File(defect.Report{
+				Kind: defect.Kind(f.Kind), Goal: f.Goal, Attempts: f.Attempts,
+				Failures: f.Failures, Trail: f.Trail, Exchange: f.Exchange,
+			})
+		}
+		skills.RegisterDefects(reg, defects)
+	}
+
+	jobs = newWorkManager(ctx, a, store, cfg)
+	skills.RegisterWork(reg, jobs)
+	defer jobs.Shutdown(10 * time.Second)
+
+	// A finished job waits for a natural opening in the conversation. This is what
+	// turns "job2 completed" into "oh, and those quizzes are done" — the report is
+	// handed to her as context for her next turn, in her own words.
+	a.PendingWork = func() string { return brief(reports.drain()) }
+	if vs != nil && voiceErr == nil {
+		go watchForAnOpening(ctx, func(text string) bool {
+			return vs.speak(context.Background(), voice.Background, text)
+		})
+	}
+
 	if daemonize {
 		// Headless, but not inert. This is the process that is running when
 		// nobody is at the keyboard, so it is the one that has to answer when
@@ -376,6 +420,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 
 		ind := newIndicator(ctx)
 		defer ind.close()
+
+		// Only in the daemon. In a REPL session the user is sitting right there and
+		// can ask; these loops exist for the hours when nobody is.
+		eng.run(ctx)
 
 		if vs != nil {
 			vs.indicator = ind
@@ -444,14 +492,30 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		// take it, or both write to an append-only archive at once. daemonActive
 		// tracks who holds it, so the self-task poll below never runs a turn while
 		// a session owns the store.
-		daemonActive := &atomic.Bool{}
 		daemonActive.Store(true)
 		d.Yield = func() {
+			// Stop taking new work first, so nothing starts during the handover.
 			daemonActive.Store(false)
 			if vs != nil && vs.listener != nil {
 				vs.listener.Stop()
 			}
 			ind.idle()
+
+			// Then wait for the turn already in flight. Suspending underneath it
+			// makes its next AppendTurn return ErrSuspended, which fails an
+			// exchange that was going perfectly well — the user asked for
+			// something, she did the work, and the reply is lost at the last step
+			// because somebody opened a terminal. Background jobs need no wait:
+			// they write to their own branch and hold their report in memory.
+			deadline := time.Now().Add(handoverGrace)
+			for currentTurn() != nil && time.Now().Before(deadline) {
+				time.Sleep(50 * time.Millisecond)
+			}
+			if currentTurn() != nil {
+				fmt.Fprintf(os.Stderr,
+					"handing over with an exchange still running; its reply may not be archived\n")
+			}
+
 			if err := store.Suspend(); err != nil {
 				fmt.Fprintf(os.Stderr, "suspend memory: %v\n", err)
 			}
@@ -471,12 +535,16 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		// minutes" into something that actually happens. It runs due tasks THROUGH
 		// the agent — so each ends in work and a spoken result, not a notification.
 		//
-		// Serialisation matters. It takes pttBusy before touching the store, so a
-		// task cannot run on top of a live voice exchange (nor two tasks at once);
-		// and it only runs while daemonActive, so it never writes memory a session
-		// owns. Crucially it acquires the lock BEFORE DueNow — which marks tasks
-		// run — so a task is never marked-and-lost when the daemon is busy; it
-		// simply waits for the next tick.
+		// A due task is a background Job now, so it runs on its own branched
+		// conversation, in its own scope, bounded by the same pool of two, and no
+		// longer waits for the user to stop talking. It used to stand down
+		// whenever a conversation was in flight, which quietly turned "check back
+		// in ten minutes" into "check back once you stop typing".
+		//
+		// What it must still respect is ownership of the archive: it only runs
+		// while daemonActive, so it never starts work a session's store would
+		// refuse. And DueNow marks tasks as run, so it stays behind the pool check
+		// — a task is never marked-and-lost, it simply waits for the next tick.
 		if selfTasks != nil {
 			go func() {
 				ticker := time.NewTicker(20 * time.Second)
@@ -489,16 +557,15 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 						if !daemonActive.Load() {
 							continue // a session holds the store
 						}
-						if !pttBusy.CompareAndSwap(false, true) {
-							continue // a voice turn is in flight; try next tick
+						if jobs != nil && jobs.Active() >= work.DefaultConcurrency {
+							continue // the pool is full; the task stays due
 						}
 						due, err := selfTasks.DueNow()
 						if err == nil {
 							for _, t := range due {
-								runSelfTask(ctx, a, vs, voiceErr == nil, t)
+								startSelfTask(t)
 							}
 						}
-						pttBusy.Store(false)
 					}
 				}
 			}()
@@ -558,11 +625,14 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 						if !last.After(handled) {
 							continue // this lull was already considered
 						}
-						if !pttBusy.CompareAndSwap(false, true) {
-							continue // a voice turn is in flight
+						if currentTurn() != nil {
+							continue // she is mid-conversation
+						}
+						if !bgBusy.CompareAndSwap(false, true) {
+							continue // another background task is running
 						}
 						line, err := a.Followup(ctx)
-						pttBusy.Store(false)
+						bgBusy.Store(false)
 						handled = last // one consideration per lull, whether she speaks or passes
 						if err != nil || line == "" {
 							continue
@@ -803,12 +873,20 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /proactive               status and queued observations
   /proactive quiet|balanced|companion
   /proactive check         drain the queue now
+  /jobs [stop <id>|stop all]  background tasks and how far they've got
+  /problems [<id>]         software problems noted, and what came of them
   /audit                   recent actions and their outcomes
   /verbose                 toggle tool tracing
   /quit                    exit
 
 `)
 		return false, nil
+
+	case "/jobs":
+		return false, jobsCommand(rest)
+
+	case "/problems":
+		return false, problemsCommand(rest)
 
 	case "/traits":
 		fmt.Printf("  %s\n", strings.Join(agent.TraitNames(), ", "))
