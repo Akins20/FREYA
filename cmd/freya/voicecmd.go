@@ -33,6 +33,10 @@ type voiceState struct {
 	style    voice.Style
 	listener *voice.Listener
 	ackStyle voice.AckStyle
+	// speaker owns the audio device. Every spoken line goes through it, so two
+	// things can never play at once and a background report can never talk over a
+	// conversation. Nil only when voice is unavailable.
+	speaker *voice.Speaker
 	// indicator is the screen light, if there is a display. Nil is safe.
 	indicator *indicator
 }
@@ -90,13 +94,21 @@ func setupVoice(cfg *config.Config, provider llm.Provider) (*voiceState, error) 
 		return nil, err
 	}
 
+	// The speaker is inserted between everything that talks and the synthesiser,
+	// and the Session speaks through it too — so there is exactly one path to the
+	// audio device and no caller can bypass the arbitration by holding the
+	// session directly.
+	speaker := voice.NewSpeaker(synth)
+
 	return &voiceState{
 		style:    style,
 		ackStyle: voice.ParseAckStyle(cfg.WakeAck),
+		speaker:  speaker,
 		session: &voice.Session{
 			Recorder:   recorder,
 			Recognizer: recognizer,
-			Synth:      synth,
+			Synth:      voice.AtPriority(speaker, voice.Reply),
+			Mic:        mic,
 			TempDir:    os.TempDir(),
 		},
 		verifier: voice.NewMFCCVerifier(cfg.DataDir),
@@ -137,6 +149,8 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 	v.listener = &voice.Listener{
 		Recorder:          wakeRecorder,
 		Recognizer:        v.session.Recognizer,
+		Mic:               mic,
+		Busy:              func() bool { return v.speaker != nil && v.speaker.Speaking() },
 		InactivityTimeout: timeout,
 		Indefinite:        indefinite,
 		OnHeard: func(text string, woke bool) {
@@ -180,10 +194,28 @@ func (v *voiceState) startListening(ctx context.Context, arg string, a *agent.Ag
 				fmt.Printf("%s  ▸ %s%s\n", cCyan, command, cReset)
 			}
 
+			// "Freya, stop" is about the work, not new work. It ends what is
+			// running rather than queueing behind it.
+			if isStopInstruction(command) {
+				msg := stopEverything()
+				fmt.Printf("%s  ⏹ %s%s\n", cYellow, msg, cReset)
+				v.speak(ctx, voice.Urgent, msg)
+				return
+			}
+
+			// Registered so a later press of the talk key can stop it. The wake
+			// loop cannot itself hear anything while this runs — it is recording
+			// nothing during the callback — so Ctrl+Space is the way out.
+			turnCtx, endTurn := beginTurn(ctx, "working on: "+clipLine(command, 60))
+			defer endTurn()
+
 			done := v.indicator.working()
-			res, err := a.Ask(ctx, command)
+			res, err := a.Ask(turnCtx, command)
 			done()
 			if err != nil {
+				if turnCtx.Err() != nil {
+					return // interrupted deliberately; the interrupter already spoke
+				}
 				// A falling two-tone, so a failure is audible from across the
 				// room rather than only visible on a terminal nobody is reading.
 				_ = voice.ChimeError()
@@ -517,12 +549,19 @@ func onOff(b bool) string {
 //
 // # Concurrency
 //
-// pttBusy drops a second press while an exchange is running. Without it, an
-// impatient double-press would start two overlapping recordings fighting for
-// the microphone. A press during an exchange is simply ignored, which is the
-// least surprising behaviour — the alternative, queueing, would have her answer
-// a question the user has probably already forgotten asking.
-var pttBusy atomic.Bool
+// bgBusy serialises the quiet-moment follow-up against a live conversation.
+//
+// Scheduled self-tasks used to share it; they are Jobs now, bounded by the work
+// manager's own pool. What is left here is the one piece of background work that
+// is NOT a job: a reflection with no tools that decides whether to say anything
+// at all, and which must not run twice at once or over the top of a turn.
+//
+// It replaces a single flag that used to cover both speaking and working. That
+// flag also swallowed every attempt to interrupt her, because a press during a
+// long task looked identical to a press during a recording. Recording is now
+// guarded by the microphone lock and the conversation by the turn handle, which
+// leaves this doing only what it should: keeping background work out of the way.
+var bgBusy atomic.Bool
 
 // lastUserTurnTime returns when the user last spoke, ignoring the assistant's own
 // turns (including any follow-up it makes), so a lull is measured from real input
@@ -536,41 +575,26 @@ func lastUserTurnTime(turns []memory.Turn) time.Time {
 	return time.Time{}
 }
 
-// runSelfTask executes one scheduled self-task through the agent and reports the
-// result — printed to the journal, and spoken when voice is available. The
-// caller already holds pttBusy, so this does not re-acquire it.
+// startSelfTask hands one due self-task to the background manager.
 //
-// It is a self-task, not a reply to a live prompt, so it announces itself: work
-// is about to happen that the user did not just ask for, and the interim
-// narration and final result are spoken through the agent's normal hooks, so
-// "on it, checking that download…" comes out before the answer does.
-func runSelfTask(ctx context.Context, a *agent.Agent, v *voiceState, canSpeak bool, t schedule.Task) {
+// It used to run inline, holding a flag that blocked every other piece of
+// background work and stood down whenever the user was talking — so "check back
+// in ten minutes" quietly meant "check back once you stop typing". As a Job it
+// runs on its own branched conversation and reports when it is done, which is
+// what a follow-up was always supposed to be.
+func startSelfTask(t schedule.Task) {
 	label := t.Note
 	if label == "" {
 		label = t.Prompt
 	}
+	if jobs == nil {
+		return
+	}
+	if _, err := jobs.Start(t.Prompt, "your earlier request"); err != nil {
+		fmt.Fprintf(os.Stderr, "self-task %q not started: %v\n", t.ID, err)
+		return
+	}
 	fmt.Printf("%s  ⏰ following up: %s%s\n", cDim, label, cReset)
-
-	var done func()
-	if v != nil {
-		done = v.indicator.working()
-	}
-	res, err := a.Ask(ctx, t.Prompt)
-	if done != nil {
-		done()
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "self-task %q failed: %v\n", t.ID, err)
-		return
-	}
-	reply := strings.TrimSpace(res.Reply)
-	if reply == "" {
-		return
-	}
-	fmt.Printf("%s  ▸ %s%s\n", cDim, reply, cReset)
-	if canSpeak && v != nil {
-		_ = v.session.Speak(context.Background(), reply)
-	}
 }
 
 // deepenActivity screenshots the focused window and asks the vision model for a
@@ -616,10 +640,20 @@ func deepenActivity(seer llm.VisionAnalyzer, kind string) string {
 }
 
 func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
-	if !pttBusy.CompareAndSwap(false, true) {
-		return // an exchange is already in flight
+	// Only the microphone is exclusive. While she is thinking and running tools —
+	// nearly all of a long task — the mic is idle, so a press CAN be heard, and
+	// that is the whole point: it is the only way to stop her.
+	if !takeMic() {
+		return // already recording; two recorders on one device produce nothing
 	}
-	defer pttBusy.Store(false)
+	released := false
+	releaseNow := func() {
+		if !released {
+			released = true
+			releaseMic()
+		}
+	}
+	defer releaseNow()
 
 	// Acknowledge immediately, before anything slow, so the press feels heard.
 	_ = voice.Chime()
@@ -659,8 +693,31 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	}
 	fmt.Printf("%s  ▸ %s%s\n", cCyan, transcript, cReset)
 
-	res, err := a.Ask(ctx, transcript)
+	// The microphone is free from here, so she can be interrupted again while she
+	// works on what was just said.
+	releaseNow()
+
+	// "Stop" is an instruction about the work, not a new piece of work. It ends
+	// what is running and starts nothing.
+	if isStopInstruction(transcript) {
+		msg := stopEverything()
+		fmt.Printf("%s  ⏹ %s%s\n", cYellow, msg, cReset)
+		// Urgent: it cuts through whatever she was mid-sentence on, which is the
+		// point — the user just asked her to stop and is waiting to hear it landed.
+		v.speak(context.Background(), voice.Urgent, msg)
+		return
+	}
+
+	// Anything else spoken mid-task supersedes it, the way talking over someone
+	// does. beginTurn cancels whatever was in flight.
+	turnCtx, endTurn := beginTurn(ctx, "working on: "+clipLine(transcript, 60))
+	defer endTurn()
+
+	res, err := a.Ask(turnCtx, transcript)
 	if err != nil {
+		if turnCtx.Err() != nil {
+			return // interrupted on purpose; the interrupter already spoke
+		}
 		_ = voice.ChimeError()
 		_ = v.session.Speak(ctx, "Something went wrong with that.")
 		return
@@ -668,6 +725,15 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	fmt.Printf("\n%s\n\n", res.Reply)
 	_ = v.session.Speak(ctx, res.Reply)
 	_ = voice.ChimeDone()
+}
+
+// clipLine shortens an utterance for describing what is being worked on.
+func clipLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // spokenTurn runs one push-to-talk exchange: record, verify the speaker,
@@ -752,4 +818,22 @@ func startWakeListening(ctx context.Context, a *agent.Agent, v *voiceState, ind 
 	}
 	ind.listening()
 	return nil
+}
+
+// speak says something at a given priority, and reports whether it was actually
+// said.
+//
+// Every spoken line in the process goes through here. Calling the session
+// directly is what allowed two utterances to overlap: each synthesiser keeps one
+// handle for Stop to kill, and concurrent callers overwrote it, so the audio
+// doubled up and only the last one could be interrupted.
+func (v *voiceState) speak(ctx context.Context, pri voice.Priority, text string) bool {
+	if v == nil || v.speaker == nil {
+		return false
+	}
+	if v.session.OnSpeaking != nil {
+		v.session.OnSpeaking(text)
+	}
+	said, _ := v.speaker.Say(ctx, pri, text)
+	return said
 }

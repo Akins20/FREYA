@@ -110,7 +110,13 @@ func reliabilityReport(results map[string][]Result) string {
 			wasted += r.World.WastedRounds()
 			noops += r.World.SilentNoops()
 			failedTools += r.World.FailedTools()
-			if strings.Contains(r.World.Reply, "tool rounds without landing") {
+			// Counted from the rounds, not from a phrase in the reply. The reply is
+			// the wrong place to look: at the cap she now writes a genuine progress
+			// report in her own words, so there is no fixed string to match, and a
+			// previous version of this matched a sentence that had since been
+			// reworded — leaving the counter permanently zero and the gate metric
+			// silently measuring nothing.
+			if r.World.Rounds >= agentRoundCap {
 				capped++
 			}
 			if n, tool := r.World.LongestRepeatRun(); n > 0 {
@@ -146,3 +152,9 @@ func maxInt(a, b int) int {
 	}
 	return b
 }
+
+// agentRoundCap mirrors agent.maxToolRounds. It is duplicated rather than
+// imported because the benchmark drives the built binary as a black box and must
+// not link the package it is grading — but a mismatch would make the
+// cap-exhaustion metric read zero, so it is asserted in the tests.
+const agentRoundCap = 40
