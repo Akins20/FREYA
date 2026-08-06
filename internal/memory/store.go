@@ -255,40 +255,142 @@ func (s *Store) WorkingSet(budget int, evictChunk float64) (working, evicted []T
 	if s.st.WorkingAnchor > len(s.turns) {
 		s.st.WorkingAnchor = 0
 	}
-	anchor := s.st.WorkingAnchor
-
-	total := 0
-	for _, t := range s.turns[anchor:] {
-		total += t.Tokens
-	}
-
-	if total > budget && budget > 0 {
-		// Evict down to a level *below* the budget, not merely to it, so the
-		// freed headroom absorbs many subsequent turns before the anchor moves
-		// again. Targeting the budget itself would re-evict on every exchange
-		// and invalidate the cached prefix each time — the exact failure this
-		// chunking exists to avoid.
-		target := budget - int(float64(budget)*evictChunk)
-		if target < 0 {
-			target = 0
-		}
-		// Never evict the newest turn. A turn larger than the whole budget
-		// would otherwise drain the working set to nothing and discard the
-		// exchange currently in progress.
-		limit := len(s.turns) - 1
-		for anchor < limit && total > target {
-			total -= s.turns[anchor].Tokens
-			anchor++
-		}
-		if anchor > s.st.WorkingAnchor {
-			evicted = append(evicted, s.turns[s.st.WorkingAnchor:anchor]...)
-			s.st.WorkingAnchor = anchor
-			_ = s.saveJSONLocked(stateFile, s.st)
-		}
+	anchor := WindowFrom(s.turns, s.st.WorkingAnchor, budget, evictChunk)
+	if anchor > s.st.WorkingAnchor {
+		evicted = append(evicted, s.turns[s.st.WorkingAnchor:anchor]...)
+		s.st.WorkingAnchor = anchor
+		_ = s.saveJSONLocked(stateFile, s.st)
 	}
 
 	working = append(working, s.turns[anchor:]...)
 	return working, evicted
+}
+
+// sortFacts puts pinned facts first, then most recently updated. Shared so a
+// View and a Facts() call can never disagree about ordering — the facts tier is
+// part of the cached prefix, and a different order is a different prefix.
+func sortFacts(out []Fact) {
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Pinned != out[j].Pinned {
+			return out[i].Pinned
+		}
+		return out[i].Updated.After(out[j].Updated)
+	})
+}
+
+// WindowFrom computes where the verbatim window should start.
+//
+// Extracted so the store and the builder cannot drift apart on the one rule that
+// governs the prompt cache: two copies of chunked eviction is one copy too many.
+func WindowFrom(turns []Turn, anchor, budget int, evictChunk float64) int {
+	if anchor < 0 || anchor > len(turns) {
+		anchor = 0
+	}
+	if len(turns) == 0 {
+		return anchor
+	}
+	// Checked on EVERY path, not only when evicting. An anchor already parked on a
+	// tool result — left there by an earlier build, or read back from state.json —
+	// breaks the request just as surely as one that lands there now, and the
+	// under-budget path is the one taken on almost every turn.
+	anchor = safeStart(turns, anchor, len(turns)-1)
+
+	total := 0
+	for _, t := range turns[anchor:] {
+		total += t.Tokens
+	}
+	if total <= budget || budget <= 0 {
+		return anchor
+	}
+
+	// Evict down to a level *below* the budget, not merely to it, so the freed
+	// headroom absorbs many subsequent turns before the anchor moves again.
+	// Targeting the budget itself would re-evict on every exchange and invalidate
+	// the cached prefix each time — the exact failure this chunking exists to
+	// avoid.
+	target := budget - int(float64(budget)*evictChunk)
+	if target < 0 {
+		target = 0
+	}
+	// Never evict the newest turn. A turn larger than the whole budget would
+	// otherwise drain the working set to nothing and discard the exchange
+	// currently in progress.
+	limit := len(turns) - 1
+	for anchor < limit && total > target {
+		total -= turns[anchor].Tokens
+		anchor++
+	}
+	return safeStart(turns, anchor, limit)
+}
+
+// safeStart moves the anchor off a tool result.
+//
+// The archive stores a tool's OUTPUT but never the assistant turn that requested
+// it — the request lives in the message list, which is discarded with the
+// exchange. Replayed from the beginning that was harmless, because turn zero is
+// always something the user said. Replayed from a moving anchor it is not: a
+// window that opens on a tool result is a function response with no function
+// call in front of it, and Gemini rejects the whole request with
+// "please ensure that function response turn comes immediately after a function
+// call turn".
+//
+// This was invisible for as long as eviction never ran. The first exchange after
+// the anchor started moving failed outright.
+//
+// Forward, never back, because the anchor's monotonicity is what stops evicted
+// turns being resurrected.
+func safeStart(turns []Turn, anchor, limit int) int {
+	for anchor < limit && turns[anchor].Role == "tool" {
+		anchor++
+	}
+	return anchor
+}
+
+// View is one consistent read of every tier, under a single lock.
+//
+// Prompt assembly used to call the store six separate times, so a concurrent
+// writer could land between two of them and the assembled prompt would describe
+// two different moments. With one thread of work that was theoretical; with a
+// background job running it is ordinary.
+func (s *Store) View() View {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	facts := make([]Fact, 0, len(s.facts))
+	for _, f := range s.facts {
+		facts = append(facts, *f)
+	}
+	sortFacts(facts)
+
+	anchor := s.st.WorkingAnchor
+	if anchor < 0 || anchor > len(s.turns) {
+		anchor = 0
+	}
+	return View{
+		Identity: s.identity,
+		Facts:    facts,
+		Episodes: append([]Episode(nil), s.episodes...),
+		Turns:    append([]Turn(nil), s.turns...),
+		Anchor:   anchor,
+	}
+}
+
+// Advance moves the verbatim window forward to `to` and returns what left it.
+//
+// Forward only, and that is load-bearing. Resume reloads the whole store from
+// disk, including the anchor a session may have moved; a builder holding a View
+// taken before that reload would otherwise push the anchor back to where it was
+// and resurrect turns that had already been distilled into an episode.
+func (s *Store) Advance(to int) []Turn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if to <= s.st.WorkingAnchor || to > len(s.turns) {
+		return nil
+	}
+	evicted := append([]Turn(nil), s.turns[s.st.WorkingAnchor:to]...)
+	s.st.WorkingAnchor = to
+	_ = s.saveJSONLocked(stateFile, s.st)
+	return evicted
 }
 
 // --- facts ------------------------------------------------------------------
@@ -323,12 +425,7 @@ func (s *Store) Facts() []Fact {
 	for _, f := range s.facts {
 		out = append(out, *f)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Pinned != out[j].Pinned {
-			return out[i].Pinned
-		}
-		return out[i].Updated.After(out[j].Updated)
-	})
+	sortFacts(out)
 	return out
 }
 

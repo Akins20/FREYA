@@ -73,8 +73,9 @@ type Input struct {
 	Query string
 	// Reply is what Freya just said.
 	Reply string
-	// Store is the memory archive.
-	Store *memory.Store
+	// Store is the memory archive — or, for a background job, that job's
+	// isolated view of it.
+	Store memory.Journal
 	// Index is the search index.
 	Index *memory.Index
 	// Now is injectable for testing.

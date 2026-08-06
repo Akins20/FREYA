@@ -15,7 +15,10 @@ import (
 // tiers lead so Gemini's implicit prefix cache keeps hitting; volatile tiers
 // trail so a changed retrieval set cannot invalidate everything before it.
 type ContextBuilder struct {
-	Store  *Store
+	// Store is this thread of conversation's memory. The real Store for the
+	// foreground; a Branch for a background job, which shares the stable tiers
+	// and keeps its own turns. See journal.go.
+	Store  Journal
 	Index  *Index
 	Budget Budget
 
@@ -33,7 +36,7 @@ type ContextBuilder struct {
 }
 
 // NewContextBuilder wires a builder with sensible defaults.
-func NewContextBuilder(store *Store, index *Index, persona string) *ContextBuilder {
+func NewContextBuilder(store Journal, index *Index, persona string) *ContextBuilder {
 	return &ContextBuilder{
 		Store:         store,
 		Index:         index,
@@ -51,19 +54,25 @@ func NewContextBuilder(store *Store, index *Index, persona string) *ContextBuild
 func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message, snap Snapshot) {
 	alloc := newAllocator(b.Budget.Usable())
 
+	// One read, one moment. Every tier below comes out of this view, so the
+	// assembled prompt describes a single consistent state of memory even while
+	// another thread of work is writing. Six separate reads is how a prompt ends
+	// up half from before a turn and half from after it.
+	view := b.Store.View()
+
 	// --- Tier 1: identity (static, leads the cached prefix) -----------------
-	identity := b.buildIdentity(alloc.take(b.Budget.Identity))
+	identity := b.buildIdentity(view, alloc.take(b.Budget.Identity))
 	snap.IdentityTokens = EstimateTokens(identity)
 	alloc.spend(snap.IdentityTokens)
 
 	// --- Tier 2: durable facts (rarely change) ------------------------------
-	factText, factCount := b.buildFacts(alloc.take(b.Budget.Facts))
+	factText, factCount := b.buildFacts(view, alloc.take(b.Budget.Facts))
 	snap.FactTokens = EstimateTokens(factText)
 	snap.FactCount = factCount
 	alloc.spend(snap.FactTokens)
 
 	// --- Tier 3: episodes (append-only summaries) ---------------------------
-	episodeText, episodeCount := b.buildEpisodes(alloc.take(b.Budget.Episodes))
+	episodeText, episodeCount := b.buildEpisodes(view, alloc.take(b.Budget.Episodes))
 	snap.EpisodeTokens = EstimateTokens(episodeText)
 	snap.EpisodeCount = episodeCount
 	alloc.spend(snap.EpisodeTokens)
@@ -92,7 +101,16 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 	system = sys.String()
 
 	// --- Tier 4: working set (verbatim, append-only) ------------------------
-	working, evicted := b.Store.WorkingSet(alloc.take(b.Budget.Working), b.Budget.EvictionChunk)
+	// The window is computed from the same view, then committed. Splitting it
+	// this way is what lets the budget cascade — the working allowance depends on
+	// what the tiers above actually spent — without taking a second, possibly
+	// different, read of the conversation.
+	from := WindowFrom(view.Turns, view.Anchor, alloc.take(b.Budget.Working), b.Budget.EvictionChunk)
+	var evicted []Turn
+	if from > view.Anchor {
+		evicted = b.Store.Advance(from)
+	}
+	working := view.Turns[from:]
 	if len(evicted) > 0 {
 		// Nothing is lost: aged-out turns become a summary and stay searchable.
 		b.archiveEvicted(evicted)
@@ -137,18 +155,18 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 	return system, msgs, snap
 }
 
-func (b *ContextBuilder) buildIdentity(budget int) string {
+func (b *ContextBuilder) buildIdentity(view View, budget int) string {
 	var sb strings.Builder
 	sb.WriteString(b.Persona)
 
-	if curated := strings.TrimSpace(b.Store.Identity()); curated != "" {
+	if curated := strings.TrimSpace(view.Identity); curated != "" {
 		sb.WriteString("\n\n# Operator profile\n")
 		sb.WriteString(curated)
 	}
 
 	// Pinned facts are identity, not trivia — they always ship.
 	var pinned []string
-	for _, f := range b.Store.Facts() {
+	for _, f := range view.Facts {
 		if f.Pinned {
 			pinned = append(pinned, "- "+f.Text)
 		}
@@ -166,8 +184,8 @@ func (b *ContextBuilder) buildIdentity(budget int) string {
 	return truncateTokens(sb.String(), budget)
 }
 
-func (b *ContextBuilder) buildFacts(budget int) (string, int) {
-	facts := b.Store.Facts()
+func (b *ContextBuilder) buildFacts(view View, budget int) (string, int) {
+	facts := view.Facts
 	if len(facts) == 0 || budget <= 0 {
 		return "", 0
 	}
@@ -190,8 +208,8 @@ func (b *ContextBuilder) buildFacts(budget int) (string, int) {
 	return sb.String(), count
 }
 
-func (b *ContextBuilder) buildEpisodes(budget int) (string, int) {
-	episodes := b.Store.Episodes()
+func (b *ContextBuilder) buildEpisodes(view View, budget int) (string, int) {
+	episodes := view.Episodes
 	if len(episodes) == 0 || budget <= 0 {
 		return "", 0
 	}
@@ -250,9 +268,22 @@ func (b *ContextBuilder) buildRetrieved(query string, skip map[string]bool, budg
 // archiveEvicted records a placeholder episode for turns leaving the verbatim
 // tier. The summary is mechanical; agent.Distil replaces it with a model-written
 // one when a provider is available.
+// episodeChunk is how many turns one episode may cover.
+//
+// A normal eviction moves the anchor by a quarter of the working budget, which is
+// a few dozen turns, and one episode for that is right. A budget CHANGE evicts
+// hundreds at once, and collapsing those into a single 1,200-character summary
+// would lose the shape of weeks. Chunking keeps the granularity roughly constant
+// whatever caused the eviction.
+const episodeChunk = 60
+
 func (b *ContextBuilder) archiveEvicted(evicted []Turn) {
 	if len(evicted) == 0 {
 		return
+	}
+	for len(evicted) > episodeChunk {
+		b.archiveEvicted(evicted[:episodeChunk])
+		evicted = evicted[episodeChunk:]
 	}
 	var topics []string
 	var sb strings.Builder
