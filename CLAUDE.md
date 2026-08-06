@@ -48,12 +48,13 @@ variables always win.
 | `FREYA_ACTIVITY_DEPTH` | The daemon samples the focused window every 60s (classified: browser/terminal/files/editor) for ambient context. For a **browser or folder** that just changed, it also screenshots that window and vision-reads the actual content (page, files) — set `off` to disable that deeper read (it costs a vision call and shows the window to the model); title-level sampling stays on regardless. |
 | `FREYA_DATA_DIR` | Memory location. Defaults to `~/.local/share/freya`. |
 | `FREYA_PROJECTS_DIR` | What the dev skills scan. Defaults to the repo's parent. |
+| `FREYA_SOURCE_DIR` | Her own checkout, for the self-repair loop. When a task fails badly she files a report (`defects.jsonl`), and the daemon runs an engineer against this repo to decide whether it was her software. Work lands on a **branch** and is never deployed — see `cmd/freya/consult.go`. Unset disables the loop; the journal still records. |
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
 
-State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `facts.json`,
+State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `defects.jsonl`, `facts.json`,
 `episodes.json`, `notes.json`, `persona.json`, `voicestyle.json`, `voiceprint.json`
 (mode 600, biometric), `state.json`, and hand-editable `identity.md`.
 
@@ -64,11 +65,25 @@ Four layers, each depending only on those above it:
 ```
 cmd/freya         REPL, slash commands, ANSI output
 internal/agent    think-act loop + persona
+internal/work     background jobs: bounded pool, cancellation
 internal/memory   tiered memory, context assembly, BM25 retrieval
 internal/skills   the tool registry and every capability
 internal/llm      provider-agnostic model interface
 internal/voice    record, recognise, synthesise, speaker gate
 ```
+
+### A background job is an isolated conversation
+
+`internal/memory/journal.go` explains this in full; the short version is that
+interleaving two threads of work into one append-only archive corrupts both the
+transcript and the cached prefix. So a job runs against a `memory.Branch`:
+identity/facts/episodes read live from the real store, the conversation frozen at
+spawn, its own turns accumulating separately. One summary turn rejoins the archive
+when it ends; the full transcript goes to `jobs.jsonl`.
+
+Two things must not be varied per job, and a test pins each: **tool declarations**
+and the **persona prefix**. Both lead the request, so a per-worker difference gives
+every thread its own cacheable prefix and neither can reuse the other's.
 
 ### The memory architecture is the load-bearing design
 

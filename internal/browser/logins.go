@@ -135,5 +135,29 @@ func FormatAccounts(site string, accounts []SavedLogin) string {
 		}
 		fmt.Fprintf(&b, "  %d. %s  (last used %s)\n", i+1, name, when)
 	}
+
+	// What to do when knowing the username is not enough.
+	//
+	// This is the gap that produced the first report the failure journal ever
+	// received. Told which account to use, she went to the login form and let
+	// Chrome fill it — and Chrome filled the FIRST saved account's password, not
+	// the one she had been told to use. There is no way for her to pick between
+	// them: the account chooser is browser UI rather than page DOM, so no click
+	// can reach it, and the password itself is encrypted with the OS keyring and
+	// is deliberately never read.
+	//
+	// So she was stuck at a door she had the key to. browser_sync_logins copies a
+	// live session out of the user's own Chrome, which needs no password at all —
+	// and in a hundred sessions she had never once called it, because nothing
+	// anywhere connected it to this moment. Saying so here is the fix: the
+	// affordance belongs where the problem shows up.
+	b.WriteString("\nIf Chrome then fills the WRONG account's password — it favours the " +
+		"first saved account and cannot be switched from the page — do not retype it and " +
+		"do not keep trying. You cannot choose between saved credentials: the chooser is " +
+		"browser UI, not page content, and the password is encrypted and never read.\n" +
+		"Use browser_sync_logins instead: it copies a live session out of the user's own " +
+		"Chrome, so no password is needed. Chrome must be closed first, so ask them to " +
+		"close it. Failing that, ask them to sign in once themselves and carry on from " +
+		"there.")
 	return strings.TrimRight(b.String(), "\n")
 }

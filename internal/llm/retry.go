@@ -32,8 +32,16 @@ import (
 
 const (
 	maxAttempts = 3
-	baseDelay   = 500 * time.Millisecond
-	maxDelay    = 4 * time.Second
+
+	// totalAttemptBudget bounds one logical request, retries and backoff included.
+	//
+	// Sized from what a successful call actually costs: her slowest legitimate
+	// completions run about 36 seconds at p99, on a 200,000-token prompt. Ninety
+	// seconds is therefore already generous for a single attempt, and three of
+	// them is not patience, it is an assistant that has stopped answering.
+	totalAttemptBudget = 100 * time.Second
+	baseDelay          = 500 * time.Millisecond
+	maxDelay           = 4 * time.Second
 )
 
 // retryable reports whether a status is worth another attempt.
@@ -81,6 +89,19 @@ func backoff(attempt int, retryAfter string) time.Duration {
 // exists to avoid.
 func postJSON(ctx context.Context, hc *http.Client, provider, url string,
 	headers map[string]string, body []byte) ([]byte, error) {
+
+	// One deadline across every attempt.
+	//
+	// Without it the retries stack: a client timeout of 90 seconds, taken three
+	// times, is four and a half minutes of a person waiting for an answer that is
+	// never coming. Two calls in her telemetry did exactly that — 272 seconds
+	// each, returning no tokens at all. Retrying is worth doing; retrying past the
+	// point where anyone is still listening is not.
+	if _, already := ctx.Deadline(); !already {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, totalAttemptBudget)
+		defer cancel()
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {

@@ -147,3 +147,64 @@ func TestBackoffIsJittered(t *testing.T) {
 		t.Fatalf("an absurd Retry-After was honoured unbounded: %v", d)
 	}
 }
+
+// The measured failure: two calls in her telemetry took 272 seconds and returned
+// no tokens at all — a 90s client timeout taken three times. Retrying is worth
+// doing; retrying past the point where anyone is still listening is not.
+func TestRetriesCannotStackIntoMinutes(t *testing.T) {
+	if totalAttemptBudget > 2*time.Minute {
+		t.Fatalf("the total budget is %s; a person asked a question and is waiting",
+			totalAttemptBudget)
+	}
+
+	// A server that never answers must not hold the caller for the full
+	// per-attempt timeout, three times over. The handler also releases on the
+	// test's own signal, so Close never waits on a connection the client has
+	// abandoned but not torn down.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	// A short budget stands in for the real one, so the test is quick; the
+	// mechanism under test is that the deadline covers ALL attempts.
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := postJSON(ctx, &http.Client{}, "test", srv.URL, nil, []byte(`{}`))
+	took := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a hanging server eventually returned success")
+	}
+	if took > 2*time.Second {
+		t.Errorf("gave up after %s — the attempts stacked past the deadline", took)
+	}
+}
+
+// A caller with its own deadline keeps it: the default must not extend a
+// cancellation the caller already decided on.
+func TestAnExistingDeadlineIsNotExtended(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	postJSON(ctx, &http.Client{}, "test", srv.URL, nil, []byte(`{}`))
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("the caller's 150ms deadline was overridden; took %s", took)
+	}
+}

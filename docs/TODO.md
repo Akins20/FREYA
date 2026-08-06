@@ -771,6 +771,236 @@ by hand, stated plainly when used.
       Slime S4'", not just "AnimeHeaven.Me". Bounded (those two kinds, on change
       only), `FREYA_ACTIVITY_DEPTH=off` disables. Terminal/editor stay title-level.
 
+## Phase 18 — being able to stop her
+
+- [x] **The talk key now works while she is working.** It did not, and that was the
+      whole problem: `pttBusy` covered both recording and thinking, so a press
+      during a forty-round task was indistinguishable from a press during a
+      recording and was dropped. Voice is her only interface, and it was deaf
+      exactly when it mattered. Split into a microphone lock (recording is
+      exclusive — two recorders on one device produce nothing) and a turn handle
+      (working is interruptible). `cmd/freya/interrupt.go`.
+- [x] Ctrl+Space mid-task records, and the utterance is classified: a stop phrase
+      cancels the running exchange and says what it stopped and how long it ran;
+      anything else supersedes it, the way talking over a person does. Matched on
+      the whole utterance, so "stop by the shop on the way" is still a request.
+- [x] Her own work is stoppable too — scheduled self-tasks register as the active
+      turn, so "stop" is not limited to things the user asked for.
+- [x] **Cancellation actually ends the exchange.** The agent loop treats a failing
+      tool as data rather than an abort — deliberately — so a cancelled context
+      arrived as "context canceled" tool results she dutifully worked around,
+      spending rounds after being called off. `ctx.Err()` is now checked per round:
+      cancellation is the one failure that means stop. `internal/agent/agent.go`.
+- [x] Background loops (self-tasks, quiet-moment follow-up) moved off the old flag
+      onto `bgBusy` plus a check that no conversation is in flight, so she no
+      longer starts her own work on top of the user's.
+- [x] **The guess budget was per-process, not per-exchange** — the same disease as
+      the stall it was built to prevent, arriving slowly. Confirmed live: 4 of 62
+      tool calls refused, every one a URL check long after the budget had been
+      spent in an unrelated conversation minutes earlier. She was permanently
+      banned from reconstructing anything on the strength of two old guesses. The
+      two halves of the ledger have opposite lifetimes — what she has SEEN
+      accumulates (that is knowledge), the BUDGET resets each request (it bounds
+      one thread of work going wrong). `Ledger.BeginExchange`.
+- [x] **Running out of road now reports progress on the GOAL.** She had submitted
+      two quizzes and was inside the third when the cap stopped her, and said in
+      effect "I couldn't finish". Telemetry ruled out the obvious cause: the
+      salvage call succeeded (49 output tokens, no error). **The question was
+      wrong.** The old brief asked for an *answer* — there is no answer to "do my
+      three quizzes", only a state of affairs — and offered "say briefly what you
+      still need" as the alternative. Given those two doors a model takes the
+      second. `roundCapBrief` (`internal/agent/roundcap.go`) now asks for what is
+      finished, what is part-done and how far, and what is left, names the goal,
+      and rules out the exact non-answer that was measured.
+- [x] A first attempt at this summarised the TOOLS ("clicked something twice") and
+      was rejected as no more useful than the apology — nobody asked her to click
+      anything. The report is about the goal or it is noise with more words.
+- [x] `trail.digest()` hands the model a chronological spine of what the tools
+      reported, so the report comes out concrete rather than vague. Fenced with
+      the same `EXTERNAL CONTENT` marker as ordinary tool results — replaying page
+      text unfenced would have been a hole straight through the injection defence,
+      at the one call whose whole job is to summarise obediently.
+- [x] **The second wrong turn, caught by adversarial review: "first line of the
+      output" is the mechanical half.** `browser_read` returns
+      `title\nurl\n\nbody`, `browser_click_text` returns `Clicked %q. Now on %q`,
+      `browser_fill` returns `Filled #answer3.` — so keeping the first line threw
+      away every page body (the only place a score or a question number lives) and
+      kept the click log. It was the same mistake in a better disguise, and it
+      passed its tests only because the tests fed it output no skill produces.
+      `substance()` now splits state from body and the report leads with the body.
+- [x] `nonAnswer` judges CONCRETENESS, not phrasing. The first version was a
+      phrase list and was measurably inverted — it rejected "Quizzes one and two
+      are submitted; I couldn't finish the third" and accepted "I made some
+      progress but ran into issues". Two forces did that: the brief asks for spoken
+      prose, which spells numbers as words and closed the digit escape hatch; and
+      the brief's own opening ("you have used every tool call") invites the
+      paraphrase "I ran out of", which was itself a dodge phrase. The test is now
+      vocabulary overlap with what the tools actually saw.
+- [x] The retry nudge rides in a trailing message, not the system block — the
+      system instruction precedes every message on the wire, so putting the only
+      delta there would forfeit the whole ~180k cached prefix on the second call.
+- [x] When BOTH attempts dodge, fall through to the account rather than shipping
+      the first dodge after paying twice to detect it.
+- [x] `trail.account()` is the no-network backstop, since the salvage call may be
+      the very thing that failed. It reports what the pages said, refuses to claim
+      anything is "done" — judging that is exactly what became unavailable — and
+      is **fenced**, because it is archived as an ASSISTANT turn that later prompts
+      replay in her own voice, a higher-trust role than a tool result.
+- [x] Its reason is the caller's to give. Hardcoding "I lost the model" made a
+      deliberate stop archive a provider outage that never happened.
+- [x] A stop landing DURING the model call — most of a round with thinking on —
+      archives the account too. Only the top-of-loop check caught it before.
+- [x] A superseding request waits (3s) for the one it replaced to finish
+      unwinding, because the archive appends in call order: without it the
+      transcript read "check my email" / "Your inbox is empty." / "Stopped there,
+      you'd asked for the quizzes…" and the next turn reasoned from that.
+- [x] Steps are recorded in REQUEST order after the round joins, not completion
+      order. A slow read landing behind a fast click made the "chronological
+      record" say the quiz was submitted and afterwards reopened at question four.
+- [x] Truncation is on rune boundaries; the digest and the archive are both UTF-8
+      and an invalid tail becomes U+FFFD permanently.
+- [x] **The benchmark's cap-exhaustion counter was silently zero** — it matched a
+      reply sentence that had been reworded. It counts rounds now, and a test
+      pins its constant against the agent's.
+- [ ] The wake word cannot be heard mid-task — the listener records nothing during
+      its own callback, so Ctrl+Space is the only way out. Fix needs echo
+      suppression before the callback can go async, or she will hear herself.
+
+## Phase 19 — two threads of work
+
+- [x] **She is no longer single-threaded, and that was never the model's fault.**
+      The substrate was: one archive appended in wall-clock order, one process
+      working directory, one microphone gate that dropped work on contention. A
+      four-minute quiz run therefore took four minutes of *her*.
+- [x] `internal/work` — a `Job` is a goal, a state and a way to stop it; a
+      `Manager` owns a bounded pool of 2 (the constraint is her attention and the
+      provider's rate limit, not CPU) and a queue capped at 4, because a queue
+      that grows without limit turns "I'll do it in the background" into a promise
+      she will not keep. It knows nothing about agents or models — it takes an
+      injected `Runner` — so it is testable without a provider and cannot create a
+      dependency cycle.
+- [x] **A background job is an ISOLATED conversation, not an interleaved one**
+      (`memory.Branch`). Interleaving two threads into one append-only archive
+      corrupts the transcript — "open my portal" / "your inbox is empty" / "quiz 2
+      submitted" — and that transcript is then fed back as context. Identity,
+      facts and episodes are read live from the real store; the conversation is
+      FROZEN at spawn; every turn the job produces accumulates in the branch.
+- [x] Freezing is what buys the cache: the job's prompt opens with exactly the
+      bytes the foreground had at spawn, so both threads hit the same cached
+      prefix and diverge only in their tails. `Agent.ForJob` shares the tool
+      registry by pointer and the persona by value for the same reason — a test
+      pins that the stable prefix is byte-identical across threads.
+- [x] One summary turn joins the real conversation when a job ends. Its full
+      transcript goes to `jobs.jsonl` — nothing is destroyed — but stays out of
+      the working set, where eighty tool turns from a background task would evict
+      the conversation the user is actually having.
+- [x] **`Store.View()` — one lock, one moment.** `Build` used to read the store
+      six separate times, so a concurrent writer could land between two of them
+      and the assembled prompt would describe two different states. Theoretical
+      with one thread; ordinary with a job running.
+- [x] `Store.Advance` moves the window forward ONLY. `Resume` reloads from disk
+      including an anchor a session moved, and a builder holding an older view
+      would otherwise drag it back and resurrect turns already distilled into an
+      episode.
+- [x] A branch keeps working while the store is suspended. A background job dying
+      because someone opened a terminal would be absurd.
+- [x] Scheduled self-tasks are Jobs now. They used to hold a flag that blocked
+      every other piece of background work and stood down whenever the user was
+      talking — so "check back in ten minutes" quietly meant "check back once you
+      stop typing".
+- [x] `work_start` / `work_list` / `work_cancel`, plus `/jobs` in the REPL. A job
+      may not start a job: one level is concurrency, recursion is a fork bomb with
+      a friendly name.
+- [x] "Stop" now decides what it means: the thing she is doing WITH you first,
+      then the thing she is doing FOR you; when several are running it names them
+      and asks, because picking one would be a guess with consequences.
+- [x] Bug found by its own test: the cancel handle was created inside the worker
+      goroutine, so a job cancelled immediately after `Start` — exactly what "no,
+      stop" does — found no handle and was silently not cancelled.
+
+- [ ] Phase 5 (attention): a job's spoken report is currently suppressed while she
+      is mid-conversation rather than queued. Two voices at once is worse than a
+      late report, but the audio queue is the real fix.
+
+## Phase 20 — attention: one mouth, one ear, and telling you afterwards
+
+- [x] **`voice.Speaker` — one mouth.** Every synthesiser keeps a single
+      `current *exec.Cmd` for Stop to kill, and nothing serialised the calls: two
+      concurrent Say calls each launched a player and each overwrote that field,
+      so the audio overlapped and Stop killed only the last one. Hard to hit with
+      one thread; ordinary once a job can finish while she is answering you.
+- [x] Priority is about whose time is being spent. **Urgent** (an acknowledgement
+      of something you just did) cuts in — you are waiting for it and it lasts a
+      second. **Reply** waits for the current utterance. **Background** is
+      *dropped*, not queued: waiting for a gap and then announcing "by the way,
+      that finished" is the interruption this phase exists to stop.
+- [x] `voice.AtPriority` wraps the Speaker back into a `Synthesizer` so the
+      Session speaks through it too. Twenty call sites hold a Session; if the
+      speaker were only reachable through a new method, any one of them could
+      still go straight to the device. The old path IS the new path.
+- [x] **Reports are held, not announced.** A finished job used to be archived as a
+      templated assistant turn — "Finished in the background (goal): result" —
+      which was both an interruption and words she never said. Now it waits, and
+      is handed to her as context for her next turn with an instruction to bring
+      it up the way a person would: "oh, and those quizzes are done." What lands
+      in the archive is whatever she actually says.
+- [x] `Agent.PendingWork` rides in the volatile tail, after retrieval, and is
+      drained by the call — offered exactly once. A block that changes whenever a
+      job ends would otherwise rewrite the cached prefix for every turn after it.
+      A test pins the position.
+- [x] If no opening arrives within 90s she says it herself, using the job's own
+      reply rather than a template — and at Background priority, so a conversation
+      starting in the meantime silently wins.
+- [x] **`voice.Mic` — one ear.** Three claimants (wake listener, push-to-talk,
+      spoken confirmation) with no coordination. Two recorders on one device
+      produce half an utterance, and the failure is silent: she simply mishears.
+      Not a queue — a recording that waits its turn has already missed the words.
+- [x] The wake listener stands down while she is speaking. A microphone left open
+      during synthesis records her own voice and transcribes it as though somebody
+      had said it.
+- [x] **The handover TOCTOU.** `Yield` suspended the store immediately, so a turn
+      already in flight had its next `AppendTurn` return `ErrSuspended` — the user
+      asked for something, she did the work, and the reply was lost at the last
+      step because somebody opened a terminal. It now waits (bounded) for the
+      in-flight exchange. Background jobs need no wait: they write to their own
+      branch and hold their report in memory.
+
+## Phase 21 — the value was right, the label was wrong
+
+- [x] **Fourteen consecutive failures, one cause.** Every one `text is required`,
+      with fourteen DIFFERENT argument fingerprints — so she was sending something,
+      varying it each time, and the field the tool reads was empty every time. She
+      had the label ("Submit Quiz") filed under a key the tool does not read, and
+      the two click tools are a step apart: `browser_click_text` takes `text`,
+      `browser_click_real` takes `selector`.
+- [x] The error was the loop generator. "text is required" states a rule and says
+      nothing about what was sent, so she read it, concluded she had complied,
+      changed something else, and failed identically. Telemetry stores an argument
+      HASH and never the arguments — deliberately — so the tool result is the only
+      channel that can carry this. `internal/skills/arguments.go` now names what
+      was sent, values included, plus what the tool takes and **which other tool
+      takes the misfiled key** — the clause that ends the ping-pong.
+- [x] It also SALVAGES the unambiguous case: one required field empty, one supplied
+      field the tool does not declare, so the value plainly belongs in the empty
+      slot. Used, with a note naming the right key. Driven by each tool's declared
+      schema, so all ~106 get both without one of them being edited.
+- [x] **The tab name was declared required on 20 browser tools and isn't** — a
+      blank name resolves to the tab she used last. That schema lie told her to
+      invent tab names (`no tab named "X"` was 31 of the baseline's failures) and
+      it left two slots empty, which defeated the salvage. `browser_open` keeps it:
+      there the name mints a new identifier.
+- [x] **She reported a quiz submitted after fourteen failures and zero successes.**
+      Worse than the failure it followed — a failure rate is visible and
+      recoverable, a confident false completion is neither. Everything needed was
+      known (the trail had every outcome); nothing compared the ANSWER against the
+      WORK. Verification was built per-tool and the final claim, the only part the
+      user reads, was unchecked. `internal/agent/truthful.go`.
+- [x] Two parts. Free: on any round where nothing has worked, the fact rides in the
+      volatile tail, so she writes with it in front of her and reads it as a reason
+      to change approach. Paid: three or more all-failing attempts and the answer is
+      re-asked with the facts stated. No phrase-matching either way — the condition
+      is a fact about the world, not a judgement about her wording.
+
 ## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222

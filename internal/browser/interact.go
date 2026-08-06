@@ -638,11 +638,26 @@ func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
       qsa('input,textarea').forEach(el => {
         const t = (el.type||'text').toLowerCase();
         if (t === 'hidden') return;
+        // Whether a secret is present, never what it is.
+        //
+        // Reporting el.value for every field put the user's actual password into
+        // a tool result — and from there into the archive on disk, and into the
+        // request sent to the model provider. Chrome had autofilled the field and
+        // inspect read it straight back off the DOM. The credential store is
+        // carefully never read for exactly this reason; this was the same secret
+        // arriving by the other door.
+        //
+        // The agent only ever needs to know whether the box is filled, which is
+        // what it uses to decide the form is ready to submit.
+        const secret = t === 'password' ||
+          /password|passwd|pwd|otp|one-time|cvv|cvc|security-?code/i
+            .test((el.name||'') + ' ' + (el.id||'') + ' ' + (el.autocomplete||''));
         let extra = '';
         if (t === 'checkbox' || t === 'radio') extra = el.checked ? ' | CHECKED' : ' | unchecked';
+        else if (secret) extra = el.value ? ' | filled' : ' | empty';
         else if (el.value) extra = ' | currently: ' + String(el.value).slice(0,30);
         if (el.required) extra += ' | required';
-        add(el, t === 'password' ? 'password' : 'field(' + t + ')', extra);
+        add(el, secret ? 'password' : 'field(' + t + ')', extra);
       });
 
       qsa('select').forEach(el => {
