@@ -52,6 +52,7 @@ variables always win.
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
+| `FREYA_WAKE` | Always-on wake-word listening. `off` means the mic is only ever opened by a deliberate Ctrl+Space. It had no off switch before, and was quiet only because starting the listener happened to fail — so fixing an unrelated setting silently turned on a microphone that records the room continuously. Push-to-talk is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
 
 State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `defects.jsonl`, `facts.json`,

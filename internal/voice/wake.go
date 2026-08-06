@@ -227,18 +227,20 @@ func (l *Listener) loop(ctx context.Context) {
 			continue
 		}
 
-		// One device, three claimants. A listener that cannot have it right now
-		// simply waits a beat — push-to-talk is capturing something the user
-		// deliberately asked to be heard, which outranks ambient listening.
-		if !l.Mic.Take("wake listener") {
-			time.Sleep(300 * time.Millisecond)
-			continue
-		}
-
 		// The recorder blocks until someone speaks and stops when they stop,
 		// so this loop costs nothing while the room is quiet.
 		path := filepath.Join(dir, fmt.Sprintf("freya-wake-%d.ogg", time.Now().UnixNano()))
 		recCtx, cancel := context.WithTimeout(ctx, maxUtterance+15*time.Second)
+
+		// Ambient, and interruptible. The listener holds the microphone almost
+		// continuously, so a press of the talk key nearly always lands while it is
+		// recording; handing over the cancel is what lets that press win. Losing
+		// this clip costs nothing — another starts a moment later.
+		if !l.Mic.Take("wake listener", Ambient, cancel) {
+			cancel()
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
 		err := l.Recorder.Record(recCtx, path)
 		cancel()
 		l.Mic.Release()

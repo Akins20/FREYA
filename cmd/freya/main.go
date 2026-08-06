@@ -455,13 +455,20 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		}
 
 		listening := "no voice"
-		if vs != nil && voiceErr == nil {
+		switch {
+		case voiceErr == nil && vs != nil && wakeDisabled(cfg):
+			// Asked for, not merely failed. Always-on listening records the room
+			// almost continuously, so it must be something the user chose rather
+			// than something that arrives when an unrelated setting is fixed.
+			listening = "wake word off (FREYA_WAKE=off), push-to-talk only"
+		case voiceErr == nil && vs != nil:
 			if err := startWakeListening(ctx, a, vs, ind); err != nil {
-				listening = "wake word off"
+				listening = "wake word unavailable: " + err.Error()
 			} else {
 				listening = `listening for "Freya"`
 			}
-		} else if voiceErr != nil {
+		}
+		if voiceErr != nil {
 			listening = "no voice: " + voiceErr.Error()
 		}
 

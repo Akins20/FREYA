@@ -196,3 +196,76 @@ func waitUntil(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition never became true")
 }
+
+// The measured complaint: the talk key stopped doing anything, and the mic
+// "opens by itself". The wake listener holds the device almost continuously —
+// record, transcribe, repeat — so a press nearly always landed while it was
+// recording, was refused by a first-come gate, and did nothing at all.
+func TestAKeyPressTakesTheMicFromAmbientListening(t *testing.T) {
+	m := NewMic()
+
+	// The listener is recording, and can be cut short.
+	recCtx, cancel := context.WithCancel(context.Background())
+	if !m.Take("wake listener", Ambient, cancel) {
+		t.Fatal("the listener could not take a free microphone")
+	}
+
+	// It must actually let go when interrupted, which is what the real loop does.
+	go func() { <-recCtx.Done(); m.Release() }()
+
+	done := make(chan bool, 1)
+	go func() { done <- m.Take("push-to-talk", Deliberate, nil) }()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("a deliberate key press was refused while ambient listening held the mic")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the key press hung waiting for the listener to yield")
+	}
+	if got := m.Holder(); got != "push-to-talk" {
+		t.Errorf("holder = %q, want push-to-talk", got)
+	}
+}
+
+// Ambient listening must never cut off a person who is mid-sentence.
+func TestAmbientNeverInterruptsAPerson(t *testing.T) {
+	m := NewMic()
+	if !m.Take("push-to-talk", Deliberate, nil) {
+		t.Fatal("could not take a free microphone")
+	}
+	if m.Take("wake listener", Ambient, func() {}) {
+		t.Error("ambient listening interrupted a deliberate recording")
+	}
+	m.Release()
+	if !m.Take("wake listener", Ambient, func() {}) {
+		t.Error("the listener could not resume once the mic was free")
+	}
+}
+
+// Two deliberate claims must not both get the device — that is the original
+// half-an-utterance failure, and it stays fixed.
+func TestTwoDeliberateClaimsDoNotOverlap(t *testing.T) {
+	m := NewMic()
+	if !m.Take("push-to-talk", Deliberate, nil) {
+		t.Fatal("could not take a free microphone")
+	}
+	if m.Take("session", Deliberate, nil) {
+		t.Error("a second recorder started on top of a person already speaking")
+	}
+	m.Release()
+}
+
+// A nil gate must behave exactly as before it existed, for the one-shot CLI and
+// for tests.
+func TestANilMicNeverBlocks(t *testing.T) {
+	var m *Mic
+	if !m.Take("anyone", Deliberate, nil) || !m.Take("anyone", Ambient, nil) {
+		t.Error("a nil mic refused a claim")
+	}
+	m.Release()
+	if m.Holder() != "" {
+		t.Error("a nil mic reported a holder")
+	}
+}

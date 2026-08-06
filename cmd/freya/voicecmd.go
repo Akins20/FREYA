@@ -837,3 +837,16 @@ func (v *voiceState) speak(ctx context.Context, pri voice.Priority, text string)
 	said, _ := v.speaker.Say(ctx, pri, text)
 	return said
 }
+
+// wakeDisabled reports whether the user has turned always-on listening off.
+//
+// Separate from "it failed to start", which is what the banner used to conflate:
+// a microphone that records the room continuously should be on because somebody
+// said so, not because nothing prevented it.
+func wakeDisabled(cfg *config.Config) bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.Wake)) {
+	case "off", "no", "false", "0", "deaf":
+		return true
+	}
+	return false
+}

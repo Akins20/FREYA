@@ -56,7 +56,7 @@ func (s *Session) Listen(ctx context.Context) (string, error) {
 	// A spoken confirmation asks a question and needs the answer; if the wake
 	// listener holds the device, waiting for it would capture the second half of
 	// a sentence, so this reports honestly that it heard nothing.
-	if !s.Mic.Take("session") {
+	if !s.Mic.Take("session", Deliberate, nil) {
 		return "", fmt.Errorf("the microphone is in use by the %s", s.Mic.Holder())
 	}
 	err := s.Recorder.Record(ctx, path)

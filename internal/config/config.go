@@ -86,6 +86,16 @@ type Config struct {
 	WhisperModel string
 	// PiperModel is the .onnx voice path for neural synthesis.
 	PiperModel string
+	// Wake controls always-on wake-word listening: "off" disables it, anything
+	// else leaves it on.
+	//
+	// It exists because there was no way to say no. Wake listening started
+	// whenever voice was available, and the only reason it was ever off was that
+	// starting it had FAILED — so restoring an unrelated setting silently turned
+	// on a microphone that records almost continuously, which is not a thing
+	// software should do by accident. Push-to-talk is unaffected either way.
+	Wake string
+
 	// WakeAck is how a detected wake word is acknowledged: chime, speak,
 	// both or silent.
 	WakeAck string
@@ -127,6 +137,7 @@ func Load() (*Config, error) {
 		WhisperModel: os.Getenv("FREYA_WHISPER_MODEL"),
 		PiperModel:   os.Getenv("FREYA_PIPER_MODEL"),
 		VoicePolicy:  os.Getenv("FREYA_VOICE_POLICY"),
+		Wake:         os.Getenv("FREYA_WAKE"),
 		WakeAck:      os.Getenv("FREYA_WAKE_ACK"),
 	}
 

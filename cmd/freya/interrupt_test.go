@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/akins/jarvis/internal/config"
 )
 
 // The failure this whole file exists for: she went down a wrong path, and the
@@ -183,4 +185,24 @@ func TestTheStopSaysWhatItStopped(t *testing.T) {
 func resetTurns() {
 	stopCurrentTurn()
 	mic.Release()
+}
+
+// Always-on listening must be something the user chose, not something that
+// arrives when an unrelated setting is fixed.
+//
+// It had no off switch at all: wake listening started whenever voice was
+// available, and the only reason it was ever quiet was that starting it had
+// FAILED. Restoring an API key therefore turned on a microphone that records the
+// room almost continuously.
+func TestWakeListeningCanBeTurnedOff(t *testing.T) {
+	for _, off := range []string{"off", "OFF", "no", "false", "0", "deaf", " off "} {
+		if !wakeDisabled(&config.Config{Wake: off}) {
+			t.Errorf("FREYA_WAKE=%q did not turn always-on listening off", off)
+		}
+	}
+	for _, on := range []string{"", "on", "yes", "true"} {
+		if wakeDisabled(&config.Config{Wake: on}) {
+			t.Errorf("FREYA_WAKE=%q silently disabled listening", on)
+		}
+	}
 }

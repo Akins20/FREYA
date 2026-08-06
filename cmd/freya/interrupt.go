@@ -54,7 +54,7 @@ var (
 )
 
 // takeMic reports whether the caller got the microphone.
-func takeMic() bool { return mic.Take("push-to-talk") }
+func takeMic() bool { return mic.Take("push-to-talk", voice.Deliberate, nil) }
 
 func releaseMic() { mic.Release() }
 
