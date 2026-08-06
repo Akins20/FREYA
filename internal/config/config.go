@@ -29,6 +29,14 @@ type Config struct {
 	// ProjectsDir is what the dev skills scan for repositories.
 	ProjectsDir string
 
+	// SourceDir is her own repository, for the self-repair loop.
+	//
+	// Explicit because it cannot be inferred: the daemon starts from the home
+	// directory and works in ~/freya-workspace, neither of which is anywhere near
+	// the checkout. Empty disables the loop rather than guessing — a consult
+	// pointed at the wrong tree would read someone else's code and change it.
+	SourceDir string
+
 	// WorkDir is her working directory — the one place file and shell tools both
 	// anchor to, so a file she writes is where a command she runs looks for it.
 	// She fans out into subfolders from here. Empty leaves the process where it
@@ -105,6 +113,7 @@ func Load() (*Config, error) {
 		DataDir:         os.Getenv("FREYA_DATA_DIR"),
 		WorkDir:         os.Getenv("FREYA_WORK_DIR"),
 		ProjectsDir:     os.Getenv("FREYA_PROJECTS_DIR"),
+		SourceDir:       os.Getenv("FREYA_SOURCE_DIR"),
 		Address:         os.Getenv("FREYA_ADDRESS"),
 		Verbose:         isTruthy(os.Getenv("FREYA_VERBOSE")),
 		DryRun:          isTruthy(os.Getenv("FREYA_DRY_RUN")),
