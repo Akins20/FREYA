@@ -71,7 +71,12 @@ func BuildIndex(s *Store) *Index {
 		idx.Add(e.ID, "episode", e.Summary+" "+strings.Join(e.Topics, " "))
 	}
 	for _, f := range s.Facts() {
-		idx.Add(f.ID, "fact", f.Key+" "+f.Text)
+		// Indexed under the KEY, not the opaque id, because the key is the handle
+		// every fact tool takes — memory_remember updates by it, memory_forget
+		// deletes by it. Indexing by id meant a recall could show a fact and still
+		// leave her with no way to name it, so every key she used was invented, and
+		// an invented key that collides silently replaces a real fact.
+		idx.Add(f.Key, "fact", f.Key+" "+f.Text)
 	}
 	return idx
 }

@@ -34,6 +34,39 @@ func (ts *TestServer) registerChallenges(mux *http.ServeMux) {
 	page("/c/search", challengeSearch)
 	page("/c/accordion", challengeAccordion)
 	page("/c/afteraction", challengeAfterAction)
+	page("/c/wrapper", challengeWrapper)
+
+	// The URL-fabrication trap.
+	//
+	// Every id returns a real, plausible page with a real title — exactly like the
+	// portal that cost her a session, where walking quiz ids by pattern produced
+	// forty rounds of HTTP 200 and nothing reached. Only the id actually linked
+	// from the list carries the token, and that id is unguessable, so the only way
+	// through is to read the list and follow what is there. A run that fabricates
+	// ids will look busy and succeed at nothing, which is the point.
+	mux.HandleFunc("/c/catalogue", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<!doctype html><html><head><title>Catalogue</title></head><body>
+<h1>Reading list</h1>
+<p>Open the entry for <b>Unit 6</b> and read the access code printed on it.</p>
+<ul>
+ <li><a href="/c/entry?id=%d">Unit 4 — Inventory</a></li>
+ <li><a href="/c/entry?id=%d">Unit 5 — Receivables</a></li>
+ <li><a href="/c/entry?id=%d">Unit 6 — Depreciation</a></li>
+</ul></body></html>`, ts.decoyA, ts.decoyB, ts.realEntry)
+	})
+	mux.HandleFunc("/c/entry", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		id := r.URL.Query().Get("id")
+		// Any id at all renders a believable entry. That is the trap: a page
+		// loading proves nothing.
+		body := "<p>This entry has no access code. Go back to the reading list and open the right one.</p>"
+		if id == fmt.Sprint(ts.realEntry) {
+			body = "<p>Access code: " + catalogueToken + "</p>"
+		}
+		fmt.Fprintf(w, `<!doctype html><html><head><title>Entry %s</title></head><body>
+<h1>Course entry %s</h1>%s</body></html>`, id, id, body)
+	})
 }
 
 // ChallengeBenchmarks builds one benchmark per hiding-place. Each asks for the
@@ -53,8 +86,22 @@ func (ts *TestServer) ChallengeBenchmarks() []Benchmark {
 		{"content-behind-search", "/c/search", "SEARCH-8827", "a value that only appears after typing a query to filter a list", 4},
 		{"content-in-an-accordion", "/c/accordion", "ACCORD-2276", "a value inside a collapsed panel you must expand", 3},
 		{"content-after-an-action", "/c/afteraction", "ACTION-5590", "a value that loads only after you press a Load button and wait", 4},
+		{"control-inside-a-wrapper", "/c/wrapper", "WRAPPER-3390", "a value revealed by a Start Quiz! button that sits inside a much wider wrapper element", 5},
 	}
-	var out []Benchmark
+	// The URL-fabrication benchmark. Deliberately NOT in the table above: its
+	// prompt must name only the front page, so the only route to the token is
+	// reading the list and following the link on it. Guessing ids returns real
+	// pages that say nothing, which is exactly the trap it exists to punish.
+	out := []Benchmark{{
+		Name:       "reach-by-link-not-by-guessing",
+		Category:   "browser-edge",
+		Difficulty: 5,
+		Timeout:    5 * time.Minute,
+		Prompt: fmt.Sprintf("Open %s/c/catalogue in the browser. Find the entry for Unit 6, open it, "+
+			"and tell me the access code printed on it. Entry addresses are not guessable — "+
+			"follow what is on the page.", ts.URL),
+		Check: All(ReplyHas(catalogueToken), NoThrash(3)),
+	}}
 	for _, c := range cases {
 		c := c
 		out = append(out, Benchmark{
@@ -157,4 +204,27 @@ const challengeAfterAction = `<!doctype html><html><body>
 <div id="out">Not loaded yet.</div>
 <script>function go(){document.getElementById('out').textContent='Working…';
 setTimeout(()=>{document.getElementById('out').textContent='Your token is ACTION-5590';},900);}</script>
+</body></html>`
+
+// catalogueToken proves she followed the real link rather than guessing an id.
+const catalogueToken = "CATALOG-5512"
+
+// challengeWrapper reproduces the control that defeated a trusted click: a wide
+// wrapper element whose tag name contains "button" and whose text is the button's
+// own text, with the real, small button floated to one edge. Aiming at the
+// wrapper's centre hits empty space, the page does not move, and the click
+// reports success — which is how "Start Quiz!" appeared to do nothing.
+const challengeWrapper = `<!doctype html><html><head><meta charset="utf-8"><title>Wrapper</title>
+<style>
+  #bar { display:block; width: 900px; height: 70px; border: 1px solid #ccc; }
+  #go  { float: left; width: 150px; height: 40px; margin-top: 15px; }
+  #out { margin-top: 20px; }
+</style></head>
+<body>
+<h1>Attempt summary</h1>
+<d2l-floating-buttons id="bar">
+  <button type="button" id="go"
+     onclick="document.getElementById('out').textContent='Access code: WRAPPER-3390'">Start Quiz!</button>
+</d2l-floating-buttons>
+<div id="out"></div>
 </body></html>`

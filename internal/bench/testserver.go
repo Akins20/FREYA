@@ -2,6 +2,7 @@ package bench
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -56,9 +57,12 @@ func (p *PortalState) Reset() {
 type TestServer struct {
 	URL   string
 	State *PortalState
-	http  *http.Server
-	ln    net.Listener
-	once  sync.Once
+	// Unguessable entry ids for the URL-fabrication challenge, chosen per run so
+	// no amount of pattern-walking finds the real one.
+	realEntry, decoyA, decoyB int
+	http                      *http.Server
+	ln                        net.Listener
+	once                      sync.Once
 }
 
 // StartPortal launches the fake portal on a free localhost port.
@@ -71,6 +75,10 @@ func StartPortal() (*TestServer, error) {
 		URL:   fmt.Sprintf("http://127.0.0.1:%d", ln.Addr().(*net.TCPAddr).Port),
 		State: &PortalState{},
 		ln:    ln,
+		// Wide, random and far apart, so incrementing from one never reaches another.
+		realEntry: 100000 + rand.Intn(800000),
+		decoyA:    100000 + rand.Intn(800000),
+		decoyB:    100000 + rand.Intn(800000),
 	}
 
 	mux := http.NewServeMux()

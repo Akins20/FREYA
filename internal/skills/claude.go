@@ -88,7 +88,16 @@ func RegisterClaude(r *Registry, g *guard.Guard, c *claude.Client) {
 			if !ok {
 				return "", fmt.Errorf("no Claude session matching %q — use claude_sessions to see them", ref)
 			}
-			return delegate(ctx, g, c, args, s.ID)
+			// Find matches on an id prefix OR a label substring, and breaks ties by
+			// most-recently-used — so a half-remembered reference can resume an
+			// entirely different thread, which then answers fluently about the wrong
+			// codebase. Say which one actually woke up.
+			out, err := delegate(ctx, g, c, args, s.ID)
+			if err != nil || strings.EqualFold(strings.TrimSpace(ref), s.ID) {
+				return out, err
+			}
+			return fmt.Sprintf("%s\n(Resumed session %s%s — the closest match to %q, not an exact one.)",
+				out, s.ID, labelSuffix(s.Label), ref), nil
 		},
 	})
 
@@ -311,4 +320,14 @@ func RegisterClaudeAdvice(r *Registry, g *guard.Guard, c *claude.Client) {
 			}, "")
 		},
 	})
+}
+
+// labelSuffix renders a session's label for disclosure, or nothing when it has
+// none. Used when a fuzzy reference resumed a different thread than the one
+// named, so the reply says which one actually woke up.
+func labelSuffix(label string) string {
+	if strings.TrimSpace(label) == "" {
+		return ""
+	}
+	return " (" + label + ")"
 }

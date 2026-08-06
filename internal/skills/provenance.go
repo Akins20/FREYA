@@ -41,8 +41,43 @@ import (
 // observed, because it does not exist yet. Referencing an EXISTING thing she was
 // never shown is a guess. The ledger only ever constrains the second.
 type Ledger struct {
-	mu   sync.Mutex
-	seen map[IDKind]map[string]bool
+	mu      sync.Mutex
+	seen    map[IDKind]map[string]bool
+	guesses int
+}
+
+// BeginExchange restores the guess budget for a new request, while keeping
+// everything she has been shown.
+//
+// The two halves of this ledger have opposite lifetimes, and conflating them
+// reintroduced the exact bug it exists to prevent. What she has SEEN is knowledge
+// and must accumulate: a URL read an hour ago is still a URL she read. The
+// BUDGET is about one thread of work going wrong — forty rounds walking ids — and
+// a request that has not started yet cannot be doing that.
+//
+// Left process-wide, the budget was spent within minutes of the daemon starting
+// and never came back, so every later reconstruction was refused on the strength
+// of two guesses made in an unrelated conversation. That is the same stall as
+// before, arriving slowly instead of at once.
+func (l *Ledger) BeginExchange() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.guesses = 0
+	l.mu.Unlock()
+}
+
+// spendGuess counts an unobserved id-carrying address and returns the running
+// total for this exchange.
+func (l *Ledger) spendGuess() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.guesses++
+	return l.guesses
 }
 
 // IDKind separates the namespaces, so a path cannot vouch for a URL.
@@ -127,55 +162,99 @@ func (l *Ledger) harvest(text string) {
 	l.Observe(IDURL, found...)
 }
 
-// composedURL reports whether a URL looks composed rather than observed, and is
-// the rule that catches the quiz-id walk without blocking ordinary work.
+// composedURL reports whether a URL carries identifiers she could only have
+// invented — and is deliberately narrow, because the first version of this rule
+// was not and it did real damage.
 //
-// Walking in a site's front door is legitimate: an origin, or an origin with a
-// bare path, is something anyone can type and she is meant to be able to explore.
-// Teleporting to a deep link she was never shown is not — a path with several
-// segments, or any query string, encodes identifiers she cannot know unless the
-// page gave them to her. That single distinction blocks the failure and permits
-// everything a person would actually do.
+// That version treated any path of more than one segment as composed, which
+// refused her "/d2l/home" — a portal's front door, no parameters at all. She
+// could not get in, wandered onto a different domain looking for another way,
+// and lost the session. A guard that blocks ordinary navigation is worse than
+// the disease it treats.
+//
+// So: path depth is not evidence of anything. Plenty of real pages are deep, and
+// a link she follows can land anywhere. What she cannot invent is a QUERY
+// PARAMETER carrying an id — qi=9603, ou=8359 — because those come from the
+// page or they come from nowhere. Numbers are the tell: a numeric parameter is
+// an identifier, and identifiers are the thing she walks by pattern. A query of
+// words (a search, a language, a filter) is composable and always allowed.
 func composedURL(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" {
-		return false // not a URL we can reason about; leave it alone
+	if err != nil || u.Host == "" || u.RawQuery == "" {
+		return false
 	}
-	if u.RawQuery != "" {
-		return true
-	}
-	segments := 0
-	for _, s := range strings.Split(strings.Trim(u.Path, "/"), "/") {
-		if s != "" {
-			segments++
+	for name, values := range u.Query() {
+		if composableParam[strings.ToLower(name)] {
+			continue // pagination and sizing are things anyone works out for themselves
+		}
+		for _, v := range values {
+			if v == "" {
+				continue
+			}
+			numeric := true
+			for _, r := range v {
+				if r < '0' || r > '9' {
+					numeric = false
+					break
+				}
+			}
+			if numeric {
+				return true
+			}
 		}
 	}
-	return segments > 1
+	return false
 }
 
-// CheckURL refuses a deep link she was never shown, and says where the real ones
-// are. Returns nil when the URL is observed, shallow, or there is no ledger.
-func CheckURL(ctx context.Context, raw string) error {
+// composableParam names the numeric parameters a person legitimately reasons
+// about. Walking pages is navigation; walking record ids is guessing.
+var composableParam = map[string]bool{
+	"page": true, "p": true, "offset": true, "start": true,
+	"limit": true, "size": true, "per_page": true, "perpage": true,
+	"count": true, "n": true, "rows": true, "pagesize": true,
+}
+
+// guessBudget is how many unobserved id-carrying URLs may be tried in one
+// exchange before the next is refused. Reset per exchange by BeginExchange.
+//
+// Not zero, and that is the lesson. A hard refusal on the first attempt blocked
+// her from a portal's own home page and cost a session; sometimes a URL is
+// legitimately reconstructed, and being wrong once is cheap. What is not cheap is
+// being wrong forty times in a row, which is what actually happened. So the first
+// two are allowed with the truth attached, and the pattern-walk is stopped.
+const guessBudget = 2
+
+// CheckURL judges a URL against what she has actually been shown.
+//
+// It returns a note to attach when the URL carries ids she was never given — a
+// warning, not a veto — and an error only once she has spent the budget, because
+// by then it is a pattern-walk rather than a reconstruction.
+func CheckURL(ctx context.Context, raw string) (note string, err error) {
 	led := ScopeFrom(ctx).Ledger()
 	if led == nil || raw == "" {
-		return nil
+		return "", nil
 	}
 	if !composedURL(raw) || led.Seen(IDURL, raw) {
-		return nil
+		return "", nil
 	}
-	// Tolerate the same URL with a trailing slash or fragment difference.
+	// Tolerate a trailing slash or a fragment difference.
 	trimmed := strings.TrimRight(strings.SplitN(raw, "#", 2)[0], "/")
 	if led.Seen(IDURL, trimmed) || led.Seen(IDURL, trimmed+"/") {
-		return nil
+		return "", nil
 	}
 
-	err := fmt.Errorf("refusing to open %q: that is a deep link with parameters you have not been "+
-		"shown, so it is a guess. A page loading proves nothing — a wrong id returns a real page with a "+
-		"real title, which is how a whole session can be spent walking ids that were never right. "+
-		"Open the site's front page and follow the links on it, or use one you actually read", raw)
-
-	if known := led.Known(IDURL, 12); len(known) > 0 {
-		return withOptions(err, known)
+	if led.spendGuess() > guessBudget {
+		e := fmt.Errorf("refusing %q: that is the %drd address with invented ids in this exchange, "+
+			"which is a pattern-walk, not navigation. A page loading proves nothing — a wrong id returns "+
+			"a real page with a real title, which is how forty rounds get spent reaching nothing. Read a "+
+			"page and follow a link on it", raw, guessBudget+1)
+		if known := led.Known(IDURL, 10); len(known) > 0 {
+			return "", withOptions(e, known)
+		}
+		return "", e
 	}
-	return err
+
+	return "\n(Heads up: the ids in that address were not on any page you have read, so this is a " +
+		"reconstruction. If it is not the page you expected, go back and follow a link rather than " +
+		"adjusting the numbers.)", nil
 }

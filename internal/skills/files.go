@@ -273,13 +273,26 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 		Reason: argString(args, "reason"),
 	}
 	return f.guard.Run(ctx, action, func(context.Context) (string, error) {
+		// Creating missing parents is right for a genuinely new file, and it is
+		// also how a mistyped path quietly manufactures a whole directory tree and
+		// files the work somewhere nobody will look. Both writes report "Wrote N
+		// bytes" identically, so say when the folder had to be invented.
+		madeParent := false
 		if dir := filepath.Dir(path); dir != "" {
+			if _, err := os.Stat(dir); err != nil {
+				madeParent = true
+			}
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return "", fmt.Errorf("create parent: %w", err)
 			}
 		}
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return "", err
+		}
+		if madeParent {
+			return fmt.Sprintf("Wrote %d bytes to %s.\n(%s did not exist, so it was created. "+
+				"If you expected that folder to be there already, this went somewhere new.)",
+				len(content), path, filepath.Dir(path)), nil
 		}
 		return fmt.Sprintf("Wrote %d bytes to %s.", len(content), path), nil
 	})

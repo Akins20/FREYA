@@ -36,6 +36,17 @@ func RegisterMemory(r *Registry, store *memory.Store, index *memory.Index) {
 			if key == "" || text == "" {
 				return "", fmt.Errorf("both key and text are required")
 			}
+			// Reusing a key REPLACES the fact stored under it, and slugify collapses
+			// punctuation and spacing — so "CS 401 deadline", "cs-401-deadline" and
+			// "CS401: deadline" are all one key. A near-miss therefore destroys a fact
+			// she never saw, silently. Say what was displaced.
+			var replaced string
+			for _, existing := range store.Facts() {
+				if existing.Key == key && existing.Text != text {
+					replaced = existing.Text
+					break
+				}
+			}
 			f := memory.Fact{
 				Key:    key,
 				Text:   text,
@@ -47,6 +58,11 @@ func RegisterMemory(r *Registry, store *memory.Store, index *memory.Index) {
 			}
 			// Index immediately so it is retrievable within this same session.
 			index.Add(f.Key, "fact", f.Key+" "+f.Text)
+			if replaced != "" {
+				return fmt.Sprintf("Remembered [%s].\n(That key already held something else, now replaced: %q. "+
+					"If they were different facts, store the new one under its own key and put the old one back.)",
+					key, clip(replaced, 200)), nil
+			}
 			if f.Pinned {
 				return fmt.Sprintf("Remembered [%s] as a standing directive.", key), nil
 			}
@@ -73,8 +89,16 @@ func RegisterMemory(r *Registry, store *memory.Store, index *memory.Index) {
 			if len(hits) == 0 {
 				return "Nothing in memory matches that.", nil
 			}
+			// Show the key for facts. Without it, memory_remember's key argument had
+			// no legitimate source anywhere in the toolset — every key she supplied
+			// was necessarily invented, and an invented key that happens to collide
+			// overwrites a real fact.
 			var sb strings.Builder
 			for _, h := range hits {
+				if h.Kind == "fact" && h.ID != "" {
+					fmt.Fprintf(&sb, "- (fact) [%s] %s\n", h.ID, clip(h.Text, 500))
+					continue
+				}
 				fmt.Fprintf(&sb, "- (%s) %s\n", h.Kind, clip(h.Text, 500))
 			}
 			return strings.TrimSpace(sb.String()), nil

@@ -181,9 +181,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			name := argString(args, "name")
 			url := argString(args, "url")
 			// Opening mints the tab every later browser call works on, so a guessed
-			// deep link here poisons the whole session's working surface.
-			if err := CheckURL(ctx, url); err != nil {
-				return "", err
+			// address here poisons the whole session's working surface.
+			guessNote, gerr := CheckURL(ctx, url)
+			if gerr != nil {
+				return "", gerr
 			}
 			bctx := browser.ContextGuest
 			if strings.EqualFold(argString(args, "context"), "auth") {
@@ -235,8 +236,8 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 
 				tabs.put(&openTab{name: name, ctx: bctx, target: target,
 					client: client, opened: time.Now(), lastURL: current})
-				return fmt.Sprintf("Tab %q open in %s context: %q\n%s",
-					name, bctx, title, current), nil
+				return fmt.Sprintf("Tab %q open in %s context: %q\n%s%s",
+					name, bctx, title, current, guessNote), nil
 			})
 		},
 	})
@@ -248,7 +249,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":  {Type: "string", Description: "Tab name."},
 				"limit": {Type: "number", Description: "Maximum characters, default 12000."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
@@ -274,7 +275,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "Tab name."},
 				"url":  {Type: "string", Description: "Where to go."},
-			}, "name", "url"),
+			}, "url"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, tabNote, err := tabNoted(tabs, args)
@@ -282,11 +283,12 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			url := argString(args, "url")
-			// A deep link she was never shown is a guess, and a guess here SUCCEEDS:
-			// a wrong id returns a real page with a real title, which is how forty
-			// rounds get spent walking ids that were never right.
-			if err := CheckURL(ctx, url); err != nil {
-				return "", err
+			// Invented ids here SUCCEED — a wrong one returns a real page with a real
+			// title — so the warning rides along with the result, and a sustained
+			// pattern-walk is stopped outright.
+			guessNote, gerr := CheckURL(ctx, url)
+			if gerr != nil {
+				return "", gerr
 			}
 			action := guard.Action{Kind: guard.KindBrowser, Command: "navigate " + url,
 				Reason: fmt.Sprintf("navigate tab %q (%s context)", tab.name, tab.ctx)}
@@ -297,7 +299,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				title, _ := tab.client.Title(ctx)
 				current, _ := tab.client.URL(ctx)
 				tab.lastURL = current
-				return fmt.Sprintf("%q\n%s%s", title, current, tabNote), nil
+				return fmt.Sprintf("%q\n%s%s%s", title, current, tabNote, guessNote), nil
 			})
 		},
 	})
@@ -314,7 +316,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "A selector copied verbatim from a browser_inspect you just ran — not composed, remembered, or guessed. Plain CSS only (no jQuery :contains())."},
-			}, "name", "selector"),
+			}, "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
@@ -353,7 +355,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "Tab name."},
 				"text": {Type: "string", Description: "The visible text to click, e.g. 'Work To Do' or 'Self-Quiz Unit 5'. An exact match wins; otherwise the closest label containing it."},
-			}, "name", "text"),
+			}, "text"),
 		},
 		Mutates:     true,
 		Observe:     tabs.observe,
@@ -415,7 +417,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector for the field."},
 				"value":    {Type: "string", Description: "Text to enter. Never a secret."},
-			}, "name", "selector", "value"),
+			}, "selector", "value"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
@@ -452,7 +454,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":  {Type: "string", Description: "Tab name."},
 				"limit": {Type: "number", Description: "Maximum links, default 60."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
@@ -478,7 +480,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"renders as images or the layout matters.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "Tab name."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
@@ -529,7 +531,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Description: "Close a tab.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "Tab name."},
-			}, "name"),
+			}),
 		},
 		Handler: func(_ context.Context, args map[string]any) (string, error) {
 			name := argString(args, "name")
@@ -547,9 +549,15 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		Tool: llm.Tool{
 			Name: "browser_sync_logins",
 			Description: "Refresh the auth browser context from the user's real Chrome " +
-				"profile. Their logins here are a snapshot — signing into something new " +
-				"in their normal browser does not appear until this runs. Chrome must be " +
-				"closed first.",
+				"profile, copying their live sessions across. Their logins here are a " +
+				"snapshot — signing into something new in their normal browser does not " +
+				"appear until this runs, and a session that has since expired here may " +
+				"still be alive there.\n\n" +
+				"Reach for this whenever a site says signed-out and signing in is awkward: " +
+				"a session that expired in your snapshot, or a site with several saved " +
+				"accounts where Chrome autofills the wrong password. It needs no password " +
+				"at all, which is why it works where filling the form does not. Chrome " +
+				"must be closed first, so ask the user to close it.",
 			Params: llm.ObjectSchema(nil),
 		},
 		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
