@@ -98,6 +98,15 @@ type Listener struct {
 	// TempDir holds captured segments.
 	TempDir string
 
+	// Mic arbitrates the one input device against push-to-talk and the spoken
+	// confirmation prompt. Nil means no arbitration, which is how the tests and
+	// the one-shot CLI run.
+	Mic *Mic
+	// Busy reports that she is speaking. The listener stands down while it is
+	// true, because a microphone left open during synthesis records her own voice
+	// and transcribes it as though someone had said it.
+	Busy func() bool
+
 	// OnWake fires when the wake word is heard.
 	OnWake func(Wake)
 	// OnHeard fires for every transcript, wake word or not, for tracing.
@@ -210,12 +219,29 @@ func (l *Listener) loop(ctx context.Context) {
 			}
 		}
 
+		// Stand down while she is talking. Recording through synthesis captures her
+		// own voice and hands it to the transcriber, which then reports that
+		// somebody said whatever she just said.
+		if l.Busy != nil && l.Busy() {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+
+		// One device, three claimants. A listener that cannot have it right now
+		// simply waits a beat — push-to-talk is capturing something the user
+		// deliberately asked to be heard, which outranks ambient listening.
+		if !l.Mic.Take("wake listener") {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+
 		// The recorder blocks until someone speaks and stops when they stop,
 		// so this loop costs nothing while the room is quiet.
 		path := filepath.Join(dir, fmt.Sprintf("freya-wake-%d.ogg", time.Now().UnixNano()))
 		recCtx, cancel := context.WithTimeout(ctx, maxUtterance+15*time.Second)
 		err := l.Recorder.Record(recCtx, path)
 		cancel()
+		l.Mic.Release()
 
 		if err != nil {
 			os.Remove(path)

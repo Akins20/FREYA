@@ -15,6 +15,8 @@ type Session struct {
 	Recognizer Recognizer
 	Synth      Synthesizer
 
+	// Mic arbitrates the one input device. Nil means no arbitration.
+	Mic *Mic
 	// TempDir holds recordings. Empty means the OS temp directory.
 	TempDir string
 	// KeepRecordings retains audio files instead of deleting them, for debugging.
@@ -51,7 +53,15 @@ func (s *Session) Listen(ctx context.Context) (string, error) {
 	if s.OnListening != nil {
 		s.OnListening()
 	}
-	if err := s.Recorder.Record(ctx, path); err != nil {
+	// A spoken confirmation asks a question and needs the answer; if the wake
+	// listener holds the device, waiting for it would capture the second half of
+	// a sentence, so this reports honestly that it heard nothing.
+	if !s.Mic.Take("session") {
+		return "", fmt.Errorf("the microphone is in use by the %s", s.Mic.Holder())
+	}
+	err := s.Recorder.Record(ctx, path)
+	s.Mic.Release()
+	if err != nil {
 		return "", fmt.Errorf("record: %w", err)
 	}
 	if !fileHasAudio(path) {
