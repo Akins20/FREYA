@@ -40,7 +40,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":  {Type: "string", Description: "Tab name."},
 				"limit": {Type: "integer", Description: "Maximum elements to list (default 60)."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -62,7 +62,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector for the dropdown."},
 				"option":   {Type: "string", Description: "The option's visible text."},
-			}, "name", "selector", "option"),
+			}, "selector", "option"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -86,7 +86,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector for the checkbox or radio."},
 				"checked":  {Type: "boolean", Description: "True to tick, false to untick. Default true."},
-			}, "name", "selector"),
+			}, "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -117,7 +117,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"to":     {Type: "string", Description: "'top', 'bottom', or a CSS selector to scroll to."},
 				"pixels": {Type: "integer", Description: "Pixels to scroll down; negative for up. Ignored if 'to' is given."},
 				"inside": {Type: "string", Description: "CSS selector of a scrollable panel, to scroll that instead of the page."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -149,7 +149,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"key":  {Type: "string", Description: "The key, e.g. 'enter' or 'ctrl+a'."},
 				"selector": {Type: "string",
 					Description: "Optional: focus this element first."},
-			}, "name", "key"),
+			}, "key"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -189,7 +189,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector for the field."},
 				"text":     {Type: "string", Description: "What to type."},
-			}, "name", "selector", "text"),
+			}, "selector", "text"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -221,7 +221,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "An EXACT CSS selector from browser_inspect. Not made up."},
-			}, "name", "selector"),
+			}, "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -256,7 +256,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector."},
-			}, "name", "selector"),
+			}, "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -281,7 +281,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"selector": {Type: "string", Description: "CSS selector to wait for."},
 				"text":     {Type: "string", Description: "Or a phrase to wait for."},
 				"seconds":  {Type: "integer", Description: "How long to wait (default 15)."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -313,7 +313,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "A selector inside the form. Defaults to the first form."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -343,7 +343,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "CSS selector."},
-			}, "name", "selector"),
+			}, "selector"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
@@ -368,7 +368,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":      {Type: "string", Description: "Tab name."},
 				"direction": {Type: "string", Description: "'back', 'forward' or 'reload'. Default 'back'."},
-			}, "name"),
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)

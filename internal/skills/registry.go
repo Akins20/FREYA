@@ -108,6 +108,17 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 		return "", fmt.Errorf("no such skill %q", name)
 	}
 
+	// Reconcile the arguments against what the tool declares, before anything
+	// runs. A value under the wrong key is the difference between one recovered
+	// call and forty identical failures — see arguments.go.
+	args, argNote, err := r.checkArgs(s, args)
+	if err != nil {
+		if s.Affordances != nil {
+			return "", withOptions(err, s.Affordances(ctx))
+		}
+		return "", err
+	}
+
 	// Sample the world first. Only for skills that change it — a read has nothing
 	// to verify, and the sample costs a round-trip to the page.
 	var before string
@@ -116,10 +127,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 		before = s.Observe(ctx)
 	}
 
-	var (
-		out Outcome
-		err error
-	)
+	var out Outcome
 	if s.Act != nil {
 		out, err = s.Act(ctx, args)
 	} else {
@@ -153,7 +161,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 			out.Changed = &changed
 		}
 	}
-	return out.Render(), nil
+	return out.Render() + argNote, nil
 }
 
 // AffordancesFor reports what a named skill says is available right now, or nil.
