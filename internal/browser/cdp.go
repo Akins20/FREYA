@@ -86,6 +86,10 @@ type Client struct {
 	nextID  atomic.Int64
 	pending map[int64]chan json.RawMessage
 	closed  bool
+
+	// events records what the browser did outside the page — downloads, dialogs,
+	// windows opening. See events.go for why the DOM alone is not enough.
+	events *eventLog
 }
 
 // command is one CDP request.
@@ -220,6 +224,7 @@ func Connect(c Context, target *Target) (*Client, error) {
 		Context: c,
 		conn:    conn,
 		pending: map[int64]chan json.RawMessage{},
+		events:  &eventLog{},
 	}
 	go client.readLoop()
 	return client, nil
@@ -243,7 +248,17 @@ func (c *Client) readLoop() {
 			continue
 		}
 		if r.ID == 0 {
-			continue // an event; nothing subscribes yet
+			// An event. These carry everything the DOM cannot show — a download
+			// starting, a dialog blocking the renderer, a click that opened a new
+			// window — and they used to be dropped on the floor. See events.go.
+			var ev struct {
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+			}
+			if json.Unmarshal(data, &ev) == nil && ev.Method != "" {
+				c.handleEvent(ev.Method, ev.Params)
+			}
+			continue
 		}
 
 		c.mu.Lock()
@@ -275,10 +290,20 @@ func (c *Client) failAll() {
 
 // Call sends a CDP command and waits for its reply.
 func (c *Client) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	// A client with no socket is a bug somewhere else, but crashing the process
+	// over it is not the way to report one — and the dialog handler calls this
+	// from a goroutine, where a panic takes down everything rather than failing
+	// one action.
+	if c == nil || c.conn == nil {
+		return nil, fmt.Errorf("browser: not connected")
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, fmt.Errorf("browser: connection closed")
+	}
+	if c.pending == nil {
+		c.pending = map[int64]chan json.RawMessage{}
 	}
 	id := c.nextID.Add(1)
 	ch := make(chan json.RawMessage, 1)

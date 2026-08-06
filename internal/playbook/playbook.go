@@ -35,6 +35,82 @@ type Skill struct {
 
 // skills is the library, keyed by name.
 var skills = map[string]Skill{
+	"apps": {
+		Name:    "apps",
+		Summary: "web applications: files, menus, selection, uploads, downloads, dialogs",
+		Body: `WORKING A WEB APPLICATION
+
+Drive, a file manager, a mail client, a project board. These are programs that
+happen to be drawn in a page, and most of what they can do is not a button
+sitting in the open. Reading the page and clicking links is enough for a
+document; it is not enough for an application.
+
+1. WHEN YOU CAN SEE A THING BUT NOT A BUTTON FOR WHAT YOU WANT — RIGHT-CLICK IT.
+   Download, Rename, Copy link, Remove, Share, Open in new tab: in most
+   applications these live ONLY in the context menu. browser_right_click on the
+   file name, then READ THE PAGE — apps like Drive draw their menu into the page
+   and you then click an item by its text.
+   If the page looks unchanged afterwards, the browser drew its own menu
+   instead. That one is not page content and nothing can click it, so press
+   escape and take another route. Do not right-click again.
+
+2. ONE CLICK SELECTS. TWO CLICKS OPEN.
+   In any list, grid or tree, a single click usually only highlights the row —
+   which is why one click so often looks like it did nothing. browser_double_click
+   is how you open a folder or a file.
+
+3. SEVERAL THINGS AT ONCE: CLICK THE FIRST, THEN browser_select_also.
+   "Download the two pictures" is one action on two files, not two actions.
+   Click the first normally, browser_select_also for each of the others
+   (extend=true for a whole range), and the application will then offer a
+   command that applies to all of them. Many apps offer bulk commands ONLY when
+   more than one thing is selected.
+
+4. UPLOADS DO NOT GO THROUGH THE PRETTY BUTTON.
+   Clicking Attach or Upload opens the operating system's file chooser, which is
+   not part of the page and which nothing here can drive — it will simply sit
+   there. Use browser_upload against the input[type=file] itself. It is usually
+   hidden behind the styled button; browser_inspect will show it, and its being
+   invisible does not matter because this never clicks it.
+
+5. DOWNLOADS ARRIVE ON DISK, NOT IN THE PAGE.
+   A download changes nothing about the page, so a successful one looks exactly
+   like a click that failed. Do not click again — clicking again is how you end
+   up with four copies, or four dialogs. The tool result tells you when
+   a download started and finished, and browser_downloads lists what has landed.
+   Trust those, not the page.
+
+6. THINGS THAT SCROLL INSIDE THEMSELVES.
+   Chat threads, file grids, long dialogs and code viewers keep their own
+   scrollbar. Scrolling the page does nothing to them, and you will read the
+   same rows and conclude that is everything there is. browser_scroll_within on
+   the panel.
+
+7. DRAGGING IS A GESTURE, NOT TWO CLICKS.
+   Moving a file into a folder, reordering, dropping onto an upload zone: use
+   browser_drag. Clicking the source and then the target does not do it, because
+   what these listen for is the movement in between.
+
+8. A DIALOG THE PAGE OPENS IS HANDLED FOR YOU, AND YOU ARE TOLD.
+   An alert or confirm freezes the page until it is answered; that now happens
+   automatically and the tool result says what it said. If a result mentions a
+   dialog, that is what just happened — treat it as the outcome of your action,
+   not as noise.
+
+9. SIGNING IN, WHEN THERE ARE SEVERAL SAVED ACCOUNTS.
+   You cannot choose between saved passwords: the chooser is browser UI and the
+   password is never readable. If Chrome fills the wrong account, do not retype
+   anything — use browser_sync_logins to copy the user's live session across
+   (ask them to close Chrome first), or ask them to sign in once themselves.
+
+10. KEYS THE APPLICATION BINDS.
+   browser_press knows f1-f12 and "menu" (the context-menu key) as well as
+   enter/tab/escape/arrows, and modifiers combine with +: shift+f10 opens a
+   context menu from the keyboard, ctrl+a selects everything. When an
+   application has a shortcut, it is often more reliable than hunting for the
+   control.`,
+	},
+
 	"web": {
 		Name:    "web",
 		Summary: "driving a web page — waiting for real content, pagination, clicking things that resist",

@@ -164,6 +164,30 @@ var keyCodes = map[string]struct {
 	"end":       {"End", "End", 35, ""},
 	"pageup":    {"PageUp", "PageUp", 33, ""},
 	"pagedown":  {"PageDown", "PageDown", 34, ""},
+	"insert":    {"Insert", "Insert", 45, ""},
+
+	// The context-menu key, and the function keys.
+	//
+	// Absent until a real task needed them: she was in Google Drive with a file
+	// selected, could not right-click, and reached for F10 — which is exactly how
+	// you open a context menu from the keyboard, and which came back "unknown key
+	// f10 — try enter, tab, escape, up, down". Web applications bind F-keys and
+	// the menu key for the commands that have no on-screen control, so not having
+	// them closed off the same third of an application that right-click did.
+	"menu":        {"ContextMenu", "ContextMenu", 93, ""},
+	"contextmenu": {"ContextMenu", "ContextMenu", 93, ""},
+	"f1":          {"F1", "F1", 112, ""},
+	"f2":          {"F2", "F2", 113, ""},
+	"f3":          {"F3", "F3", 114, ""},
+	"f4":          {"F4", "F4", 115, ""},
+	"f5":          {"F5", "F5", 116, ""},
+	"f6":          {"F6", "F6", 117, ""},
+	"f7":          {"F7", "F7", 118, ""},
+	"f8":          {"F8", "F8", 119, ""},
+	"f9":          {"F9", "F9", 120, ""},
+	"f10":         {"F10", "F10", 121, ""},
+	"f11":         {"F11", "F11", 122, ""},
+	"f12":         {"F12", "F12", 123, ""},
 }
 
 // modifierBits are the flags the input domain uses for held keys.
@@ -198,7 +222,10 @@ func (c *Client) PressKey(ctx context.Context, name string) error {
 				text string
 			}{string(r), "Key" + strings.ToUpper(string(r)), int(r), string(r)}
 		} else {
-			return fmt.Errorf("unknown key %q — try enter, tab, escape, up, down, or a single character", keyName)
+			return fmt.Errorf("unknown key %q. Known keys: enter, tab, escape, space, backspace, "+
+				"delete, insert, up, down, left, right, home, end, pageup, pagedown, menu "+
+				"(the context-menu key), f1-f12, or a single character. Modifiers combine "+
+				"with +, e.g. shift+f10 or ctrl+a", keyName)
 		}
 	}
 
@@ -706,4 +733,53 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	case <-time.After(d):
 	case <-ctx.Done():
 	}
+}
+
+// RightClick opens the context menu on an element.
+//
+// # Why this was missing and what it cost
+//
+// Every click in this package hardcoded button:"left". So did every tool built on
+// them. She had ten ways to click and not one of them could open a context menu —
+// which is how you download a file from Google Drive, rename anything in a file
+// manager, or reach the third of a web application's commands that live nowhere
+// else.
+//
+// The trace that found it: forty rounds in Drive, the folder open and both images
+// located by name, and no way to say "download this". She tried clicking text that
+// was not there, then a keyboard shortcut, then F10 — which is the correct key for
+// exactly this and which browser_press did not know either.
+//
+// The menu Chrome draws is browser UI rather than page content, so nothing here
+// can click an item in it. What the page CAN see is the contextmenu event, which
+// is what applications like Drive listen for to draw their own menu in the DOM —
+// and that menu is clickable. So this is useful precisely where it works, and the
+// caller finds out by reading the page afterwards rather than by being promised.
+func (c *Client) RightClick(ctx context.Context, selector string) error {
+	p, err := c.locate(ctx, selector)
+	if err != nil {
+		return err
+	}
+
+	// Move first: many grids only mark a row as the context target on hover, and
+	// a menu raised over the wrong row acts on the wrong file.
+	if _, err := c.Call(ctx, "Input.dispatchMouseEvent", map[string]any{
+		"type": "mouseMoved", "x": p.X, "y": p.Y,
+	}); err != nil {
+		return err
+	}
+
+	for _, phase := range []string{"mousePressed", "mouseReleased"} {
+		if _, err := c.Call(ctx, "Input.dispatchMouseEvent", map[string]any{
+			"type": phase, "x": p.X, "y": p.Y,
+			"button": "right", "clickCount": 1,
+		}); err != nil {
+			return err
+		}
+		if phase == "mousePressed" {
+			sleepCtx(ctx, 45*time.Millisecond)
+		}
+	}
+	c.WaitStable(ctx, 3*time.Second)
+	return nil
 }

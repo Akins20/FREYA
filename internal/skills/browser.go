@@ -154,6 +154,8 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	// without the other.
 	RegisterBrowserHistory(r)
 	RegisterBrowserInteract(r, g, tabs)
+	RegisterBrowserGestures(r, g, tabs)
+	RegisterBrowserAttach(r, g, tabs)
 
 	if g == nil || tabs == nil {
 		return
@@ -227,6 +229,11 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				if err != nil {
 					return "", err
 				}
+				// Downloads land in a folder instead of opening a chooser nothing can
+				// drive, javascript dialogs get answered instead of blocking the
+				// renderer forever, and both are recorded so a click that caused one
+				// can say so. See internal/browser/events.go.
+				client.Watch(ctx)
 				if err := client.Navigate(ctx, url); err != nil {
 					client.Close()
 					return "", err
@@ -507,19 +514,38 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 
 	r.Register(Skill{
 		Tool: llm.Tool{
-			Name:        "browser_tabs",
-			Description: "List open tabs and which browser context each is in.",
-			Params:      llm.ObjectSchema(nil),
+			Name: "browser_tabs",
+			Description: "List open tabs — both the ones you opened and any the browser " +
+				"opened by itself. A click on \"Open in new tab\", a download that opens a " +
+				"viewer, or a sign-in that pops a window all produce a page you are not " +
+				"driving yet; they appear here as unattached. Use browser_attach to take " +
+				"one over.",
+			Params: llm.ObjectSchema(nil),
 		},
 		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
-			open := tabs.list()
-			if len(open) == 0 {
-				return "No tabs open.", nil
-			}
 			var sb strings.Builder
+			open := tabs.list()
 			for _, t := range open {
 				url, _ := t.client.URL(ctx)
 				fmt.Fprintf(&sb, "- %s [%s] %s\n", t.name, t.ctx, clip(url, 80))
+			}
+
+			// Anything the browser opened that she is not driving. Without this a
+			// click that opened a new tab looked like a click that did nothing, and
+			// the page she actually wanted was sitting there unreachable.
+			if extra := unattached(tabs); len(extra) > 0 {
+				sb.WriteString("\nNot attached — the browser opened these, you are not driving them:\n")
+				for _, t := range extra {
+					title := t.Title
+					if title == "" {
+						title = "(untitled)"
+					}
+					fmt.Fprintf(&sb, "- %q %s\n", clip(title, 60), clip(t.URL, 80))
+				}
+				sb.WriteString("Use browser_attach with part of the title or url to drive one.")
+			}
+			if sb.Len() == 0 {
+				return "No tabs open.", nil
 			}
 			return strings.TrimSpace(sb.String()), nil
 		},

@@ -1001,6 +1001,54 @@ by hand, stated plainly when used.
       re-asked with the facts stated. No phrase-matching either way — the condition
       is a fact about the world, not a judgement about her wording.
 
+## Phase 22 — the rest of the hand, and the rest of the browser
+
+- [x] **Every click she had was a plain left click.** Found by a real task: forty
+      rounds inside Google Drive, both images located by name, and no way to say
+      "download these". She tried text that was not there, then a guessed
+      shortcut, then F10 — and `browser_press` did not know F-keys either. Not a
+      hard page; a hand with one finger.
+- [x] `internal/browser/gestures.go` — right-click, double-click, ctrl/shift-click
+      (multi-select), drag, scroll-within. One dispatcher, because written
+      separately they drift and the hover-first and press-duration fixes end up on
+      some gestures and not others. Timing is load-bearing: a zero-duration press
+      is not a click to a handler that measures it, and a drag with no movement in
+      between is a click to every drop zone ever written.
+- [x] `browser_upload` — she could not upload **anything**. Clicking Attach opens
+      the OS file chooser, which is not page content and cannot be driven, and she
+      could not even tell it was there. `DOM.setFileInputFiles` sets the path
+      directly; the chooser exists to discover a path that is already known.
+- [x] `browser_clipboard` — copy a share link here, paste it there. Any task
+      shaped like that ended at step one.
+- [x] `browser_attach` + `browser_tabs` now lists **unattached** pages. A click on
+      "Open in new tab" produced a real page she had no handle on, indistinguishable
+      from a click that did nothing.
+- [x] **CDP events were read and thrown away** (`if r.ID == 0 { continue }`).
+      That one line was the blind spot behind the whole class: downloads,
+      dialogs, new windows. `internal/browser/events.go` keeps a bounded log and
+      every gesture reports what happened outside the page.
+- [x] Downloads redirected to a folder, so the "Save as" window never opens.
+- [x] **Javascript dialogs are answered.** An unanswered one blocks the renderer
+      and hangs every later call against that page — a live hang risk that had
+      simply never been hit. `beforeunload` is dismissed, since accepting it
+      throws the page away.
+- [x] `Call` on a client with no socket panicked instead of erroring — and the
+      dialog handler calls it from a goroutine, where a panic takes the process
+      down rather than failing one action. Found by its own test.
+- [x] A playbook (`apps`) that names each tool **at the moment it is needed**.
+      This is the real lesson of `browser_sync_logins`, which existed for a
+      hundred sessions and was never once called because nothing connected it to
+      the situation it solved.
+
+- [ ] Not built, and deliberately: bot-detection evasion. Realistic input timing
+      here is for reliability — handlers that measure press duration, drop zones
+      that need dragover — not for defeating a site's automation checks.
+- [ ] Native OS dialogs that cannot be prevented (print, basic auth, the Chrome
+      autofill chooser) are still invisible. wmctrl/xdotool could detect a modal
+      window and at least say "a system dialog is open, I cannot drive it".
+- [ ] Network-idle waiting and console errors: she can tell a page changed but
+      not that a request failed or the page threw.
+
 ## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222

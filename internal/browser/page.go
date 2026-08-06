@@ -768,3 +768,74 @@ func (c *Client) Screenshot(ctx context.Context) (string, error) {
 	}
 	return out.Data, nil
 }
+
+// PointForText finds the on-screen point of whatever reads a given text.
+//
+// The same deep search ClickText uses, stopping one step short of clicking, so
+// that any mouse gesture — a right-click, a double-click, the start of a drag —
+// can be aimed by wording rather than by a selector nobody can see. Naming a
+// thing by what it says is how a person points at it, and it is the one target
+// she can always be sure of, because she read it off the page a moment ago.
+func (c *Client) PointForText(ctx context.Context, text string) (float64, float64, string, error) {
+	expr := deepPrelude + fmt.Sprintf(`(() => {
+      const needle = %q.trim().toLowerCase();
+      if (!needle) return JSON.stringify({error:'empty'});
+      let best = null, bestLen = Infinity;
+      const consider = (el) => {
+        if (!el || el.nodeType !== 1) return;
+        const t = (el.innerText || el.textContent || '').trim();
+        if (!t) return;
+        const low = t.toLowerCase();
+        if (low !== needle && low.indexOf(needle) === -1) return;
+        // The shortest containing label is the most specific match, which is what
+        // a person means when they name a thing.
+        if (t.length < bestLen) { best = el; bestLen = t.length; }
+      };
+      // Same descent __find uses: every element, then into any shadow root or
+      // same-origin frame hanging off it.
+      const rec = (root) => {
+        let list;
+        try { list = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const x of list) {
+          consider(x);
+          const sub = __descend(x);
+          if (sub) rec(sub);
+        }
+      };
+      rec(document);
+      if (!best) return JSON.stringify({error:'not-found'});
+      best.scrollIntoView({block:'center', inline:'center'});
+      const r = best.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return JSON.stringify({error:'not-visible'});
+      let x = r.left + r.width/2, y = r.top + r.height/2;
+      const win = (best.ownerDocument && best.ownerDocument.defaultView) || window;
+      let w = win;
+      while (w && w.frameElement) {
+        const fr = w.frameElement.getBoundingClientRect();
+        x += fr.left; y += fr.top; w = w.parent;
+      }
+      return JSON.stringify({x:x, y:y, label:(best.innerText||best.textContent||'').trim().slice(0,80)});
+    })()`, text)
+
+	raw, err := c.EvalString(ctx, expr)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	var res struct {
+		X, Y  float64
+		Label string
+		Error string
+	}
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		return 0, 0, "", fmt.Errorf("locating text %q: %w", text, err)
+	}
+	switch res.Error {
+	case "empty":
+		return 0, 0, "", fmt.Errorf("give some text to aim at")
+	case "not-found":
+		return 0, 0, "", fmt.Errorf("nothing on the page reads %q (searched shadow DOM and iframes too)", text)
+	case "not-visible":
+		return 0, 0, "", fmt.Errorf("%q is on the page but not visible", text)
+	}
+	return res.X, res.Y, res.Label, nil
+}

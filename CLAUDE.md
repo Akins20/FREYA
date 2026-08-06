@@ -52,6 +52,7 @@ variables always win.
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
+| `FREYA_DOWNLOAD_DIR` | Where browser downloads land. Set explicitly on every tab so the OS "Save as" window never opens — that window is not page content, so nothing can drive it and she cannot even tell it is there. Defaults to `~/Downloads`. |
 | `FREYA_WAKE` | Always-on wake-word listening. `off` means the mic is only ever opened by a deliberate Ctrl+Space. It had no off switch before, and was quiet only because starting the listener happened to fail — so fixing an unrelated setting silently turned on a microphone that records the room continuously. Push-to-talk is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
 
@@ -118,6 +119,29 @@ destroyed: turns degrade verbatim → summarised episode → still BM25-searchab
 
 Token estimation deliberately runs *high* (4.0 chars/token against a measured ~4.9) so
 budgets under-fill rather than overflow mid-request.
+
+### The browser is more than the DOM
+
+`internal/browser/events.go` is the second channel. CDP multiplexes replies and
+**events** over one socket, and the read loop used to discard every event — so
+downloads, javascript dialogs, and windows opening were all invisible. A click
+that started a download looked exactly like a click that did nothing, which is
+how four clicks and four dialogs happen.
+
+Three consequences worth keeping:
+
+- **Downloads are redirected**, not prompted (`Browser.setDownloadBehavior` on
+  every tab). The native chooser is an OS window; nothing here can reach it.
+- **JS dialogs are answered**, because an unanswered one blocks the renderer and
+  hangs every later call against that page. `beforeunload` is dismissed rather
+  than accepted — accepting throws the page away.
+- **Side effects are reported.** Actions carry `browser.Describe(client.Since(t))`,
+  so a gesture says what happened outside the page as well as inside it.
+
+`internal/browser/gestures.go` holds everything that is not a plain left click —
+right-click, double-click, ctrl/shift-click, drag. They share one dispatcher on
+purpose: written separately they drift, and the hover-first and press-duration
+fixes then exist on some gestures and not others.
 
 ### Provider abstraction
 
