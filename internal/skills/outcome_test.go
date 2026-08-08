@@ -64,7 +64,7 @@ func TestExecuteVerifiesMutatingSkills(t *testing.T) {
 		Tool:    llm.Tool{Name: "poke", Description: "d", Params: llm.ObjectSchema(nil)},
 		Handler: func(context.Context, map[string]any) (string, error) { return "Poked it.", nil },
 		Mutates: true,
-		Observe: func(context.Context) string { return world },
+		Observe: func(context.Context, map[string]any) string { return world },
 	})
 
 	// Nothing moves: the result says so.
@@ -84,7 +84,7 @@ func TestExecuteVerifiesMutatingSkills(t *testing.T) {
 			return "Poked it.", nil
 		},
 		Mutates: true,
-		Observe: func(context.Context) string { return world },
+		Observe: func(context.Context, map[string]any) string { return world },
 	})
 	out, err = r.Execute(context.Background(), "poke", nil)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestSkillOwnChangedVerdictWins(t *testing.T) {
 	r.Register(Skill{
 		Tool:    llm.Tool{Name: "act", Description: "d", Params: llm.ObjectSchema(nil)},
 		Mutates: true,
-		Observe: func(context.Context) string { return "identical" },
+		Observe: func(context.Context, map[string]any) string { return "identical" },
 		Act: func(context.Context, map[string]any) (Outcome, error) {
 			return Changedf(true, "It landed, and I watched it land."), nil
 		},
@@ -123,7 +123,7 @@ func TestNonMutatingSkillIsNotObserved(t *testing.T) {
 	r.Register(Skill{
 		Tool:    llm.Tool{Name: "look", Description: "d", Params: llm.ObjectSchema(nil)},
 		Handler: func(context.Context, map[string]any) (string, error) { return "text", nil },
-		Observe: func(context.Context) string { observed++; return "x" },
+		Observe: func(context.Context, map[string]any) string { observed++; return "x" },
 	})
 	if _, err := r.Execute(context.Background(), "look", nil); err != nil {
 		t.Fatal(err)

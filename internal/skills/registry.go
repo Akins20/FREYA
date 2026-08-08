@@ -40,7 +40,14 @@ type Skill struct {
 	// Observe returns a cheap fingerprint of whatever this skill touches. When it
 	// is set on a mutating skill, Execute samples it before and after: identical
 	// readings mean nothing happened, and the result says so.
-	Observe func(ctx context.Context) string
+	//
+	// It is given the call's arguments because it has to sample the SAME thing the
+	// handler is about to change. Without them the browser fingerprint resolved
+	// the most-recently-used tab, so with two tabs open the before-sample could be
+	// one page and the after-sample another — reporting a change that never
+	// happened, or missing one that did. A verifier that samples the wrong subject
+	// is worse than none: it answers confidently.
+	Observe func(ctx context.Context, args map[string]any) string
 	// Affordances lists what is genuinely available right now — the clickable
 	// things on this page, the open terminal sessions, the files in this
 	// directory. Attached automatically when the skill fails, so a miss hands back
@@ -201,7 +208,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	var before string
 	watching := s.Mutates && s.Observe != nil
 	if watching {
-		before = s.Observe(ctx)
+		before = s.Observe(ctx, args)
 	}
 
 	var out Outcome
@@ -233,7 +240,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	// failure the model cannot see. Only fill in what the skill did not already
 	// determine for itself — a skill that knows better outranks the fingerprint.
 	if watching && out.Changed == nil {
-		if after := s.Observe(ctx); after != "" && before != "" {
+		if after := s.Observe(ctx, args); after != "" && before != "" {
 			changed := after != before
 			out.Changed = &changed
 		}

@@ -297,7 +297,7 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"amount":   {Type: "number", Description: "Pixels to scroll. Default 600."},
 			}, "selector"),
 		},
-		Mutates: true, Observe: tabs.observe,
+		Mutates: true, Observe: tabs.observe, Affordances: tabs.affordances,
 		Act: func(ctx context.Context, args map[string]any) (Outcome, error) {
 			tab, tabNote, err := tabNoted(tabs, args)
 			if err != nil {

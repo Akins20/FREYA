@@ -1319,15 +1319,38 @@ Every browser fix this week was the same shape — AN ACTION WHOSE EFFECT IS
 INVISIBLE IN THE DOM: a download, a dialog, a new window, an OS file chooser, a
 Chrome warning page. Each was fixed individually. The pattern says fix it once.
 
-- [ ] **26a. A typed effect set** on every mutating browser action:
-      page-changed, download-started, dialog-answered, window-opened,
-      nothing-observable.
-- [ ] **26b. `nothing-observable` becomes a first-class result** the framework
-      asserts on, rather than a silence the model has to interpret.
-      `Outcome.Changed` already exists and is half-wired; this finishes it.
-- [ ] **26c. Retire the ad-hoc checks** it subsumes. One mechanism would have
-      caught the download case, the popup case and the file-chooser case as a
-      single bug instead of three.
+**Researched first, and the research redirected it.** Playwright's answer is all
+PRE-condition — actionability checks (visible, stable, receives events, enabled)
+before the action fires. Anthropic's own agent browser tools declare no effects
+at all: `computer` is coordinate-and-vision-first, and verification is expected
+to happen by taking another screenshot. Neither transfers whole. Freya is on
+Gemini flash-lite driving headless CDP, where a vision call is expensive and
+"look again" costs a round she has repeatedly not spent — which is exactly why
+`Outcome.Changed` and `Observe` were built in the first place.
+
+So 26 was not a new mechanism. It was finishing the one that existed.
+
+- [x] **26b (done first, because it turned out to be the whole phase).** The
+      verification machinery is gated on `Mutates`, and **seven of the fourteen
+      interaction tools never set it** — browser_click, press, submit, fill,
+      type, select, check. They were exempt from before/after sampling AND from
+      the certificate-warning refusal, and said so nowhere. All seven now set it
+      and carry `Observe`/`Affordances`. A test names the twelve tools literally
+      rather than iterating the flag, because the previous test iterated
+      `s.Mutates` and was therefore filtered down to nothing by the very bug it
+      was looking for.
+- [x] **`Observe` takes the call's arguments.** It resolved the most recently
+      used tab rather than the one named, so with two tabs open the before and
+      after samples could describe different pages — reporting a change that
+      never happened, or missing one that did. A verifier that samples the wrong
+      subject is worse than none, because it answers confidently.
+- [ ] **26a. A typed effect set** — page-changed, download-started,
+      dialog-answered, window-opened, nothing-observable. Still worth doing, but
+      demoted: with `Mutates` correct, the generic fingerprint now covers the
+      "nothing happened" case for every interaction tool, which was the failure
+      that actually kept occurring. The typed set buys precision on top of that,
+      not the cure.
+- [ ] **26c. Retire the ad-hoc checks** it subsumes.
 
 ### Cross-cutting, and cheap: audit what we rely on prose for
 

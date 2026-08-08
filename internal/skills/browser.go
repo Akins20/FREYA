@@ -341,7 +341,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		// Changes the page, which is what every framework protection keys off:
 		// the certificate-warning refusal installed by Protect, and before/after
 		// sampling. Unset, this tool is exempt from both without saying so.
-		Mutates: true,
+		Mutates:     true,
+		Observe:     tabs.observe,
+		Affordances: tabs.affordances,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
 			if !ok {
@@ -454,7 +456,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 		// Changes the page, which is what every framework protection keys off:
 		// the certificate-warning refusal installed by Protect, and before/after
 		// sampling. Unset, this tool is exempt from both without saying so.
-		Mutates: true,
+		Mutates:     true,
+		Observe:     tabs.observe,
+		Affordances: tabs.affordances,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
 			if !ok {
@@ -750,9 +754,12 @@ func (t *openTab) missCount() int {
 // observe fingerprints the page the active tab is showing, for the framework's
 // before/after comparison. Empty when there is no tab, which switches the
 // verification off rather than inventing a change.
-func (t *Tabs) observe(ctx context.Context) string {
-	tab, ok := t.get("")
-	if !ok {
+func (t *Tabs) observe(ctx context.Context, args map[string]any) string {
+	// The tab the CALL names, not the last one touched. Resolved through the same
+	// helper the handlers use, so before and after describe the page the action
+	// actually acts on even with several tabs open.
+	tab, _, ok := t.resolve(argString(args, "name"))
+	if !ok || tab == nil {
 		return ""
 	}
 	return tab.client.Signature(ctx)
