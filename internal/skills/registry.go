@@ -52,6 +52,10 @@ type Skill struct {
 type Registry struct {
 	mu     sync.RWMutex
 	skills map[string]Skill
+	// misses records tools she named that exist but were not offered by her kit.
+	// See kits.go: this is the number that says whether narrowing the offered set
+	// is earning its keep, or quietly costing her capability.
+	misses kitMisses
 }
 
 // New creates an empty registry.
@@ -106,6 +110,13 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	r.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("no such skill %q", name)
+	}
+	// Deliberately NOT gated on which kit was offered. Everything registered
+	// stays executable: if she names a tool routing did not show her — from the
+	// playbook, from memory, from another tool's description — it runs, and the
+	// miss is recorded instead of the task quietly not happening. See kits.go.
+	if !ScopeFrom(ctx).offers(name) {
+		r.NoteMiss(name)
 	}
 
 	// Reconcile the arguments against what the tool declares, before anything

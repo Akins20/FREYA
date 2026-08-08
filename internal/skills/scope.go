@@ -33,6 +33,10 @@ type Scope struct {
 	TabPrefix string
 	// JobID identifies a background job, empty for the foreground conversation.
 	JobID string
+	// kits are the tool groups offered for this thread of work. Empty means every
+	// tool was offered, which is what every path that has not adopted routing
+	// gets — so adding kits can never silently narrow an existing caller.
+	kits []Kit
 	// ledger records the identifiers this thread of work has actually been shown,
 	// so a composed one can be told apart from an observed one.
 	ledger *Ledger
@@ -164,4 +168,33 @@ func expandIn(ctx context.Context, p string) string {
 		return p
 	}
 	return filepath.Join(ScopeFrom(ctx).Dir(), p)
+}
+
+// Kits are the tool groups offered for this thread of work.
+//
+// Carried on the scope because it is already the per-thread execution context,
+// and because a background job routes on its own goal rather than inheriting the
+// foreground's.
+func (s Scope) Kits() []Kit { return s.kits }
+
+// WithKits returns a scope that offers these kits.
+func (s Scope) WithKits(kits []Kit) Scope {
+	s.kits = kits
+	return s
+}
+
+// offers reports whether a tool was among those shown for this scope.
+//
+// True when nothing was routed, so an unrouted caller — a test, the one-shot
+// CLI, a path that has not adopted kits — never records a spurious miss.
+func (s Scope) offers(name string) bool {
+	if len(s.kits) == 0 {
+		return true
+	}
+	for _, k := range s.kits {
+		if kitOf(name) == k {
+			return true
+		}
+	}
+	return false
 }

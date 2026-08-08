@@ -98,6 +98,10 @@ type Agent struct {
 	// prefix for every turn after it.
 	PendingWork func() string
 
+	// RouteTools narrows the tools she is SHOWN to those the request calls for,
+	// while leaving every one of them executable. Off by default: see kitsFor.
+	RouteTools bool
+
 	// Scope is where this thread of work happens: the directory its file and
 	// shell tools resolve against, and the namespace for its browser tabs. The
 	// zero value falls back to the process directory, so a plain session behaves
@@ -261,7 +265,21 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	}
 
 	msgs := append(history, llm.Message{Role: llm.RoleUser, Text: input})
-	tools := a.Skills.Tools()
+
+	// Which tools she is SHOWN, decided once and held for the whole exchange.
+	//
+	// Once, because declarations lead the request: a set that changed mid-loop
+	// would change the cached prefix mid-loop and re-bill everything after it.
+	// Held for the exchange, so within one piece of work the prefix is stable and
+	// across pieces of work there are a handful of warm prefixes rather than one.
+	//
+	// Nothing is taken away by this. Everything registered stays executable, and a
+	// tool she names that routing did not show her runs anyway and is counted —
+	// see internal/skills/kits.go for why that valve is the whole safety argument.
+	kits := a.kitsFor(input)
+	scope = scope.WithKits(kits)
+	ctx = skills.WithScope(ctx, scope)
+	tools := a.Skills.ToolsFor(kits)
 	result := &Result{Snapshot: snap}
 
 	// One id for everything this exchange produces, so its events can be pulled
@@ -781,4 +799,18 @@ func (a *Agent) ForJob(j memory.Journal, scope skills.Scope) *Agent {
 	clone.Scope = scope
 	clone.OnInterim, clone.OnThought, clone.OnTool = nil, nil, nil
 	return &clone
+}
+
+// kitsFor picks the tool groups for one request.
+//
+// Routing is off unless asked for: an agent that has not opted in is offered
+// everything, exactly as before. That default matters more than it looks —
+// narrowing what she can see is the one change in this codebase that fails
+// silently, so it has to be something a caller turns on rather than something
+// that arrives with an upgrade.
+func (a *Agent) kitsFor(input string) []skills.Kit {
+	if !a.RouteTools {
+		return nil
+	}
+	return skills.Route(input)
 }

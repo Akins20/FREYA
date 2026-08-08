@@ -29,6 +29,12 @@ type Config struct {
 	// ProjectsDir is what the dev skills scan for repositories.
 	ProjectsDir string
 
+	// ToolRouting narrows the tools she is SHOWN to those a request calls for.
+	// "off" disables it. Everything stays executable either way — a tool she names
+	// that was not offered still runs, and the miss is counted. See
+	// internal/skills/kits.go.
+	ToolRouting string
+
 	// SourceDir is her own repository, for the self-repair loop.
 	//
 	// Explicit because it cannot be inferred: the daemon starts from the home
@@ -124,6 +130,7 @@ func Load() (*Config, error) {
 		WorkDir:         os.Getenv("FREYA_WORK_DIR"),
 		ProjectsDir:     os.Getenv("FREYA_PROJECTS_DIR"),
 		SourceDir:       os.Getenv("FREYA_SOURCE_DIR"),
+		ToolRouting:     os.Getenv("FREYA_TOOL_ROUTING"),
 		Address:         os.Getenv("FREYA_ADDRESS"),
 		Verbose:         isTruthy(os.Getenv("FREYA_VERBOSE")),
 		DryRun:          isTruthy(os.Getenv("FREYA_DRY_RUN")),

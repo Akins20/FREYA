@@ -52,6 +52,7 @@ variables always win.
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
+| `FREYA_TOOL_ROUTING` | Narrows the tools she is **shown** to those a request calls for — 96 down to 27-53 on real tasks. `off` disables it. Everything stays **executable** either way: a tool she names that was not offered still runs and the miss is counted (`/tools`). See `internal/skills/kits.go` — narrowing is the one change here that fails silently, so the valve and the counter are the design, not extras. |
 | `FREYA_DOWNLOAD_DIR` | Where browser downloads land. Set explicitly on every tab so the OS "Save as" window never opens — that window is not page content, so nothing can drive it and she cannot even tell it is there. Defaults to `~/Downloads`. |
 | `FREYA_WAKE` | Always-on wake-word listening. `off` means the mic is only ever opened by a deliberate Ctrl+Space. It had no off switch before, and was quiet only because starting the listener happened to fail — so fixing an unrelated setting silently turned on a microphone that records the room continuously. Push-to-talk is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |

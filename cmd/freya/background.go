@@ -196,3 +196,48 @@ var daemonActive atomic.Bool
 // Generous, because the alternative is losing a reply the user is waiting for;
 // bounded, because a wedged exchange must not stop a session from starting.
 const handoverGrace = 15 * time.Second
+
+// toolsCommand shows what routing would offer, and what it has missed.
+//
+// The miss list is the point. Narrowing what she is shown is the one change in
+// this codebase that fails SILENTLY — she cannot ask for a tool she was never
+// shown — so it only stays defensible while somebody can see the cost. A tool
+// missed repeatedly belongs in the core; a kit missed repeatedly is routed
+// wrongly; nothing missed at all means the routing is doing no harm.
+func toolsCommand(rest string, a *agent.Agent) error {
+	reg := a.Skills
+	all := reg.Tools()
+
+	if req := strings.TrimSpace(rest); req != "" {
+		kits := skills.Route(req)
+		offered := reg.ToolsFor(kits)
+		fmt.Printf("  %q\n  kits: %v\n  %d of %d tools offered (%.0f%% fewer)\n\n",
+			req, kits, len(offered), len(all),
+			100*float64(len(all)-len(offered))/float64(len(all)))
+		var names []string
+		for _, t := range offered {
+			names = append(names, t.Name)
+		}
+		fmt.Printf("  %s\n", strings.Join(names, " "))
+		return nil
+	}
+
+	state := "on"
+	if !a.RouteTools {
+		state = "off (FREYA_TOOL_ROUTING=off)"
+	}
+	fmt.Printf("  %d tools registered · routing %s\n", len(all), state)
+
+	misses := reg.Misses()
+	if len(misses) == 0 {
+		fmt.Println("  nothing missed — every tool she reached for had been offered")
+	} else {
+		fmt.Println("\n  reached for but NOT offered (routing got these wrong):")
+		for _, m := range misses {
+			fmt.Printf("    · %s\n", m)
+		}
+		fmt.Println("  a tool missed repeatedly belongs in the core kit.")
+	}
+	fmt.Printf("%s  /tools <a request> to see what it would offer%s\n", cDim, cReset)
+	return nil
+}

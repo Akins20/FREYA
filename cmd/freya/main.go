@@ -371,6 +371,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// Background work. Registered before anything can call it and shut down on
 	// the way out, so a job never outlives the process that would have reported
 	// it — an orphaned job is work the user is never told about.
+	// Show her the tools the request calls for, rather than all ninety-six. On by
+	// default: everything stays executable, a tool she names that was not offered
+	// still runs and is counted, and FREYA_TOOL_ROUTING=off turns it off entirely.
+	a.RouteTools = !strings.EqualFold(strings.TrimSpace(cfg.ToolRouting), "off")
+
 	// The failures write themselves down, and the bad ones get looked at. Wired
 	// before anything can fail, so nothing is missed during startup.
 	defects, derr := defect.Open(cfg.DataDir)
@@ -882,6 +887,7 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
   /proactive check         drain the queue now
   /jobs [stop <id>|stop all]  background tasks and how far they've got
   /problems [<id>]         software problems noted, and what came of them
+  /tools                   which tools this request would offer, and what routing missed
   /audit                   recent actions and their outcomes
   /verbose                 toggle tool tracing
   /quit                    exit
@@ -894,6 +900,9 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 
 	case "/problems":
 		return false, problemsCommand(rest)
+
+	case "/tools":
+		return false, toolsCommand(rest, a)
 
 	case "/traits":
 		fmt.Printf("  %s\n", strings.Join(agent.TraitNames(), ", "))
