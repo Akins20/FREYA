@@ -50,10 +50,17 @@ const (
 	// housekeeping, it competes with the user for the same machine, and there is
 	// nothing urgent about a duplicate.
 	consolidateEvery = 6 * time.Hour
-	// consolidateModel is the reviewer. The merge is a judgement call over two
-	// bodies of text she cannot re-derive, made once every few hours, so it gets
-	// the strongest model rather than the cheapest.
-	consolidateModel = "opus"
+	// consolidateModel is the reviewer.
+	//
+	// Fable, the strongest available, and the cost argument runs the other way
+	// from usual here. This fires at most once every six hours, on two short
+	// playbooks, and only when they already look like duplicates — so the whole
+	// job is a few thousand tokens of the most careful reading available. What it
+	// is deciding is which of two accounts of the same work is still true, over
+	// text she cannot reconstruct if the merge throws the wrong half away. Paying
+	// twice the rate a handful of times a day to not lose that is not a close
+	// call.
+	consolidateModel = "fable"
 	// mergesPerPass keeps a wrong idea small. One merge per wake-up, highest
 	// overlap first, so a bad call affects one pair rather than the whole store.
 	mergesPerPass = 1
