@@ -187,6 +187,35 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 		}
 	}
 
+	// Which of the six hundred turns above is the thing she was actually asked.
+	//
+	// Measured, and it is the worst failure this system has produced. Having just
+	// finished a set of quizzes and said so, she was asked to build a copy of a
+	// website. She went and did MORE quizzes, in a third course, and replied about
+	// quiz scores — never mentioning the website, and opening with "welcome home",
+	// which was the greeting from the exchange before. She did not refuse the
+	// request or misunderstand it. She never registered that it had arrived.
+	//
+	// The prompt was 196,000 tokens, 98.8% of it cached, holding 618 verbatim
+	// turns of "Clicked X. Now on Y" from an hour of quiz work. The new request
+	// was one sentence at the end of that, carrying no more weight than any of the
+	// six hundred lines before it. Nothing in the prompt said which one was the
+	// instruction.
+	//
+	// This is the whole architecture's blind spot: every tier is about supplying
+	// CONTEXT, and none of them marks the REQUEST. The cure costs a few tokens in
+	// the volatile tail, where it cannot disturb anything cached, and it goes last
+	// so nothing follows it but the message itself.
+	if q := strings.TrimSpace(query); q != "" {
+		text := "[This is what you are being asked for RIGHT NOW:]\n\n" + q +
+			"\n\n[Everything above is history — including work you have already " +
+			"finished and reported. Do not restart it. If this request is about " +
+			"something different from what you were last doing, this is what you " +
+			"do now.]"
+		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Text: text})
+		snap.RetrievedTokens += EstimateTokens(text)
+	}
+
 	snap.TotalTokens = snap.IdentityTokens + snap.FactTokens + snap.EpisodeTokens +
 		snap.WorkingTokens + snap.RetrievedTokens
 	return system, msgs, snap

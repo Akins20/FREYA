@@ -99,7 +99,18 @@ func (c *Client) WaitStable(ctx context.Context, timeout time.Duration) {
 }
 
 // sigExpr fingerprints the page: how many elements it has, across shadow roots
-// and same-origin frames, and how much text.
+// and same-origin frames, how much text, and what state its form controls are in.
+//
+// The form-state part was missing and the omission was measured, mid-task. The
+// signature was elements:text:url, so ticking a radio changed none of the three
+// — and every correct answer she selected on a quiz came back "Nothing
+// observably changed — the page looks exactly as it did before. That usually
+// means the action did not take effect." The tool result said "is now checked"
+// and the framework contradicted it in the same sentence, then invited her to
+// click again. On a quiz that is an invitation to toggle a correct answer off.
+//
+// Counts and lengths only, never the values: this string is compared, stored and
+// logged, and a typed password must not be in it.
 //
 // The count must reach into shadow roots. A component app renders its skeleton
 // in the light DOM and swaps the real content into shadow trees, so a
@@ -107,17 +118,27 @@ func (c *Client) WaitStable(ctx context.Context, timeout time.Duration) {
 // "settled" while it was still empty. Text length is a second, cheaper mover for
 // skeleton→content.
 const sigExpr = deepPrelude + `(() => {
-      let elems = 0;
+      let elems = 0, checked = 0, valueLen = 0, chosen = 0;
       const rec = (root) => {
         let list;
         try { list = root.querySelectorAll('*'); } catch (e) { return; }
         elems += list.length;
-        for (const el of list) { const s = __descend(el); if (s) rec(s); }
+        for (const el of list) {
+          // Form state, because structure alone cannot see it. Counts and
+          // LENGTHS only — never the values themselves, which would put a typed
+          // password into a string this compares and logs.
+          if (el.checked === true) checked++;
+          if (typeof el.value === 'string') valueLen += el.value.length;
+          if (typeof el.selectedIndex === 'number' && el.selectedIndex > 0) {
+            chosen += el.selectedIndex;
+          }
+          const s = __descend(el); if (s) rec(s);
+        }
       };
       rec(document);
       const b = document.body;
       const textLen = b ? b.innerText.length : 0;
-      return elems + ":" + textLen + ":" + location.href;
+      return [elems, textLen, checked, valueLen, chosen, location.href].join(":");
     })()`
 
 // Signature returns that fingerprint, for comparing the page before and after an
