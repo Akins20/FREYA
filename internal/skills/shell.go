@@ -59,6 +59,10 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 				return "", fmt.Errorf("command is required")
 			}
 			argv := splitArgs(argString(args, "args"))
+			// Shell syntax handed to a program that is not a shell.
+			if why := shellOnly(argv); why != "" {
+				return "", fmt.Errorf("%s", why)
+			}
 			dir := resolveDir(ctx, argString(args, "dir"))
 
 			action := guard.Action{
@@ -309,4 +313,63 @@ func resolveDir(ctx context.Context, dir string) string {
 		}
 	}
 	return expandIn(ctx, dir)
+}
+
+// shellOnly reports why these arguments cannot work without a shell.
+//
+// # The failure it makes loud
+//
+// run_command execs the program directly — deliberately, so nothing in an
+// argument can chain a second command. The cost of that is invisible: a
+// redirection, a pipe or a variable handed to it is not an instruction, it is
+// just another argument. `run_command(command="echo", args="hi > out.txt")`
+// runs echo with three arguments, prints "hi > out.txt", exits 0, and creates no
+// file. Every signal available says it worked. The shell playbook has said
+// "ALWAYS VERIFY THE RESULT, NOT THE EXIT" about exactly this for weeks, which is
+// prose, and prose is not a control.
+//
+// # Why this and not a generic "did anything change" check
+//
+// The rest of the codebase answers "did that do anything?" with a before/after
+// fingerprint. That does not transfer here: most commands legitimately change
+// nothing observable — they print. A fingerprint would either be silent about
+// the real bug or confidently wrong about every read-only command, and a
+// verifier that answers confidently about the wrong thing is worse than none.
+//
+// This instead names the one case where the tool cannot possibly do what was
+// asked, and says which tool can. Deterministic, and no false positive is
+// possible: none of these tokens means anything to a program invoked directly.
+func shellOnly(argv []string) string {
+	// Standalone operators. A program receiving ">" as an argument is never what
+	// anybody meant; quoting makes these part of a larger token, so a lone one is
+	// unambiguous.
+	operators := map[string]string{
+		">": "redirect output", ">>": "append output", "<": "read input",
+		"|": "pipe", "||": "chain on failure", "&&": "chain on success",
+		";": "run several commands", "&": "run in the background",
+		"2>": "redirect errors", "2>&1": "merge errors into output",
+	}
+	for _, a := range argv {
+		if what, ok := operators[a]; ok {
+			return fmt.Sprintf("%q is shell syntax, and run_command does not use a shell — "+
+				"it would be passed to the program as a literal argument, so the command "+
+				"would appear to succeed and simply not %s.\n\nUse run_shell for this, "+
+				"with the whole line as the script.", a, what)
+		}
+		switch {
+		case strings.HasPrefix(a, "$(") || strings.Contains(a, "`"):
+			return fmt.Sprintf("%q substitutes a command, which needs a shell. Without one "+
+				"it is passed through literally and the program sees the text rather than "+
+				"the result. Use run_shell.", a)
+		case strings.HasPrefix(a, "$") && len(a) > 1:
+			return fmt.Sprintf("%q is a shell variable and nothing expands it here — the "+
+				"program would receive the characters %q. Use run_shell, or pass the value "+
+				"itself.", a, a)
+		case strings.HasPrefix(a, "~"):
+			return fmt.Sprintf("%q relies on the shell expanding ~, which does not happen "+
+				"here — the program would look for a directory literally named %q. Write "+
+				"the full path, or use run_shell.", a, a)
+		}
+	}
+	return ""
 }

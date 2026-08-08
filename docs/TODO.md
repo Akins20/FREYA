@@ -1395,12 +1395,20 @@ MOVED INTO CODE THIS PASS:
 
 STILL PROSE ONLY — ranked by what it would cost:
 
-- [ ] **"ALWAYS VERIFY THE RESULT, NOT THE EXIT" (shell).** `run_shell` and
-      `run_command` are not marked `Mutates` and have no `Observe`, so a command
-      that exits 0 having silently done nothing — the redirection-or-pipe case
-      the shell playbook exists for — reads as success. This is the exact shape
-      of the browser bug Phase 26 just fixed, in the family that has not had it
-      fixed. Highest value remaining.
+- [x] **"ALWAYS VERIFY THE RESULT, NOT THE EXIT" (shell).** Diagnosed rather
+      than assumed, and it was narrower and sharper than the rule suggested.
+      `run_shell` goes through `bash -c`, so pipes and redirection work there —
+      the first hypothesis was wrong. The silent case is `run_command`, which
+      execs directly: a redirection handed to it is not an instruction, it is
+      another argument, so `echo hi > out.txt` prints "hi > out.txt", exits 0 and
+      writes no file. Every signal available says success.
+      `shellOnly` now refuses that and names the tool that works. Deliberately
+      NOT a before/after fingerprint: most commands legitimately change nothing
+      observable, so a fingerprint would be silent about the real bug and
+      confidently wrong about every read-only command — and a verifier that
+      answers confidently about the wrong thing is worse than none.
+      A generic shell fingerprint remains undesigned, and is probably not worth
+      designing.
 - [ ] **`docx_write` / `pdf_write` / `xlsx_write` / `system_open` unmarked.**
       They write files and open applications with no framework verification.
 - [ ] **"Do NOT rewrite the whole file with file_write."** Nothing stops a
