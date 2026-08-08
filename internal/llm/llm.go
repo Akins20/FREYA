@@ -98,6 +98,14 @@ type Response struct {
 	// Usage is what the call cost, as reported by the provider. Zero when the
 	// provider does not report it.
 	Usage Usage
+	// Truncated reports that the model stopped because it ran out of output room
+	// rather than because it had finished.
+	//
+	// Every provider reports this and none of them was read, so a reply cut off
+	// mid-sentence was indistinguishable from a complete one. It matters most
+	// when the output IS the artefact — a page, a document, a file — because what
+	// lands then is a thing that ends part-way through with nothing saying so.
+	Truncated bool
 }
 
 // Usage is a provider's own accounting of a call.

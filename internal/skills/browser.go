@@ -283,8 +283,8 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			// A sign-in page reached in the guest context is a door she brought no
 			// key to. Attached here rather than left to the playbook, because the
 			// playbook already said it and she reported the limitation anyway.
-			return fmt.Sprintf("%s\n%s\n\n%s%s%s", title, url,
-				clipText(text, limit), state.Describe(),
+			return fmt.Sprintf("%s\n%s\n\n%s%s%s%s", title, url,
+				clipText(text, limit), coverage(len(text), limit), state.Describe(),
 				browser.GuestSignIn(state, tab.ctx == browser.ContextGuest)), nil
 		},
 	})
@@ -823,4 +823,35 @@ func looksLikeCommit(text string) bool {
 		}
 	}
 	return false
+}
+
+// coverage says how much of the page she has actually been given.
+//
+// # Why "[truncated]" was not enough
+//
+// browser_read fetches the whole page — innerText returns everything, scrolled
+// into view or not — and then clips it to 12,000 characters. The clip said
+// "[truncated at 12000 characters]", which reads as a tidy-up. It does not say
+// whether the missing part is a footer or three quarters of the document.
+//
+// Asked to replicate a site exactly, she read it once, got the top of it, and
+// built a copy of the top of it. She was not being careless: nothing she saw
+// distinguished "this is the page" from "this is the first third of the page".
+// The user then had to explain what thorough meant, which is the wrong shape for
+// a fix — a disposition cannot be installed by instruction, but a fact can be
+// made impossible to miss.
+//
+// So this states the fraction, and what to do about it. A number she has to read
+// past is worth more than an adjective she has to live up to.
+func coverage(total, shown int) string {
+	if total <= shown {
+		return ""
+	}
+	pct := 100 * shown / total
+	return fmt.Sprintf("\n\n[You have seen the FIRST %d%% of this page — %d characters of "+
+		"%d. The other %d%% is below what you just read and you have not seen any of "+
+		"it. If you are describing, copying or summarising the whole page, read it "+
+		"again with a higher limit (up to 100000) before you treat this as the "+
+		"complete picture. browser_find is cheaper when you only need one phrase.]",
+		pct, shown, total, 100-pct)
 }

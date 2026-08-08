@@ -67,8 +67,19 @@ type geminiThinkingConfig struct {
 }
 
 type geminiGenerationConfig struct {
-	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens int                   `json:"maxOutputTokens,omitempty"`
 }
+
+// geminiMaxOutput is the output ceiling, set explicitly rather than left to
+// whatever the API defaults to.
+//
+// Nothing here ever set one, so the ceiling was invisible and unknown — which is
+// the worst combination for the case that matters: writing a page or a document
+// in a single response, running past the limit, and having the tail dropped
+// without a word. Output is billed by what is produced, so a high ceiling costs
+// nothing until something actually needs the room.
+const geminiMaxOutput = 32768
 
 type geminiFuncCall struct {
 	ID   string         `json:"id,omitempty"`
@@ -223,12 +234,15 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 	// budget and the summary are separate switches: a budget makes it think, the
 	// summary makes that thinking legible. Requested here so it applies to every
 	// round of the tool loop — she thinks afresh before each next step.
+	// Always sent, because the output ceiling belongs on every request and not
+	// only on the ones that happen to be thinking. Left unset it is whatever the
+	// API defaults to, which is both invisible and, for anything that writes a
+	// file, too small.
+	body.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: geminiMaxOutput}
 	if req.ThinkingBudget != 0 || req.ShowThoughts {
-		body.GenerationConfig = &geminiGenerationConfig{
-			ThinkingConfig: &geminiThinkingConfig{
-				ThinkingBudget:  req.ThinkingBudget,
-				IncludeThoughts: req.ShowThoughts,
-			},
+		body.GenerationConfig.ThinkingConfig = &geminiThinkingConfig{
+			ThinkingBudget:  req.ThinkingBudget,
+			IncludeThoughts: req.ShowThoughts,
 		}
 	}
 
@@ -247,6 +261,15 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 		return nil, err
 	}
 
+	return decodeGemini(payload)
+}
+
+// decodeGemini turns one Gemini reply into a neutral Response.
+//
+// Split out of Chat so the parts that are easy to get wrong — a truncated
+// answer, thoughts leaking into the reply, a tool call with no id — can be
+// tested against a fixed payload rather than a live model.
+func decodeGemini(payload []byte) (*Response, error) {
 	var decoded geminiResponse
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return nil, fmt.Errorf("gemini: decode response: %w", err)
@@ -286,6 +309,26 @@ func (g *Gemini) Chat(ctx context.Context, req Request) (*Response, error) {
 	}
 	out.Text = strings.TrimSpace(text.String())
 	out.Reasoning = strings.TrimSpace(thoughts.String())
+
+	// The model stopped because it ran out of room, not because it was done.
+	//
+	// finishReason has been decoded since this file was written and never once
+	// read, so a response cut off mid-sentence arrived looking exactly like a
+	// finished one. That is worst where the output IS the artefact: asked to write
+	// a web page, she emits HTML until the ceiling, the tail is dropped, and what
+	// lands is a file that ends inside a tag — with nothing anywhere saying so.
+	// The tool result says "wrote 8,000 bytes" and is telling the truth.
+	//
+	// Appended to the text rather than returned as an error, because the partial
+	// output is still worth having: the agent loop can use it, and now it can also
+	// see that it is partial and ask for the rest.
+	if strings.EqualFold(decoded.Candidates[0].FinishReason, "MAX_TOKENS") {
+		out.Truncated = true
+		out.Text += "\n\n[CUT OFF: this response hit the output limit and stopped mid-way. " +
+			"It is NOT complete. If it was a file, a document or a page, what you have " +
+			"ends part-way through — do not save it or report it as finished. Produce " +
+			"the remainder in a further step, or write it in sections.]"
+	}
 	return out, nil
 }
 
