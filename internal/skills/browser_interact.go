@@ -210,47 +210,6 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 
 	r.Register(Skill{
 		Tool: llm.Tool{
-			Name: "browser_click_real",
-			Description: "Click a CSS selector using genuine mouse events. NOTE: " +
-				"browser_click_text already does a real, trusted click by visible text — " +
-				"prefer it for anything you can name by its wording (links, buttons, quiz " +
-				"titles, answers). Use this only for something with no text you can target " +
-				"(a drag handle, an icon) AND only with an EXACT selector from " +
-				"browser_inspect. Never invent a selector or guess an id/href from a " +
-				"pattern — it will miss and waste the turn.",
-			Params: llm.ObjectSchema(map[string]llm.Property{
-				"name":     {Type: "string", Description: "Tab name."},
-				"selector": {Type: "string", Description: "An EXACT CSS selector from browser_inspect. Not made up."},
-			}, "selector"),
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			tab, err := tabFor(args)
-			if err != nil {
-				return "", err
-			}
-			sel := argString(args, "selector")
-			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
-				Reason: fmt.Sprintf("click %q with real mouse events in tab %q (%s context)",
-					sel, tab.name, tab.ctx)}
-			if err := selectorBudget(ctx, tab); err != nil {
-				return "", err
-			}
-			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				if err := tab.client.ClickReal(ctx, sel); err != nil {
-					tab.missed()
-					return "", clickHint(ctx, tab, err)
-				}
-				tab.sawReality()
-				time.Sleep(900 * time.Millisecond)
-				url, _ := tab.client.URL(ctx)
-				title, _ := tab.client.Title(ctx)
-				return fmt.Sprintf("Clicked. Now on %q\n%s", title, url), nil
-			})
-		},
-	})
-
-	r.Register(Skill{
-		Tool: llm.Tool{
 			Name:        "browser_hover",
 			Description: "Move the pointer over an element, to open a menu that appears on hover.",
 			Params: llm.ObjectSchema(map[string]llm.Property{

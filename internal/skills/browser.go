@@ -324,12 +324,15 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "browser_click",
-			Description: "Click an element by CSS selector (searches shadow DOM and iframes). " +
-				"You will rarely need this — browser_click_text does a real trusted click " +
-				"by visible text and works on almost everything, so reach for that first. " +
-				"Only use a selector you copied verbatim from a browser_inspect you JUST " +
-				"ran; a selector from memory or a pattern you inferred will miss, because " +
-				"app pages generate their ids fresh each visit.",
+			Description: "Click an element by CSS selector, with real mouse events " +
+				"(searches shadow DOM and iframes).\n\n" +
+				"Prefer browser_click_text: naming a thing by what it says is more reliable " +
+				"than a selector, and it is the only target you can be sure of because you " +
+				"read it off the page a moment ago. Use this one when there is no text to " +
+				"aim at — a drag handle, a bare icon — and only with a selector copied " +
+				"verbatim from a browser_inspect you JUST ran. A selector from memory or " +
+				"inferred from a pattern will miss: app pages generate their ids fresh each " +
+				"visit.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name":     {Type: "string", Description: "Tab name."},
 				"selector": {Type: "string", Description: "A selector copied verbatim from a browser_inspect you just ran — not composed, remembered, or guessed. Plain CSS only (no jQuery :contains())."},
@@ -347,7 +350,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return "", err
 			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				if err := tab.client.Click(ctx, sel); err != nil {
+				if err := tab.client.ClickReal(ctx, sel); err != nil {
 					tab.missed()
 					return "", clickHint(ctx, tab, err)
 				}

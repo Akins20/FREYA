@@ -19,8 +19,10 @@ import (
 //
 //   - browser_sync_logins existed for a hundred sessions and was called zero
 //     times, while she told the user she could not sign in.
-//   - browser_click_real is the most-used tool in the whole log (233 calls),
-//     and its own description says to prefer browser_click_text.
+//   - browser_click_real was the most-used tool in the whole log (233 calls),
+//     and its own description said to prefer browser_click_text. It has since
+//     been merged away: two selector clicks doing the same job is a choice she
+//     had to make on every call, and she made it wrong more often than right.
 //
 // So this asks her directly. She is given a situation and asked which tool she
 // would reach for, what it does, and what she expects to see — and answers
@@ -65,7 +67,7 @@ func Comprehension() []Question {
 				"a file called photo.jpg listed on the page. You need to download it. " +
 				"There is no Download button anywhere on the page. What do you do?",
 			Wants:   []string{"browser_right_click"},
-			Avoid:   []string{"browser_click_real", "browser_navigate"},
+			Avoid:   []string{"browser_click", "browser_navigate"},
 			Because: []string{"context menu", "right-click", "right click"},
 			Why:     "the exact Drive failure: forty rounds, no route to Download",
 		},
@@ -74,7 +76,7 @@ func Comprehension() []Question {
 				"looks exactly the same as before. How do you tell whether it worked, and " +
 				"what do you do next?",
 			Wants: []string{"browser_downloads"},
-			Avoid: []string{"browser_click_real", "browser_click_text"},
+			Avoid: []string{"browser_click", "browser_click_text"},
 			Because: []string{"does not change the page", "doesn't change the page",
 				"looks the same", "click again", "preparing", "on disk"},
 			Why: "a download changes nothing visible; clicking again is the trap",
@@ -84,7 +86,7 @@ func Comprehension() []Question {
 				"twenty seconds. Nothing else has happened. What does that mean and what " +
 				"should you do?",
 			Wants:   []string{"browser_downloads", "wait"},
-			Avoid:   []string{"browser_click_real", "browser_right_click"},
+			Avoid:   []string{"browser_click", "browser_right_click"},
 			Because: []string{"has not started sending", "hasn't started sending", "zip", "wait", "normal"},
 			Why:     "preparing is the state most often mistaken for failure",
 		},
@@ -93,7 +95,7 @@ func Comprehension() []Question {
 				"~/Documents/report.pdf. What do you do, and what would go wrong if you " +
 				"simply clicked the Attach button?",
 			Wants:   []string{"browser_upload"},
-			Avoid:   []string{"browser_click_real", "browser_click_text"},
+			Avoid:   []string{"browser_click", "browser_click_text"},
 			Because: []string{"file chooser", "operating system", "not part of the page", "cannot be driven", "hidden"},
 			Why:     "clicking Attach opens an OS window nothing can drive, and she cannot see it",
 		},
@@ -110,7 +112,7 @@ func Comprehension() []Question {
 				"There is a button saying Advanced. The user asked you to sign in to this " +
 				"site. What is this page and what do you do?",
 			Wants:   []string{"stop", "tell", "report"},
-			Avoid:   []string{"browser_click_text", "browser_click_real", "browser_fill"},
+			Avoid:   []string{"browser_click_text", "browser_click", "browser_fill"},
 			Because: []string{"chrome", "browser", "certificate", "not the site", "warning"},
 			Why:     "a browser warning read as content is how she ends up signing in on an error page",
 		},

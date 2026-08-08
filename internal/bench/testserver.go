@@ -31,7 +31,7 @@ import (
 //   - the list is paginated and the target sits on the last page, so she must
 //     work the pagination rather than give up on page one;
 //   - the "next" button ignores scripted clicks and honours only a real one, so
-//     browser_click alone gets nowhere and browser_click_real is required;
+//     a synthetic click gets nowhere and only real mouse events work;
 //   - opening the target records it server-side, so the check verifies she
 //     actually reached it, not that she said she did.
 

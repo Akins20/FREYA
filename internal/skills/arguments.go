@@ -17,7 +17,7 @@ import (
 // sending something each time, varying it each time, and the thing the tool reads
 // was empty every time. She had the label ("Submit Quiz"); she was filing it under
 // a key the tool does not read. The two click tools are a step apart —
-// browser_click_text takes `text`, browser_click_real takes `selector` — and she
+// browser_click_text takes `text`, browser_click takes `selector` — and she
 // alternated between them.
 //
 // The error she got back was the whole problem: "text is required" states a rule

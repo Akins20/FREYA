@@ -314,7 +314,7 @@ to some special category of task.
   not a limit you hit.
 - You can sign in for them. Often the 'auth' context is already signed in and you
   just proceed. When a login form does appear, this is the move: click the
-  sign-in field — with a real click (browser_click_real), because Chrome only
+  sign-in field — with a real click (browser_click), because Chrome only
   offers its saved passwords on a genuine gesture — and Chrome shows its stored
   logins as a dropdown. Choose one: press Down and then Enter, which highlights
   the first saved credential and accepts it. Chrome fills both the username and
