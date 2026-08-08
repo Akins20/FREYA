@@ -16,6 +16,79 @@ import (
 // decides what is worth keeping, writes it as a durable fact, and searches the
 // archive when the working set does not already hold the answer.
 func RegisterMemory(r *Registry, store *memory.Store, index *memory.Index) {
+	// Episodic memory's second level of disclosure.
+	//
+	// An episode line in the prompt says a conversation happened and roughly what
+	// about; the turns behind it are where the answer actually is. Without this
+	// the only route back was BM25 over the archive, which is lexical — and the
+	// requests that need an episode are exactly the ones lexical search cannot
+	// serve ("how did I work this site last night" has no distinctive words in
+	// it). So the summary carries its id and this opens it: index first, detail
+	// on demand, the same shape as the tool catalogue and the learned playbooks.
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "recall_episode",
+			Description: "Read the actual turns behind a summarised episode. Every " +
+				"episode line in your context starts with its id in [brackets] — pass " +
+				"that id here to open it.\n\n" +
+				"Use it when a summary is clearly about what you need but does not " +
+				"contain the detail: the route that worked, what was decided, what the " +
+				"user actually said. A summary tells you a conversation happened; this " +
+				"tells you what was in it.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"id": {Type: "string", Description: "The episode id, as shown in [brackets]."},
+			}, "id"),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			id := strings.TrimSpace(strings.Trim(argString(args, "id"), "[]"))
+			view := store.View()
+
+			var ep memory.Episode
+			var found bool
+			for _, e := range view.Episodes {
+				if e.ID == id {
+					ep, found = e, true
+					break
+				}
+			}
+			if !found {
+				// Say what IS openable rather than only what is not — a wrong id is
+				// recoverable in one round if the reply carries the real ones.
+				avail := make([]string, 0, 8)
+				for i, e := range view.Episodes {
+					if i >= 8 {
+						break
+					}
+					avail = append(avail, fmt.Sprintf("%s (%s)", e.ID, e.From.Format("2 Jan 15:04")))
+				}
+				return "", fmt.Errorf("no episode %q. The most recent are: %s",
+					id, strings.Join(avail, ", "))
+			}
+
+			want := make(map[string]bool, len(ep.TurnIDs))
+			for _, t := range ep.TurnIDs {
+				want[t] = true
+			}
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "Episode %s, %s to %s — %s\n\n", ep.ID,
+				ep.From.Format("2 Jan 2006 15:04"), ep.To.Format("15:04"), ep.Summary)
+
+			var n int
+			for _, t := range store.Turns() {
+				if !want[t.ID] {
+					continue
+				}
+				n++
+				fmt.Fprintf(&sb, "%s: %s\n", t.Role, strings.TrimSpace(t.Text))
+			}
+			if n == 0 {
+				return "", fmt.Errorf("episode %s summarises %d turns, but none of them are "+
+					"still in the archive", ep.ID, len(ep.TurnIDs))
+			}
+			return strings.TrimRight(sb.String(), "\n"), nil
+		},
+	})
+
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "memory_remember",

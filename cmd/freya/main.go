@@ -448,6 +448,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		// can ask; these loops exist for the hours when nobody is.
 		eng.run(ctx)
 
+		// And the housekeeping: fold together the procedures she has learned
+		// twice. Claude reviews the merge because the user does not drive her CLI
+		// — a review surface nobody looks at is a queue that grows forever. See
+		// consolidate.go.
+		go (&tidier{learned: learned, claude: claudeClient}).run(ctx)
+
 		if vs != nil {
 			vs.indicator = ind
 			// Over voice, a destructive action is not silently denied — she asks

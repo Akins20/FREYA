@@ -254,8 +254,13 @@ func (b *ContextBuilder) buildEpisodes(view View, budget int) (string, int) {
 	var sb strings.Builder
 	used, count := 0, 0
 	for _, e := range episodes { // newest first
-		line := fmt.Sprintf("- %s — %s\n",
-			e.From.Format("2 Jan 2006 15:04"), strings.TrimSpace(e.Summary))
+		// The id costs about five tokens and turns each line from a dead end into
+		// a door: a summary says a conversation happened, and recall_episode is
+		// how she reads what was actually said in it. Without it the only route
+		// back to the detail is BM25 over the archive, which is lexical — and
+		// "what did we work out last night" has no distinctive words in it.
+		line := fmt.Sprintf("- [%s] %s — %s\n",
+			e.ID, e.From.Format("2 Jan 2006 15:04"), strings.TrimSpace(e.Summary))
 		cost := EstimateTokens(line)
 		if used+cost > budget {
 			break

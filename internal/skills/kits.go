@@ -106,7 +106,8 @@ func kitOf(name string) Kit {
 // making that wait for a routing decision would be absurd.
 var coreTools = map[string]bool{
 	"memory_remember": true, "memory_recall": true, "memory_forget": true,
-	"read_file": true, "write_file": true, "list_dir": true, "change_dir": true,
+	"recall_episode": true,
+	"read_file":      true, "write_file": true, "list_dir": true, "change_dir": true,
 	"run_shell": true, "web_search": true, "web_fetch": true,
 	"browser_open": true, "browser_read": true, "browser_click_text": true,
 	"browser_tabs": true, "browser_status": true,

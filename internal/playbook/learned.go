@@ -70,11 +70,25 @@ type Learned struct {
 	byID  map[string]Skill
 	used  map[string]time.Time
 	first map[string]time.Time
+	// gone is what consolidation merged away, kept rather than deleted — see
+	// consolidate.go for why nothing here is ever destroyed.
+	gone []supersededSkill
 }
 
-// stored is the file format: skills plus when each was last consulted.
+// stored is the file format: live skills, plus the ones a merge replaced.
 type stored struct {
-	Skills []storedSkill `json:"skills"`
+	Skills     []storedSkill     `json:"skills"`
+	Superseded []supersededSkill `json:"superseded,omitempty"`
+}
+
+// supersededSkill is a playbook a consolidation merged away, with a note saying
+// what replaced it so a bad merge is recoverable.
+type supersededSkill struct {
+	Name       string    `json:"name"`
+	Summary    string    `json:"summary"`
+	Body       string    `json:"body"`
+	ReplacedBy string    `json:"replaced_by"`
+	ReplacedAt time.Time `json:"replaced_at"`
 }
 
 type storedSkill struct {
@@ -111,6 +125,7 @@ func OpenLearned(dir string) (*Learned, error) {
 		l.used[e.Name] = e.LastUsed
 		l.first[e.Name] = e.Learned
 	}
+	l.gone = s.Superseded
 	return l, nil
 }
 
@@ -235,6 +250,7 @@ func (l *Learned) snapshotLocked() stored {
 		})
 	}
 	sort.Slice(s.Skills, func(i, j int) bool { return s.Skills[i].Name < s.Skills[j].Name })
+	s.Superseded = append([]supersededSkill(nil), l.gone...)
 	return s
 }
 

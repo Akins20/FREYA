@@ -1293,7 +1293,7 @@ NAME is already in the prompt does not have to be found.
       transcript; a playbook is a lesson. One summary line, ordered steps, and
       what NOT to do — the wrong door at `learn.uopeople.edu/d2l/login` is as
       valuable as the right one.
-- [ ] **25c. Consolidation, because nothing else forgets.** The research names
+- [x] **25c. Consolidation, because nothing else forgets.** The research names
       forgetting as the unsolved part, and Claude Code's answer (Dreams) merges
       duplicates and replaces stale entries under human review. Learned
       playbooks accumulate junk by construction: twenty near-identical "signed
@@ -1304,7 +1304,7 @@ NAME is already in the prompt does not have to be found.
       timeout-bounded. Then check `/reflect` and `recall_perspectives` actually
       say something — they have been answering "no additional angles surfaced"
       forever, which reads as "nothing to say" rather than "never ran".
-- [ ] **25e. Episode expansion.** Give episodes a stable id and a tool to fetch
+- [x] **25e. Episode expansion.** Give episodes a stable id and a tool to fetch
       the turns behind one, so a summary in the prompt is a door rather than a
       dead end. This is the episodic half of the same index-then-disclose shape.
 - [ ] ~~25b (original). Retrieve by task shape.~~ **Dropped** — see above. Keep
