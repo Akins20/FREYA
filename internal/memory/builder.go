@@ -42,6 +42,11 @@ type ContextBuilder struct {
 	// Insights supplies background observations from the reflection lenses.
 	// Placed in the volatile tail so it never disturbs the cached prefix.
 	Insights func() []string
+	// Learned supplies the index of procedures she has worked out for herself,
+	// one line each. Also in the volatile tail, and for a sharper reason than
+	// Insights: it changes whenever she learns something, so anywhere earlier
+	// would make every lesson cost a re-processed prefix.
+	Learned func() string
 }
 
 // NewContextBuilder wires a builder with sensible defaults.
@@ -149,6 +154,23 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 			snap.RetrievedTokens = EstimateTokens(retrieved)
 			snap.RetrievedCount = count
 			alloc.spend(snap.RetrievedTokens)
+		}
+	}
+
+	// What she has taught herself, one line each.
+	//
+	// Here rather than in the `skill` tool's description, where the EMBEDDED
+	// index lives, because this one changes the moment she learns something and
+	// a tool declaration leads the request: one lesson would re-bill every
+	// stable tier behind it for the rest of the session. Down here a change
+	// costs only itself, and the index is live rather than snapshotted at
+	// startup — she can learn a procedure and see it listed on the next turn.
+	if b.Learned != nil {
+		if idx := b.Learned(); idx != "" {
+			msgs = append(msgs, llm.Message{Role: llm.RoleUser,
+				Text: "[Procedures you worked out yourself. Consult one with " +
+					"skill(name=…) before repeating that kind of work]\n" + idx})
+			snap.RetrievedTokens += EstimateTokens(idx)
 		}
 	}
 

@@ -384,6 +384,14 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			if a.Builder.Index != nil {
 				a.Builder.Index.Add(assistantTurn.ID, "turn", reply)
 			}
+			// Re-read memory now the answer is out. This call was written, then
+			// never made: the lenses had four readers — the insights tier,
+			// /reflect, recall_perspectives, and the proactive loop — and nothing
+			// at all producing for them, so every one of them has been answering
+			// "no additional angles surfaced" since it was built. That reads as
+			// "nothing to say" rather than "never ran", which is why it went
+			// unnoticed for so long.
+			a.reflectAfter(input, reply)
 			result.Reply = reply
 			return result, nil
 		}

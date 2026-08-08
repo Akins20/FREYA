@@ -68,3 +68,54 @@ func TestNoCatalogueMeansNoHeading(t *testing.T) {
 		t.Error("an unset catalogue still emitted its heading")
 	}
 }
+
+// The learned-procedure index must sit in the VOLATILE TAIL, after everything
+// cached. It changes the moment she learns something; anywhere earlier and one
+// lesson re-bills every stable tier behind it for the rest of the session.
+//
+// This is the mirror of the catalogue test above: the catalogue must be early
+// because it never changes, and this must be late because it changes often.
+func TestTheLearnedIndexStaysOutOfTheCachedPrefix(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendTurn(Turn{Role: "user", Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := NewContextBuilder(s, BuildIndex(s), "persona")
+	b.Catalogue = "CATALOGUE-MARKER"
+	b.Learned = func() string { return "- uopeople-signin — the portal door, not the courses one" }
+	system, msgs, _ := b.Build("anything")
+
+	if strings.Contains(system, "uopeople-signin") {
+		t.Fatal("the learned index landed in the SYSTEM prompt — every lesson would " +
+			"invalidate the whole cached prefix behind it")
+	}
+	var found bool
+	for _, m := range msgs {
+		if strings.Contains(m.Text, "uopeople-signin") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the learned index reached neither the system prompt nor the messages")
+	}
+}
+
+// Nothing learned yet must cost nothing. The tail is paid for on every turn.
+func TestNoLearnedProceduresAddsNothing(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewContextBuilder(s, BuildIndex(s), "persona")
+	b.Learned = func() string { return "" }
+	_, msgs, _ := b.Build("anything")
+	for _, m := range msgs {
+		if strings.Contains(m.Text, "Procedures you worked out") {
+			t.Error("an empty learned store still emitted its heading")
+		}
+	}
+}

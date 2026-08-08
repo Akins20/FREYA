@@ -112,7 +112,7 @@ var coreTools = map[string]bool{
 	"browser_tabs": true, "browser_status": true,
 	"note_add": true, "note_list": true, "note_done": true,
 	"schedule_task": true, "scheduled_list": true,
-	"skill": true, "skills": true, "report_problem": true,
+	"skill": true, "skills": true, "skill_learn": true, "report_problem": true,
 	// The way back from a narrowed set. It has to be reachable from every
 	// exchange, whatever routing decided, or the catalogue names tools she has
 	// no way to reach — see catalogue.go.

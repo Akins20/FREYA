@@ -1226,29 +1226,92 @@ through.
       interstitial markup (`#main-frame-error`, `.interstitial-wrapper`,
       `#proceed-link`) or a scheme no site can serve.
 
-### Phase 25 — retrieval: the tier that has never once been used
+### Phase 25 — memory: she cannot learn a procedure
 
-`internal/reflect` is dead in production: `reflectAfter` is defined and never
-called, so tier 6 never reaches any prompt and `/reflect` is permanently empty.
-Sixteen tests pass on unused code.
+**Re-planned after research, which contradicted two claims in the original.**
+Both were checked against the code before rewriting; both were wrong.
 
-And BM25 is lexical, which bit hard this week: "how did I work this site last
-night" is a SEQUENCE OF ACTIONS with no distinctive words in it. That is exactly
-what lexical retrieval cannot find, and it is why cutting the working set to 32k
-made her worse at the portal rather than merely faster.
+#### What the research said
 
-- [ ] **25a. Procedures.** A finished exchange already produces a trail
-      (`internal/agent/trail.go`). Distil the successful ones into a PROCEDURE:
-      the goal, the site, the ordered steps that worked.
-- [ ] **25b. Retrieve by task shape, not vocabulary.** "signing into a portal",
-      "working through a quiz", "downloading from a file app" — matched on the
-      shape of the request rather than its words.
-- [ ] **25c. Wire it into the volatile tail**, never ahead of identity. This is
-      the tier that would have let her recall the my.uopeople.edu route instead
-      of a human finding it in her archive.
-- [ ] **25d. Decide `internal/reflect`: wire it or delete it.** Sixteen passing
-      tests on unreachable code is worse than no tests, because they read as
-      coverage.
+Claude Code carries four kinds of memory, and the mechanism for each is the
+interesting part ([alexop.dev](https://alexop.dev/posts/four-types-memory-coding-agents-claude-code/)):
+
+| Type | Mechanism | Always loaded | On demand |
+|---|---|---|---|
+| Working | context window | the session | — |
+| Semantic | CLAUDE.md + @-imports | at session start | imported docs |
+| Procedural | Skills in `.claude/skills/` | index, ~100 tok/skill | full SKILL.md |
+| Episodic | auto-memory directory | first 200 lines as index | topic files |
+
+The load-bearing detail: **procedural and episodic memory are not RETRIEVED,
+they are INDEXED.** A cheap always-present index, the body fetched on demand —
+three levels of progressive disclosure, exactly the shape Phase 24e landed for
+tools. Episodic capture is agent-driven distillation, not transcript dumping.
+
+**So the original 25b — "retrieve by task shape, not vocabulary" — is solving
+the wrong problem, and is dropped.** BM25 genuinely cannot match "how did I work
+this site last night", because that request has no distinctive words in it. But
+the cure is not a cleverer matcher; it is not needing to match. A procedure whose
+NAME is already in the prompt does not have to be found.
+
+#### What was actually wrong here — verified, not assumed
+
+- **`internal/reflect` is not dead. It is starved.** `Reflect()` is called from
+  exactly one place, `reflectAfter` (agent.go:675), which is itself never called.
+  Meanwhile it has FOUR live readers: `builder.Insights` (main.go:332),
+  `/reflect` (main.go:941), the `recall_perspectives` tool (voice.go:206), and
+  proactive.go:75,93. Four consumers, zero producers. "Wire it or delete it" was
+  the wrong question — the wiring is done and one call is missing. And the
+  lenses are **pure Go, no model calls**, so feeding them costs CPU in a
+  goroutine that already has a 15s timeout, not tokens or latency.
+- **The procedural index is already always-present.** `playbook.Index()` sits
+  inside the `skills` tool description (skillbook.go:27), and `skills` is in the
+  core kit — so tool declarations carry it on every request. That half of the
+  Claude Code pattern was already built, and the package doc already states the
+  principle ("a one-line summary so she can tell, from the index alone, when to
+  reach for it").
+- **What is missing is `Add`.** `playbook` exposes `Get`, `Names`, `Index` and
+  nothing that writes. Playbooks are embedded strings, so her procedural memory
+  is frozen at whatever was compiled in. **She cannot learn a procedure** — which
+  is the actual Phase 25 problem, and is not a retrieval problem at all.
+- **Episodes have no expand.** `buildEpisodes` lists them newest-first as
+  one-line summaries until the budget runs out, and there is no way to pull the
+  detail back for one. BM25 over the archive is the only path, and it is lexical.
+
+#### The work
+
+- [x] **25a. Learned playbooks — procedural memory she can write.** A store in
+      `FREYA_DATA_DIR` merged into the same index as the embedded ones, so the
+      index stays one list and the disclosure levels stay two. Written when an
+      exchange succeeds at something that took work: the goal, the site, the
+      ordered steps that actually worked. `internal/agent/trail.go` already
+      records every call of an exchange, so the raw material exists.
+      The `my.uopeople.edu` route is the case to test against: a human found it
+      in her archive because she had no way to keep it.
+- [x] **25b. Distil, do not dump.** The research is explicit that episodic
+      capture works when the agent decides what is worth keeping. A trail is a
+      transcript; a playbook is a lesson. One summary line, ordered steps, and
+      what NOT to do — the wrong door at `learn.uopeople.edu/d2l/login` is as
+      valuable as the right one.
+- [ ] **25c. Consolidation, because nothing else forgets.** The research names
+      forgetting as the unsolved part, and Claude Code's answer (Dreams) merges
+      duplicates and replaces stale entries under human review. Learned
+      playbooks accumulate junk by construction: twenty near-identical "signed
+      into the portal" entries are worse than one. Needs a merge pass and a cap,
+      and `/skills` should show what she has taught herself so it is reviewable.
+- [x] **25d. Feed the four starved readers.** Call `reflectAfter` after a turn.
+      Cheap (pure Go), already detached from the request context, already
+      timeout-bounded. Then check `/reflect` and `recall_perspectives` actually
+      say something — they have been answering "no additional angles surfaced"
+      forever, which reads as "nothing to say" rather than "never ran".
+- [ ] **25e. Episode expansion.** Give episodes a stable id and a tool to fetch
+      the turns behind one, so a summary in the prompt is a door rather than a
+      dead end. This is the episodic half of the same index-then-disclose shape.
+- [ ] ~~25b (original). Retrieve by task shape.~~ **Dropped** — see above. Keep
+      BM25 as-is for what it is genuinely good at ("what did we decide about the
+      NTFS drive"), and stop asking it to do what an index should.
+- [x] **Do not delete `internal/reflect`.** The sixteen tests are on code with
+      four live consumers and one missing call.
 
 ### Phase 26 — browser: verification as a contract, not a habit
 

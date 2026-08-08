@@ -22,6 +22,7 @@ import (
 	"github.com/akins/jarvis/internal/hotkey"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/memory"
+	"github.com/akins/jarvis/internal/playbook"
 	"github.com/akins/jarvis/internal/reflect"
 	"github.com/akins/jarvis/internal/schedule"
 	"github.com/akins/jarvis/internal/sentinel"
@@ -371,7 +372,15 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	sen := setupSentinel(cfg, reg, store)
 	skills.RegisterProactive(reg, sen)
 	skills.RegisterTelemetry(reg, cfg.DataDir)
-	skills.RegisterSkillbook(reg)
+	// Procedural memory she can write. A failure to open it costs her the ability
+	// to LEARN a procedure, never the ability to consult the built-in ones — so it
+	// degrades to the old behaviour rather than failing the session.
+	learned, learnedErr := playbook.OpenLearned(cfg.DataDir)
+	if learnedErr != nil && cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "%slearned playbooks: %v%s\n", cDim, learnedErr, cReset)
+	}
+	skills.RegisterSkillbook(reg, learned)
+	builder.Learned = learned.Index
 
 	// Ctrl-C cancels the in-flight request rather than killing the process.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

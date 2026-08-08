@@ -15,8 +15,15 @@ import (
 // (playbooks). She calls it before a kind of work to load the practice for it,
 // exactly as a person reads the runbook before touching the unfamiliar system.
 
-// RegisterSkillbook adds the skill-consulting tool.
-func RegisterSkillbook(r *Registry) {
+// RegisterSkillbook adds the skill-consulting tool, and — when a learned store
+// is supplied — the tool that writes one.
+//
+// The embedded index goes in the tool description below, where it is part of the
+// cached prefix and costs nothing per turn. The LEARNED index deliberately does
+// not: it changes whenever she learns something, and a changing tool description
+// is a changing prefix. It rides the volatile tail instead — see
+// internal/playbook/learned.go for the whole argument.
+func RegisterSkillbook(r *Registry, learned *playbook.Learned) {
 	// The available skills are listed in the description so the model sees, every
 	// turn, what know-how exists and when each applies — without spending a tool
 	// call to find out.
@@ -45,9 +52,65 @@ func RegisterSkillbook(r *Registry) {
 			name := argString(args, "name")
 			s, ok := playbook.Get(name)
 			if !ok {
-				return "", fmt.Errorf("no skill named %q. Available: %v", name, playbook.Names())
+				// Then what she taught herself. Checked second so an embedded
+				// playbook always wins a name collision — authored practice
+				// outranks one evening's conclusion.
+				if learned != nil {
+					if ls, lok := learned.Get(name); lok {
+						return ls.Body, nil
+					}
+				}
+				avail := playbook.Names()
+				if learned != nil {
+					avail = append(avail, learned.Names()...)
+				}
+				return "", fmt.Errorf("no skill named %q. Available: %v", name, avail)
 			}
 			return s.Body, nil
+		},
+	})
+
+	if learned == nil {
+		return
+	}
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "skill_learn",
+			Description: "Record how to do something, so next time you already know.\n\n" +
+				"Write one when you worked something out that cost you real effort and " +
+				"would cost it again: the door that turned out to be the right one, the " +
+				"control that is not where it looks, the order of steps that finally " +
+				"worked. Do NOT record a transcript of what you just did — record the " +
+				"LESSON, in the order someone would need it, including what not to " +
+				"bother trying. A wrong turn you can name is worth as much as the right " +
+				"one.\n\n" +
+				"Not for one-off facts (remember those) and not for things that were " +
+				"easy. This is for practice, not for events.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"name": {Type: "string", Description: "Short handle, e.g. 'uopeople-signin'."},
+				"summary": {Type: "string", Description: "One line saying when to reach " +
+					"for this. It is the only part you always see, so it has to be the part " +
+					"that makes you open the rest."},
+				"body": {Type: "string", Description: "The ordered steps that worked, and " +
+					"the ones that did not."},
+			}, "name", "summary", "body"),
+		},
+		Mutates: true,
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			s := playbook.Skill{
+				Name:    argString(args, "name"),
+				Summary: argString(args, "summary"),
+				Body:    argRaw(args, "body"),
+			}
+			if err := learned.Add(s); err != nil {
+				return "", err
+			}
+			// Read it back rather than confirming blandly: she can act on this
+			// within the same exchange, without waiting for the index to carry it.
+			return fmt.Sprintf("Learned %q — %s\n\nYou can consult it any time with "+
+				"skill(name=%q). What you recorded:\n\n%s",
+				s.Name, s.Summary, s.Name, s.Body), nil
 		},
 	})
 }
