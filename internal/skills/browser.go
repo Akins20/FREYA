@@ -624,9 +624,36 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			Params: llm.ObjectSchema(nil),
 		},
 		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
-			action := guard.Action{Kind: guard.KindWrite,
+			// KindBrowser, not KindWrite — and the reason still names exactly what
+			// is copied, so the audit log is unchanged.
+			//
+			// As KindWrite this scored RiskMedium, which requires a confirmation,
+			// and the paths she actually runs in have nobody to confirm to: the
+			// daemon, voice, and one-shot -ask all lack a terminal, so the answer
+			// defaults to no and the tool declines itself. Measured rather than
+			// guessed — asked to sign in with three saved logins on the account,
+			// she filled the username, Chrome autofilled a DIFFERENT account's
+			// password, and the one tool that fixes that could not run.
+			//
+			// This is the same bug browser_open had, where elevating the auth
+			// context meant she could not open the user's own portal at their own
+			// request over voice.
+			//
+			// The argument for lowering it is not that credentials do not matter.
+			// It is that browser_open in the auth context is ALREADY RiskLow and
+			// already drives the browser as the user, with their real cookies —
+			// this only populates the profile that browser_open then uses. Gating
+			// the populate while auto-approving the use is backwards.
+			//
+			// The sync also cannot destroy anything. It copies FROM the real Chrome
+			// profile and never writes to it, its destination is Freya's own
+			// automation profile, and the script refuses to run at all while Chrome
+			// is open rather than tearing a live database. The confirmation was
+			// protecting files that are hers.
+			action := guard.Action{Kind: guard.KindBrowser,
 				Command: "sync chrome profile",
-				Reason:  "copy cookies and saved logins into the automation profile"}
+				Reason: "copy the user's cookies and saved logins into the automation " +
+					"profile, so the browser she drives is signed in as they are"}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				return browser.SyncAuthProfile(ctx)
 			})
