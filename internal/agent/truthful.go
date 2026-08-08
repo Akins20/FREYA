@@ -127,6 +127,17 @@ func truthBrief(goal string, attempts int) string {
 func (a *Agent) checkTruthful(ctx context.Context, system string, msgs []llm.Message,
 	goal, reply string, work *trail) string {
 
+	// A blanket claim over a set a tool enumerated for her. Checked first because
+	// it applies to the successful exchanges — the ones where the work went well
+	// and the last sentence promised more of it than happened. See coverage.go.
+	if n, noun := overclaimed(reply, work); n > 0 {
+		a.trace("retry", "coverage", fmt.Sprintf(
+			"reply claims all %d %s — asking it to state what was actually covered", n, noun))
+		if corrected := a.reask(ctx, system+coverageBrief(goal, n, noun), msgs); corrected != "" {
+			reply = corrected
+		}
+	}
+
 	attempts, none := nothingWorked(work)
 	if !none || attempts < severeFailure {
 		return reply
