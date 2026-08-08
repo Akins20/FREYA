@@ -50,6 +50,18 @@ type PageState struct {
 	BrowserPage bool
 	// Loading reports that navigation has not settled.
 	Loading bool
+	// Rendering reports that the document is COMPLETE but the page is still
+	// putting itself together — skeleton bars, spinners, aria-busy regions.
+	//
+	// Loading and this are different moments, and only the second one is the
+	// failure the web playbook warns about. readyState flips to "complete" as
+	// soon as the document and its subresources are in, which on any modern
+	// application is long before the data arrives: the shell is there, the rows
+	// are grey placeholders. Reading then gives her a page that is genuinely
+	// complete and genuinely empty, and "it's showing empty" gets reported as the
+	// answer instead of as looking too early. That instruction was in prose and
+	// nothing checked it.
+	Rendering bool
 	// Errors are console errors, newest last. A page that threw is a page whose
 	// controls may simply not be wired up.
 	Errors []string
@@ -65,6 +77,12 @@ func (s PageState) Describe() string {
 	if s.Loading {
 		lines = append(lines, "  · the page is still loading — read it again in a moment "+
 			"rather than concluding it is empty")
+	}
+	if s.Rendering {
+		lines = append(lines, "  · the page has finished loading but is still filling in — "+
+			"there are skeleton placeholders or spinners on it. What you just read may be "+
+			"the shell rather than the data. Wait for something you expect and read again; "+
+			"do NOT report this as empty or missing")
 	}
 	for _, e := range s.Errors {
 		lines = append(lines, "  · the page reported an error: "+clipText(e, 160))
@@ -117,7 +135,10 @@ func (c *Client) State(ctx context.Context) PageState {
       ready: document.readyState,
       text: (document.body ? (document.body.innerText || '') : '').slice(0, 800),
       chrome: !!document.querySelector(
-        '#main-frame-error, .interstitial-wrapper, #proceed-link, #security-interstitial')
+        '#main-frame-error, .interstitial-wrapper, #proceed-link, #security-interstitial'),
+      busy: !!document.querySelector(
+        '[aria-busy="true"], [role="progressbar"], [class*="skeleton"], ' +
+        '[class*="shimmer"], [class*="placeholder"], [class*="animate-pulse"]')
     })`)
 	if err != nil {
 		return s
@@ -127,11 +148,15 @@ func (c *Client) State(ctx context.Context) PageState {
 		Ready  string `json:"ready"`
 		Text   string `json:"text"`
 		Chrome bool   `json:"chrome"`
+		Busy   bool   `json:"busy"`
 	}
 	if json.Unmarshal([]byte(raw), &probe) != nil {
 		return s
 	}
 	s.Loading = probe.Ready != "complete"
+	// Only interesting once the document itself is done: before that, Loading
+	// already says everything and saying both would be noise.
+	s.Rendering = !s.Loading && probe.Busy
 
 	hay := strings.ToLower(probe.Text + " " + s.Title + " " + s.URL)
 	for _, p := range interstitialPatterns {

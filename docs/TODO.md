@@ -1359,9 +1359,57 @@ private" with the user waiting to sign in, she says she would click Advanced and
 proceed, AFTER the playbook told her not to. The code refuses her now, so the
 behaviour is safe while the intention stays wrong.
 
-- [ ] That is a clean demonstration that **prose in a prompt is not a control**.
+- [x] That is a clean demonstration that **prose in a prompt is not a control**.
       Audit what else is currently guarded only by guidance, and move the ones
       that matter into code.
+
+**Done.** Every imperative in the playbooks was extracted and checked against the
+code that would have to enforce it. The result was better than feared and the
+gaps were not where they were expected.
+
+ENFORCED (verified, not assumed):
+
+| Prose rule | What actually enforces it |
+|---|---|
+| never type a password or card into a field | secret-field refusal, `browser.go` |
+| never click through a safety warning | `RefuseInteraction` + `Protect` — but see below |
+| do not answer a failed selector with another | `selectorBudget` circuit breaker |
+| identifiers must be COMPUTED, never from your head | the provenance `Ledger` + `CheckURL` |
+| do not click the same thing again | `attemptLog`, repeat limit 2 |
+| the page may still be loading | `PageState.Loading`, appended by `browser_read` |
+| an action that changed nothing must say so | `Outcome.Changed` + `Observe` — but see below |
+
+Two of those rows were only true after this session. The warning refusal covered
+half the interaction family (Phase 24f correction) and the change-detection was
+gated on the same unset flag (Phase 26).
+
+MOVED INTO CODE THIS PASS:
+
+- [x] **"Never report placeholders as the result."** The only check was
+      `readyState != "complete"`, which flips to complete as soon as the document
+      is in — long before an application's data arrives. So the exact state the
+      instruction is about (shell present, rows still grey) was reported as a
+      finished, empty page. New `PageState.Rendering` detects it from
+      `aria-busy`, `role=progressbar` and skeleton/shimmer class names, and says
+      plainly not to report it as empty.
+
+STILL PROSE ONLY — ranked by what it would cost:
+
+- [ ] **"ALWAYS VERIFY THE RESULT, NOT THE EXIT" (shell).** `run_shell` and
+      `run_command` are not marked `Mutates` and have no `Observe`, so a command
+      that exits 0 having silently done nothing — the redirection-or-pipe case
+      the shell playbook exists for — reads as success. This is the exact shape
+      of the browser bug Phase 26 just fixed, in the family that has not had it
+      fixed. Highest value remaining.
+- [ ] **`docx_write` / `pdf_write` / `xlsx_write` / `system_open` unmarked.**
+      They write files and open applications with no framework verification.
+- [ ] **"Do NOT rewrite the whole file with file_write."** Nothing stops a
+      whole-file write clobbering something that wanted a surgical edit.
+- [ ] **"Do NOT delegate what you can already do with your own tools."** Costs
+      quota rather than correctness, so it is last.
+- [ ] **"Never sit in the guest context and then say you can't sign in."**
+      Detectable — a "cannot sign in" conclusion reached from a guest tab is a
+      checkable contradiction — but not currently checked.
 
 ## Phase 17 — remaining
 

@@ -143,3 +143,36 @@ func TestABlanketRefusalNeedsCertaintyNotSuspicion(t *testing.T) {
 		t.Errorf("an ordinary page refused interaction: %s", why)
 	}
 }
+
+// "Never report placeholders as the result" was prose, and readyState does not
+// enforce it.
+//
+// The web playbook tells her that empty rows and grey skeleton bars mean she
+// looked too early, not that the data is missing. The only thing checking that
+// was `readyState != "complete"` — which flips to complete as soon as the
+// document is in, long before an application's data arrives. So the exact state
+// the instruction is about (shell present, rows still placeholders) reported as
+// a finished, empty page.
+func TestAPageThatIsCompleteButStillFillingInSaysSo(t *testing.T) {
+	filling := PageState{Rendering: true}
+	d := filling.Describe()
+	if d == "" {
+		t.Fatal("a page still rendering placeholders described itself as unremarkable")
+	}
+	for _, want := range []string{"still filling in", "shell rather than the data", "do NOT report this as empty"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description is missing %q: %s", want, d)
+		}
+	}
+
+	// While still navigating, Loading already covers it — saying both is noise.
+	both := PageState{Loading: true}
+	if strings.Contains(both.Describe(), "still filling in") {
+		t.Error("a page that has not finished loading also claimed to be rendering")
+	}
+
+	// And an ordinary settled page says nothing at all.
+	if got := (PageState{}).Describe(); got != "" {
+		t.Errorf("a settled page described itself: %q", got)
+	}
+}
