@@ -1455,6 +1455,38 @@ request must still be able to touch a file.
       destroying anything, so there is nothing for a guard to protect — recorded
       rather than marked, because a flag that buys nothing is noise.
 
+## Baseline measurement — 9 Aug 2026
+
+**Do not deploy to her until this is taken.** Nine restarts on 8 Aug cold-started
+the prompt prefix nine times, so every cache number from that day is an artefact
+of the work rather than a reading of her behaviour.
+
+What 8 Aug measured, for comparison:
+
+| | all time | 8 Aug | after 19:00 |
+|---|---|---|---|
+| tool failure rate | 279/1171 = **24%** | 11/183 = **6%** | 3/64 = **5%** |
+| longest same-tool run | 22 | 11 (legitimate work, not a spiral) | — |
+| writes attempted / succeeded | 3 / **0 ever** | 19 / **16** | — |
+| cache hit rate | ~91% (plan baseline) | 73% — **contaminated by deploys** | — |
+| median prompt | 155k (plan baseline) | **154k** | — |
+| cost | — | $4.99 over 324 model calls | — |
+
+The all-time 24% matches the plan's original baseline exactly, so those two are
+like for like. The <5% gate is essentially met and needs an undisturbed day to
+say so honestly.
+
+- [ ] A full day of ordinary use with NO deploy, then re-read all six rows.
+- [ ] The two numbers that actually want work are the last two, and they are the
+      same problem: the median prompt is back at 155k and the working set only
+      evicts once it is already enormous. That is what let a one-sentence request
+      drown in 196k tokens of quiz history on 8 Aug — the current-request marker
+      treats the symptom and the saturation is the cause.
+- [ ] Do not diagnose that from 8 Aug's telemetry. Every prompt-shaping change of
+      that day — catalogue, learned index, request marker, kits — is in those
+      numbers, and separating them from her ordinary behaviour is not possible
+      after the fact.
+
 ## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222
