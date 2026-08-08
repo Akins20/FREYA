@@ -48,8 +48,19 @@ func RegisterSystem(r *Registry) {
 
 	r.Register(Skill{
 		Tool: llm.Tool{
-			Name:        "system_open",
-			Description: "Launch an application or open a file, URL or folder with the default handler.",
+			Name: "system_open",
+			Description: "Launch an application, or open a file, URL or folder with the " +
+				"default handler.\n\n" +
+				"THIS IS HOW YOU SHOW THE USER SOMETHING. It opens on THEIR screen, in " +
+				"their own applications. When they ask to see something you have made — " +
+				"a page, a document, a folder of results — this is the tool, and there is " +
+				"no other. Pasting the contents into your reply is not showing them; a " +
+				"wall of markup is worse than useless to someone who asked to look at a " +
+				"website.\n\n" +
+				"browser_open is the opposite of this: it opens in YOUR automation " +
+				"browser, which is a separate profile in a window they are not watching. " +
+				"Use that to inspect your own work and compare it against the original. " +
+				"Use this when the point is for them to see it.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"app": {Type: "string", Description: "Application name, file path or URL."},
 			}, "app"),

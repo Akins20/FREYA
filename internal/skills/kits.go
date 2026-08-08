@@ -123,7 +123,11 @@ var coreTools = map[string]bool{
 	// exchange, whatever routing decided, or the catalogue names tools she has
 	// no way to reach — see catalogue.go.
 	"find_tools": true,
-	"work_start": true, "work_list": true, "work_cancel": true,
+	// Her only way to put something on the user's own screen. Asked to show them
+	// a site she had just built, she pasted the markup into the reply instead —
+	// this must never wait on a routing decision.
+	"system_open": true,
+	"work_start":  true, "work_list": true, "work_cancel": true,
 }
 
 // kitSignals are the words that call for a kit.
