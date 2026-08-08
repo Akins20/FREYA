@@ -167,7 +167,7 @@ var shellMetacharacters = []string{"&&", "||", ";", "|", "`", "$(", ">", ">>", "
 
 // assess is the core evaluation. It is deliberately conservative: when a signal
 // is ambiguous it raises the risk rather than lowering it.
-func assess(action Action, extraProtected []string) Assessment {
+func assess(action Action, extraProtected []string, workspace string) Assessment {
 	a := Assessment{Risk: RiskNone, Reversible: true}
 
 	// Matching runs on the raw command line, never a lowercased copy. Flag case
@@ -241,7 +241,11 @@ func assess(action Action, extraProtected []string) Assessment {
 		raise(RiskMedium, "move", "relocates files, possibly overwriting the destination")
 
 	case KindWrite:
-		raise(RiskMedium, "write", "creates or modifies files")
+		if inWorkspace(workspace, action.Paths) {
+			raise(RiskLow, "write-workspace", "writes inside her own workspace")
+		} else {
+			raise(RiskMedium, "write", "creates or modifies files")
+		}
 
 	case KindInput:
 		// Synthetic input is unbounded: it can type anything into any focused
@@ -639,3 +643,37 @@ const removableMediaPrefix = "/run/media/"
 
 // isUserMedia reports whether a path is on user-mounted removable storage.
 func isUserMedia(p string) bool { return strings.HasPrefix(p, removableMediaPrefix) }
+
+// inWorkspace reports whether every path an action touches lies inside the
+// directory Freya was given as her own.
+//
+// Every one, not any: an action that writes one file into her workspace and
+// another into the user's Documents is not a workspace action, and taking the
+// lenient half of it would be exactly the wrong reading.
+//
+// Deliberately strict about what counts. An empty workspace matches nothing —
+// otherwise every relative path would share its prefix and the whole carve-out
+// would apply everywhere. A relative path is rejected rather than resolved,
+// because resolving it here would use this process's directory, which is not
+// necessarily the one the action will run in. And the prefix test appends a
+// separator so /home/akins/freya-workspace-old cannot pass as a child of
+// /home/akins/freya-workspace.
+func inWorkspace(workspace string, paths []string) bool {
+	if strings.TrimSpace(workspace) == "" || len(paths) == 0 {
+		return false
+	}
+	root := filepath.Clean(workspace)
+	if !filepath.IsAbs(root) {
+		return false
+	}
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" || !filepath.IsAbs(p) {
+			return false
+		}
+		clean := filepath.Clean(p)
+		if clean != root && !strings.HasPrefix(clean, root+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
+}

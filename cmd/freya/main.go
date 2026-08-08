@@ -176,6 +176,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	g := guard.New(confirm, auditLog)
 	g.DryRun = cfg.DryRun
 	g.ProtectedPaths = []string{cfg.DataDir}
+	// The directory she was given as her own. A write confined to it is low risk;
+	// anything outside still asks. Without this, "build me a website" was refused
+	// file by file in the daemon, because a medium-risk write needs a confirmation
+	// and there is no terminal there to give one.
+	g.Workspace = cfg.WorkDir
 
 	// Autonomy: how much she does without stopping to ask.
 	//

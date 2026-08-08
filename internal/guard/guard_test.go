@@ -43,7 +43,7 @@ func TestForbiddenCommandsAreRefused(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := assess(Action{Kind: KindExec, Shell: tc.shell}, nil)
+			a := assess(Action{Kind: KindExec, Shell: tc.shell}, nil, "")
 			if a.Risk != RiskForbidden {
 				t.Errorf("NOT BLOCKED: %q got risk %s (rule %q)", tc.shell, a.Risk, a.Rule)
 			}
@@ -74,7 +74,7 @@ func TestForbiddenSurvivesConfirmation(t *testing.T) {
 
 func TestSystemPathDeletionIsForbidden(t *testing.T) {
 	for _, p := range []string{"/etc", "/usr", "/boot", "/", "/var"} {
-		a := assess(Action{Kind: KindDelete, Paths: []string{p}}, nil)
+		a := assess(Action{Kind: KindDelete, Paths: []string{p}}, nil, "")
 		if a.Risk != RiskForbidden {
 			t.Errorf("deleting %s got risk %s, want forbidden", p, a.Risk)
 		}
@@ -89,7 +89,7 @@ func TestSecretPathsRaiseRisk(t *testing.T) {
 		"/some/project/.env",
 		filepath.Join(home, ".local/share/freya/voiceprint.json"),
 	} {
-		a := assess(Action{Kind: KindWrite, Paths: []string{p}}, nil)
+		a := assess(Action{Kind: KindWrite, Paths: []string{p}}, nil, "")
 		if a.Risk < RiskHigh {
 			t.Errorf("%s got risk %s, want at least destructive", p, a.Risk)
 		}
@@ -97,11 +97,11 @@ func TestSecretPathsRaiseRisk(t *testing.T) {
 }
 
 func TestElevationRaisesRisk(t *testing.T) {
-	plain := assess(Action{Kind: KindExec, Command: "ls"}, nil)
+	plain := assess(Action{Kind: KindExec, Command: "ls"}, nil, "")
 	if plain.Risk != RiskNone {
 		t.Errorf("plain ls got risk %s, want read", plain.Risk)
 	}
-	elevated := assess(Action{Kind: KindExec, Command: "ls", Elevated: true}, nil)
+	elevated := assess(Action{Kind: KindExec, Command: "ls", Elevated: true}, nil, "")
 	if elevated.Risk < RiskHigh {
 		t.Errorf("sudo ls got risk %s, want destructive", elevated.Risk)
 	}
@@ -117,7 +117,7 @@ func TestShellChainingIsFlagged(t *testing.T) {
 		"echo `whoami`",
 		"echo $(id)",
 	} {
-		a := assess(Action{Kind: KindExec, Shell: s}, nil)
+		a := assess(Action{Kind: KindExec, Shell: s}, nil, "")
 		if a.Risk < RiskHigh {
 			t.Errorf("%q got risk %s, want destructive for shell chaining", s, a.Risk)
 		}
@@ -126,7 +126,7 @@ func TestShellChainingIsFlagged(t *testing.T) {
 
 func TestReadOnlyCommandsRunSilently(t *testing.T) {
 	for _, cmd := range []string{"ls", "cat", "grep", "df", "uptime", "git"} {
-		a := assess(Action{Kind: KindExec, Command: cmd}, nil)
+		a := assess(Action{Kind: KindExec, Command: cmd}, nil, "")
 		if a.Risk != RiskNone {
 			t.Errorf("%s got risk %s, want read", cmd, a.Risk)
 		}
@@ -137,12 +137,12 @@ func TestReadOnlyCommandsRunSilently(t *testing.T) {
 }
 
 func TestGitDestructiveSubcommands(t *testing.T) {
-	safe := assess(Action{Kind: KindExec, Command: "git", Args: []string{"status"}}, nil)
+	safe := assess(Action{Kind: KindExec, Command: "git", Args: []string{"status"}}, nil, "")
 	if safe.Risk != RiskNone {
 		t.Errorf("git status got risk %s", safe.Risk)
 	}
 	for _, sub := range []string{"reset", "clean", "push", "rebase"} {
-		a := assess(Action{Kind: KindExec, Command: "git", Args: []string{sub}}, nil)
+		a := assess(Action{Kind: KindExec, Command: "git", Args: []string{sub}}, nil, "")
 		if a.Risk < RiskMedium {
 			t.Errorf("git %s got risk %s, want at least medium", sub, a.Risk)
 		}
@@ -313,7 +313,7 @@ func TestAuditLogRecordsEverything(t *testing.T) {
 func TestSyntheticInputIsNeverSilent(t *testing.T) {
 	// Synthetic keystrokes go to whatever has focus, which could be a terminal
 	// or a password field. They must never be auto-approved.
-	a := assess(Action{Kind: KindInput, Command: "type", Args: []string{"hello"}}, nil)
+	a := assess(Action{Kind: KindInput, Command: "type", Args: []string{"hello"}}, nil, "")
 	if a.Risk < RiskMedium {
 		t.Errorf("synthetic input got risk %s, want at least medium", a.Risk)
 	}
@@ -382,7 +382,7 @@ func TestBypassAttempts(t *testing.T) {
 	}
 	for _, tc := range mustBlock {
 		t.Run(tc.name, func(t *testing.T) {
-			if a := assess(Action{Kind: KindExec, Shell: tc.shell}, nil); a.Risk != RiskForbidden {
+			if a := assess(Action{Kind: KindExec, Shell: tc.shell}, nil, ""); a.Risk != RiskForbidden {
 				t.Errorf("BYPASS: %q got %s (rule %q), want forbidden", tc.shell, a.Risk, a.Rule)
 			}
 		})
@@ -396,7 +396,7 @@ func TestBypassAttempts(t *testing.T) {
 		"$(rm -rf /)",
 	}
 	for _, s := range mustConfirm {
-		if a := assess(Action{Kind: KindExec, Shell: s}, nil); a.Risk < RiskHigh {
+		if a := assess(Action{Kind: KindExec, Shell: s}, nil, ""); a.Risk < RiskHigh {
 			t.Errorf("%q got %s, want at least destructive", s, a.Risk)
 		}
 	}
@@ -412,7 +412,7 @@ func TestNormalWorkIsNotBlocked(t *testing.T) {
 		"grep -r TODO .", "make test",
 	}
 	for _, c := range fine {
-		if a := assess(Action{Kind: KindExec, Shell: c}, nil); a.Risk == RiskForbidden {
+		if a := assess(Action{Kind: KindExec, Shell: c}, nil, ""); a.Risk == RiskForbidden {
 			t.Errorf("FALSE POSITIVE: %q blocked by rule %q", c, a.Rule)
 		}
 	}

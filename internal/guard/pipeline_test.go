@@ -14,7 +14,7 @@ func TestPipelineRiskCalibration(t *testing.T) {
 		"grep -r TODO . | wc -l",
 	}
 	for _, c := range readOnly {
-		a := assess(Action{Kind: KindExec, Shell: c}, nil)
+		a := assess(Action{Kind: KindExec, Shell: c}, nil, "")
 		if a.Risk > RiskLow {
 			t.Errorf("OVER-BLOCKED %q -> %s (%s)", c, a.Risk, a.Rule)
 		}
@@ -30,7 +30,7 @@ func TestPipelineRiskCalibration(t *testing.T) {
 		"sudo ls",
 	}
 	for _, c := range mustEscalate {
-		a := assess(Action{Kind: KindExec, Shell: c}, nil)
+		a := assess(Action{Kind: KindExec, Shell: c}, nil, "")
 		if a.Risk < RiskMedium {
 			t.Errorf("UNDER-BLOCKED %q -> %s", c, a.Risk)
 		}
@@ -39,7 +39,7 @@ func TestPipelineRiskCalibration(t *testing.T) {
 
 func TestUserMediaIsNotSystemPath(t *testing.T) {
 	p := "/run/media/akins/Akins Drive1/Development/JARVIS/main.go"
-	a := assess(Action{Kind: KindWrite, Paths: []string{p}}, nil)
+	a := assess(Action{Kind: KindWrite, Paths: []string{p}}, nil, "")
 	for _, r := range a.Reasons {
 		if r == p+" is inside the system directory /run" {
 			t.Errorf("user media flagged as system path: %s", r)
@@ -49,7 +49,7 @@ func TestUserMediaIsNotSystemPath(t *testing.T) {
 		t.Errorf("writing to the user's own workspace got risk %s", a.Risk)
 	}
 	// But a genuine /run system path must still escalate.
-	sys := assess(Action{Kind: KindWrite, Paths: []string{"/run/systemd/system/x.service"}}, nil)
+	sys := assess(Action{Kind: KindWrite, Paths: []string{"/run/systemd/system/x.service"}}, nil, "")
 	if sys.Risk < RiskHigh {
 		t.Errorf("real /run system path got risk %s, want destructive", sys.Risk)
 	}

@@ -138,6 +138,23 @@ type Guard struct {
 	AutoApprove Risk
 	// ProtectedPaths are additional paths to treat as high risk.
 	ProtectedPaths []string
+	// Workspace is the directory Freya was given as her own. A write confined to
+	// it is low risk; everything outside is judged as before.
+	//
+	// Measured, not assumed. Asked to build a copy of a website — write the
+	// files, open them, refine until they match — she was refused on the first
+	// file, then on the folder, then on the shell fallback, and ended up pasting
+	// the whole page into the reply for the user to save by hand. Writing
+	// hello.html into her OWN workspace assessed as medium, which needs a
+	// confirmation, and the daemon has no terminal: it asks aloud, once per file.
+	// For a task that is dozens of writes that is not a safeguard, it is a wall.
+	//
+	// The same argument as the automation Chrome profile: her workspace holds
+	// nothing of the user's, a bad write there destroys only her own scratch
+	// work, and a confirmation she cannot obtain is not protection — it is a
+	// capability that silently does not exist. Anything outside this directory is
+	// untouched by this and still asks.
+	Workspace string
 	// Telemetry counts decisions, if anything is listening.
 	//
 	// Declared as a local interface rather than importing the telemetry package
@@ -171,7 +188,7 @@ func New(confirm ConfirmFunc, audit *Log) *Guard {
 
 // Assess evaluates an action without running it.
 func (g *Guard) Assess(action Action) Assessment {
-	a := assess(action, g.ProtectedPaths)
+	a := assess(action, g.ProtectedPaths, g.Workspace)
 	if a.Risk > g.AutoApprove && a.Risk != RiskForbidden {
 		a.Confirm = true
 	}
