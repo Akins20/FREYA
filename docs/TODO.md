@@ -1111,6 +1111,99 @@ by hand, stated plainly when used.
       cheap win is fewer and better-named tools, measured by the comprehension
       run rather than guessed at.
 
+## Phase 24-26 — the architecture plan
+
+Three upgrades, in order. Each is a day of work with real regression risk, so
+they land ONE AT A TIME with gates between: `make check`, `go test -race ./...`,
+`bench -comprehension`, and a real browser run. The precedent for insisting on
+this is two changes this week that passed their tests and then broke her in
+production — a provenance rule that locked her out of a portal, an argument
+reconciler that broke two tests it should have left alone.
+
+### Phase 24 — tool calls: capabilities, not a flat list of 133
+
+Measured, not guessed: **133 registered tools, 38 ever called**, ~11.6k tokens of
+declarations. They lead the request so they are cached — the cost is ATTENTION,
+not money, and attention is what is failing. She misfiled arguments fourteen
+times, reached for a stale tool, and never once called `browser_sync_logins` in a
+hundred sessions.
+
+The trap to avoid: dynamic per-task tool sets fight the prompt cache head-on.
+Declarations lead the request, so a changing set means a changing prefix, and we
+would trade a measured ~91% hit rate for a speculative attention gain.
+
+- [ ] **24a. Kits.** A small always-on core (memory, files, shell, the browser
+      essentials) plus named kits: browsing, files, dev, voice, admin. Tool
+      ORDER stays sorted — pinned by TestRegistryToolsAreSorted.
+- [ ] **24b. Routing, deterministic and fail-open.** Kits are chosen ONCE per
+      exchange from the request, before the loop, so the prefix is stable within
+      an exchange and each kit caches independently. Lexical and testable; no
+      extra model call. Ambiguity includes MORE, never fewer — a missing tool is
+      far worse than an extra one.
+- [ ] **24c. The safety valve, which is what makes this safe at all.** A kit miss
+      is otherwise a SILENT capability loss: she cannot ask for a tool she was
+      never shown, so she just does not do the task and reports a limitation that
+      is not real. So: anything registered stays EXECUTABLE whether or not it was
+      offered. If she names a tool that exists but was not in her kit, it runs,
+      and the miss is recorded. Worst case is one wasted round, not a lost task.
+- [ ] **24d. Measure the miss rate.** Telemetry counts kit misses by tool. A tool
+      that is missed repeatedly belongs in the core; a kit that is missed
+      repeatedly is routed wrongly. This is the number that says whether the
+      whole idea earns its keep.
+- [ ] Gate: comprehension must not drop, cache hit rate must not drop, and no
+      tool may become unreachable.
+
+### Phase 25 — retrieval: the tier that has never once been used
+
+`internal/reflect` is dead in production: `reflectAfter` is defined and never
+called, so tier 6 never reaches any prompt and `/reflect` is permanently empty.
+Sixteen tests pass on unused code.
+
+And BM25 is lexical, which bit hard this week: "how did I work this site last
+night" is a SEQUENCE OF ACTIONS with no distinctive words in it. That is exactly
+what lexical retrieval cannot find, and it is why cutting the working set to 32k
+made her worse at the portal rather than merely faster.
+
+- [ ] **25a. Procedures.** A finished exchange already produces a trail
+      (`internal/agent/trail.go`). Distil the successful ones into a PROCEDURE:
+      the goal, the site, the ordered steps that worked.
+- [ ] **25b. Retrieve by task shape, not vocabulary.** "signing into a portal",
+      "working through a quiz", "downloading from a file app" — matched on the
+      shape of the request rather than its words.
+- [ ] **25c. Wire it into the volatile tail**, never ahead of identity. This is
+      the tier that would have let her recall the my.uopeople.edu route instead
+      of a human finding it in her archive.
+- [ ] **25d. Decide `internal/reflect`: wire it or delete it.** Sixteen passing
+      tests on unreachable code is worse than no tests, because they read as
+      coverage.
+
+### Phase 26 — browser: verification as a contract, not a habit
+
+Every browser fix this week was the same shape — AN ACTION WHOSE EFFECT IS
+INVISIBLE IN THE DOM: a download, a dialog, a new window, an OS file chooser, a
+Chrome warning page. Each was fixed individually. The pattern says fix it once.
+
+- [ ] **26a. A typed effect set** on every mutating browser action:
+      page-changed, download-started, dialog-answered, window-opened,
+      nothing-observable.
+- [ ] **26b. `nothing-observable` becomes a first-class result** the framework
+      asserts on, rather than a silence the model has to interpret.
+      `Outcome.Changed` already exists and is half-wired; this finishes it.
+- [ ] **26c. Retire the ad-hoc checks** it subsumes. One mechanism would have
+      caught the download case, the popup case and the file-chooser case as a
+      single bug instead of three.
+
+### Cross-cutting, and cheap: audit what we rely on prose for
+
+Comprehension Q6 fails on every run — asked what to do on "Your connection is not
+private" with the user waiting to sign in, she says she would click Advanced and
+proceed, AFTER the playbook told her not to. The code refuses her now, so the
+behaviour is safe while the intention stays wrong.
+
+- [ ] That is a clean demonstration that **prose in a prompt is not a control**.
+      Audit what else is currently guarded only by guidance, and move the ones
+      that matter into code.
+
 ## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222
