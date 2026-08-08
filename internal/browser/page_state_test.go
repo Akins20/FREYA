@@ -176,3 +176,31 @@ func TestAPageThatIsCompleteButStillFillingInSaysSo(t *testing.T) {
 		t.Errorf("a settled page described itself: %q", got)
 	}
 }
+
+// "Never sit in the guest context and then say you can't sign in" was in the
+// sign-in playbook for weeks with nothing checking it. The failure is not that
+// she cannot sign in — it is that she is at a door she brought no key to,
+// concludes it is locked, and reports a limitation that is not real. The user's
+// session exists; it is one context away.
+func TestASignInPageInTheGuestContextIsCalledOut(t *testing.T) {
+	page := PageState{SignIn: true}
+
+	said := GuestSignIn(page, true)
+	if said == "" {
+		t.Fatal("a sign-in page in guest passed without comment")
+	}
+	for _, want := range []string{"GUEST context", "auth", "do not try to type their password"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the note is missing %q: %s", want, said)
+		}
+	}
+
+	// In auth she IS signed in, so the note would be noise on every login page.
+	if got := GuestSignIn(page, false); got != "" {
+		t.Errorf("the auth context was warned about its own session: %s", got)
+	}
+	// And an ordinary page in guest is not a sign-in.
+	if got := GuestSignIn(PageState{}, true); got != "" {
+		t.Errorf("an ordinary guest page was called a sign-in: %s", got)
+	}
+}

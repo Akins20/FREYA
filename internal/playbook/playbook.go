@@ -362,6 +362,11 @@ different claims, and the second is the one that matters.`,
   enough surrounding text in old_text to make the match unique. file_write is for
   a NEW file or a deliberate full replacement, not for a tweak.
 
+  This is now enforced rather than advised: file_write, file_move and file_copy
+  all refuse when something already exists at that path, and tell you so. Passing
+  replace=true says you mean it. If you find yourself reaching for that flag to
+  make a small change, that is the signal you wanted file_edit.
+
 - FINDING SOMETHING. Don't guess a path and don't re-scan the whole disk every
   time. folder_list explores a directory; run_shell with find (by name) or grep
   -r (by content) searches a tree. When the user names a place they've referred

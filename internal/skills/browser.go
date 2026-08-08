@@ -280,8 +280,12 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			// error page. A page that has not finished loading reads as an empty
 			// one, which is the same trap from the other side.
 			state := tab.client.State(ctx)
-			return fmt.Sprintf("%s\n%s\n\n%s%s", title, url,
-				clipText(text, limit), state.Describe()), nil
+			// A sign-in page reached in the guest context is a door she brought no
+			// key to. Attached here rather than left to the playbook, because the
+			// playbook already said it and she reported the limitation anyway.
+			return fmt.Sprintf("%s\n%s\n\n%s%s%s", title, url,
+				clipText(text, limit), state.Describe(),
+				browser.GuestSignIn(state, tab.ctx == browser.ContextGuest)), nil
 		},
 	})
 

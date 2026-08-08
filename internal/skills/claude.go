@@ -266,7 +266,8 @@ func delegate(ctx context.Context, g *guard.Guard, c *claude.Client,
 		if strings.TrimSpace(out) == "" {
 			out = "(Claude returned no text)"
 		}
-		return fmt.Sprintf("%s\n\n[%s · %s]", out, res.Describe(), plan.Reason), err
+		return fmt.Sprintf("%s\n\n[%s · %s]%s", out, res.Describe(), plan.Reason,
+			couldHaveDoneItHerself(task)), err
 	})
 }
 
@@ -330,4 +331,42 @@ func labelSuffix(label string) string {
 		return ""
 	}
 	return " (" + label + ")"
+}
+
+// couldHaveDoneItHerself names a delegation that did not need delegating.
+//
+// # Why this reports rather than refuses
+//
+// "Do NOT delegate what you can already do with your own tools" is the last of
+// the prose rules, and it is the one where a hard gate is the wrong instrument.
+// Every other rule audited today had the same asymmetry — a missed guard destroys
+// something, a spurious guard costs a round — so refusing was right. This one
+// runs the other way. A wrongly refused delegation blocks real work; a wrongly
+// allowed one costs quota, which recovers on its own at the next window. Refusing
+// on a keyword would eventually block "read every Go file and find the race",
+// which looks like a read and is not.
+//
+// So the cost is made visible at the moment it is paid, and left as her call.
+// Repeated often enough it is also a number in the telemetry, which is what turns
+// a habit into something anyone can see.
+func couldHaveDoneItHerself(task string) string {
+	if claude.Classify(task) != claude.Simple {
+		return ""
+	}
+	low := strings.ToLower(task)
+	local := map[string]string{
+		"read the file": "file_read", "read this file": "file_read",
+		"what does the file": "file_read", "list the": "folder_list",
+		"read the page": "browser_read", "what does the page": "browser_read",
+		"search the web": "web_search", "look up": "web_search",
+		"grep": "run_shell with grep", "find the file": "run_shell with find",
+	}
+	for phrase, tool := range local {
+		if strings.Contains(low, phrase) {
+			return fmt.Sprintf("\n(That looked like something %s does directly. Delegating "+
+				"spends the user's Claude allowance on work you already had a tool for — "+
+				"worth noticing if it becomes a habit.)", tool)
+		}
+	}
+	return ""
 }

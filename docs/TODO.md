@@ -1423,15 +1423,37 @@ to core by design. It validated ghosts. Deleted, and replaced with two that chec
 against the REGISTRY: every core entry must name a real tool, and a browsing
 request must still be able to touch a file.
 
-- [ ] **`docx_write` / `pdf_write` / `xlsx_write` / `system_open` unmarked.**
-      They write files and open applications with no framework verification.
-- [ ] **"Do NOT rewrite the whole file with file_write."** Nothing stops a
-      whole-file write clobbering something that wanted a surgical edit.
-- [ ] **"Do NOT delegate what you can already do with your own tools."** Costs
-      quota rather than correctness, so it is last.
-- [ ] **"Never sit in the guest context and then say you can't sign in."**
-      Detectable — a "cannot sign in" conclusion reached from a guest tab is a
-      checkable contradiction — but not currently checked.
+- [x] **"Do NOT rewrite the whole file with file_write."** SIX tools could
+      silently destroy an existing file: `file_write` overwrote it, `file_move`
+      renamed onto it (bare `os.Rename`, no existence check), `file_copy` copied
+      over it, and `docx_write` / `pdf_write` / `xlsx_write` replaced documents.
+      All six reported success in the same words they use for the harmless case.
+      `mustMeanIt` now refuses when something is already there and names the
+      alternative; `replace=true` says you mean it. A flag rather than a
+      heuristic, because nothing in the contents distinguishes a deliberate
+      rewrite from an accident, and guessing would either block real work or miss
+      the real mistake. When a replacement does go ahead the result says what it
+      replaced — "had 200 lines, now has 2" — and a drastic shrink of a
+      substantial file keeps a `.bak`. Not every overwrite: litter gets ignored,
+      and an ignored safety net is not one.
+- [x] **"Never sit in the guest context and then say you can't sign in."**
+      Detected from a password field, which is the one unambiguous marker of a
+      sign-in page. In the guest context that is a door she brought no key to —
+      so `browser_read` now says so and names the auth context, instead of
+      leaving her to conclude the door is locked and report a limitation that is
+      not real.
+- [x] **"Do NOT delegate what you can already do with your own tools."**
+      Reported, deliberately NOT refused, and this is the one place today where
+      that is the right call. Every other rule here had the same asymmetry — a
+      missed guard destroys something, a spurious guard costs a round — so
+      refusing was correct. This one runs the other way: a wrongly refused
+      delegation blocks real work, while a wrongly allowed one costs quota that
+      recovers at the next window. Refusing on a keyword would eventually block
+      "read every Go file and find the race", which looks like a read and is not.
+      So the cost is named at the moment it is paid and left as her call.
+- [ ] `system_open` remains unmarked. It launches an application rather than
+      destroying anything, so there is nothing for a guard to protect — recorded
+      rather than marked, because a flag that buys nothing is noise.
 
 ## Phase 17 — remaining
 

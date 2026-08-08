@@ -76,7 +76,10 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"path":    {Type: "string", Description: "Path to write."},
 				"content": {Type: "string", Description: "The full new contents."},
-				"reason":  {Type: "string", Description: "Why, shown when confirming."},
+				"replace": {Type: "boolean", Description: "Required to overwrite a file that " +
+					"already exists. Leave it off for a new file. If you only want to change " +
+					"part of an existing file, use file_edit instead."},
+				"reason": {Type: "string", Description: "Why, shown when confirming."},
 			}, "path", "content"),
 		},
 		Handler: f.write,
@@ -107,6 +110,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"path":    {Type: "string", Description: "Path to append to."},
 				"content": {Type: "string", Description: "Text to add."},
+				"replace": {Type: "boolean", Description: "Required when a file already " +
+					"exists at that path. Without it this refuses rather than replacing it."},
 			}, "path", "content"),
 		},
 		Handler: f.append,
@@ -154,6 +159,9 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"source":      {Type: "string", Description: "What to copy."},
 				"destination": {Type: "string", Description: "Where to copy it."},
+				"replace": {Type: "boolean", Description: "Required when something already " +
+					"exists at the destination. Without it, this refuses rather than " +
+					"replacing what is there."},
 			}, "source", "destination"),
 		},
 		Handler: f.copy,
@@ -167,6 +175,9 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"source":      {Type: "string", Description: "What to move."},
 				"destination": {Type: "string", Description: "Where to move it."},
 				"reason":      {Type: "string", Description: "Why, shown when confirming."},
+				"replace": {Type: "boolean", Description: "Required when something already " +
+					"exists at the destination. Without it, this refuses rather than " +
+					"replacing what is there."},
 			}, "source", "destination"),
 		},
 		Handler: f.move,
@@ -193,6 +204,9 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"source":      {Type: "string", Description: "File or directory to archive."},
 				"destination": {Type: "string", Description: "Path for the .zip file."},
+				"replace": {Type: "boolean", Description: "Required when something already " +
+					"exists at the destination. Without it, this refuses rather than " +
+					"replacing what is there."},
 			}, "source", "destination"),
 		},
 		Handler: f.archive,
@@ -266,6 +280,14 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 	if len(content) > maxWriteBytes {
 		return "", fmt.Errorf("content is %d bytes, over the %d limit", len(content), maxWriteBytes)
 	}
+	// Replacing a file somebody already has is a different act from creating one,
+	// and it used to be the same call with the same result text. Saying so
+	// afterwards is not enough: by then the other version is gone. So it has to be
+	// asked for.
+	if err := mustMeanIt(path, argBool(args, "replace"),
+		"use file_edit to change part of it, or pass replace=true to overwrite the whole thing"); err != nil {
+		return "", err
+	}
 
 	action := guard.Action{
 		Kind:   guard.KindWrite,
@@ -273,10 +295,14 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 		Reason: argString(args, "reason"),
 	}
 	return f.guard.Run(ctx, action, func(context.Context) (string, error) {
-		// Creating missing parents is right for a genuinely new file, and it is
-		// also how a mistyped path quietly manufactures a whole directory tree and
-		// files the work somewhere nobody will look. Both writes report "Wrote N
-		// bytes" identically, so say when the folder had to be invented.
+		// What is about to be destroyed, read before it is.
+		//
+		// file_write replaces a file entirely, and said "Wrote N bytes" whether it
+		// created something new or flattened four hundred lines of the user's work
+		// to fifty. The playbook has said "do NOT rewrite the whole file with
+		// file_write" for weeks; nothing checked, and nothing reported it
+		// afterwards either, so a bad call was invisible from both directions.
+		replaced, hadFile := previousContents(path)
 		madeParent := false
 		if dir := filepath.Dir(path); dir != "" {
 			if _, err := os.Stat(dir); err != nil {
@@ -294,8 +320,97 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 				"If you expected that folder to be there already, this went somewhere new.)",
 				len(content), path, filepath.Dir(path)), nil
 		}
-		return fmt.Sprintf("Wrote %d bytes to %s.", len(content), path), nil
+		if !hadFile {
+			return fmt.Sprintf("Created %s (%d bytes).", path, len(content)), nil
+		}
+		return replacementNote(path, replaced, content), nil
 	})
+}
+
+// previousContents reads what a write is about to replace.
+//
+// Errors are treated as "no previous file", because this exists to describe a
+// loss rather than to prevent a write: failing the write because the old copy
+// could not be read would turn a reporting feature into an outage.
+func previousContents(path string) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() > maxWriteBytes {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+// mustMeanIt refuses to destroy something that is already there, unless asked to.
+//
+// Three tools could quietly replace an existing file — file_write overwrote it,
+// file_move renamed onto it, file_copy copied over it — and all three reported
+// success in exactly the words they use for the harmless case. The playbook has
+// said "do NOT rewrite the whole file" for weeks, which is prose, and prose does
+// not stop os.Rename.
+//
+// A flag rather than a heuristic: there is no way to tell a deliberate rewrite
+// from an accidental one by looking at the contents, and guessing would either
+// block real work or miss the real mistake. Asking costs one round the first time
+// and makes the destruction a decision rather than a side effect.
+func mustMeanIt(path string, allowed bool, alternative string) error {
+	if allowed {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil // nothing there; nothing to lose
+	}
+	what := "a file"
+	if info.IsDir() {
+		what = "a directory"
+	}
+	return fmt.Errorf("%s already exists (%s, %d bytes) and this would replace it. "+
+		"Nothing here recovers what it currently holds, so say you mean it: %s",
+		path, what, info.Size(), alternative)
+}
+
+// lineCount counts lines the way a person does: a file ending in a newline has
+// as many lines as it has newlines, not one more.
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
+}
+
+// shrinkBackup is when a replacement is drastic enough to keep a copy: the file
+// was substantial, and most of it has gone. Deliberately not every overwrite —
+// a .bak beside every file she touches is litter, and litter gets ignored, which
+// is how a safety net stops being one.
+const shrinkBackup = 0.5
+
+// replacementNote says what was replaced, and keeps a copy when most of it went.
+func replacementNote(path, before, after string) string {
+	oldLines := lineCount(before)
+	newLines := lineCount(after)
+
+	note := fmt.Sprintf("Replaced %s — it had %d lines (%d bytes), it now has %d lines (%d bytes).",
+		path, oldLines, len(before), newLines, len(after))
+
+	// A big file that got much smaller is the shape of the mistake the playbook
+	// warns about: read it, rewrite a fragment, lose the rest.
+	if oldLines > 20 && float64(len(after)) < shrinkBackup*float64(len(before)) {
+		note += fmt.Sprintf("\n\nThat removed most of the file. If you meant to change part " +
+			"of it, file_edit replaces an exact string and leaves the rest alone.")
+		if err := os.WriteFile(path+".bak", []byte(before), 0o644); err == nil {
+			note += fmt.Sprintf(" The previous contents are in %s.bak — delete it once you "+
+				"are sure this was right.", path)
+		}
+	}
+	return note
 }
 
 func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, error) {
@@ -531,6 +646,11 @@ func (f *fileSkills) copy(ctx context.Context, args map[string]any) (string, err
 		return "", fmt.Errorf("source and destination are required")
 	}
 
+	if err := mustMeanIt(dst, argBool(args, "replace"),
+		"copy to a name that is free, or pass replace=true"); err != nil {
+		return "", err
+	}
+
 	action := guard.Action{Kind: guard.KindWrite, Paths: []string{src, dst},
 		Reason: "copy " + filepath.Base(src)}
 	return f.guard.Run(ctx, action, func(context.Context) (string, error) {
@@ -547,6 +667,11 @@ func (f *fileSkills) move(ctx context.Context, args map[string]any) (string, err
 	dst := expandIn(ctx, argString(args, "destination"))
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("source and destination are required")
+	}
+
+	if err := mustMeanIt(dst, argBool(args, "replace"),
+		"move it to a name that is free, or pass replace=true"); err != nil {
+		return "", err
 	}
 
 	action := guard.Action{Kind: guard.KindMove, Paths: []string{src, dst},
@@ -849,6 +974,8 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 				"page_numbers": {Type: "boolean", Description: "Add 'Page N of M' to the " +
 					"footer. Worth setting for anything printed or handed in."},
 				"reason": {Type: "string", Description: "Why, shown when confirming."},
+				"replace": {Type: "boolean", Description: "Required when a file already " +
+					"exists at that path. Without it this refuses rather than replacing it."},
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -859,6 +986,13 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}
 			if !strings.HasSuffix(strings.ToLower(path), ".docx") {
 				path += ".docx"
+			}
+
+			// A document writer replaces the file at that path as completely as
+			// file_write does, and had none of its guards. Same rule.
+			if err := mustMeanIt(path, argBool(args, "replace"),
+				"write it under a name that is free, or pass replace=true"); err != nil {
+				return "", err
 			}
 
 			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},
@@ -897,6 +1031,8 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 				"path":    {Type: "string", Description: "Where to write the .pdf."},
 				"content": {Type: "string", Description: "Document body as markdown."},
 				"reason":  {Type: "string", Description: "Why, shown when confirming."},
+				"replace": {Type: "boolean", Description: "Required when a file already " +
+					"exists at that path. Without it this refuses rather than replacing it."},
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -907,6 +1043,13 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			}
 			if !strings.HasSuffix(strings.ToLower(path), ".pdf") {
 				path += ".pdf"
+			}
+
+			// A document writer replaces the file at that path as completely as
+			// file_write does, and had none of its guards. Same rule.
+			if err := mustMeanIt(path, argBool(args, "replace"),
+				"write it under a name that is free, or pass replace=true"); err != nil {
+				return "", err
 			}
 
 			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},
@@ -1017,6 +1160,8 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 				"content": {Type: "string", Description: "CSV rows, optionally split " +
 					"into sheets with '---SHEET: Name---' separators."},
 				"reason": {Type: "string", Description: "Why, shown when confirming."},
+				"replace": {Type: "boolean", Description: "Required when a file already " +
+					"exists at that path. Without it this refuses rather than replacing it."},
 			}, "path", "content"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -1032,6 +1177,13 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 			sheets := parseSheets(content)
 			if len(sheets) == 0 {
 				return "", fmt.Errorf("no rows found in content")
+			}
+
+			// A document writer replaces the file at that path as completely as
+			// file_write does, and had none of its guards. Same rule.
+			if err := mustMeanIt(path, argBool(args, "replace"),
+				"write it under a name that is free, or pass replace=true"); err != nil {
+				return "", err
 			}
 
 			action := guard.Action{Kind: guard.KindWrite, Paths: []string{path},

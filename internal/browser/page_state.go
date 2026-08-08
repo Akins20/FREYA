@@ -62,6 +62,11 @@ type PageState struct {
 	// answer instead of as looking too early. That instruction was in prose and
 	// nothing checked it.
 	Rendering bool
+	// SignIn reports a password field on the page, which is the one unambiguous
+	// marker of a sign-in. Used to catch a contradiction rather than to act: a
+	// sign-in page in the GUEST context means she is looking at a door she has no
+	// key for, because guest carries none of the user's cookies.
+	SignIn bool
 	// Errors are console errors, newest last. A page that threw is a page whose
 	// controls may simply not be wired up.
 	Errors []string
@@ -138,7 +143,8 @@ func (c *Client) State(ctx context.Context) PageState {
         '#main-frame-error, .interstitial-wrapper, #proceed-link, #security-interstitial'),
       busy: !!document.querySelector(
         '[aria-busy="true"], [role="progressbar"], [class*="skeleton"], ' +
-        '[class*="shimmer"], [class*="placeholder"], [class*="animate-pulse"]')
+        '[class*="shimmer"], [class*="placeholder"], [class*="animate-pulse"]'),
+      signin: !!document.querySelector('input[type="password"]')
     })`)
 	if err != nil {
 		return s
@@ -149,6 +155,7 @@ func (c *Client) State(ctx context.Context) PageState {
 		Text   string `json:"text"`
 		Chrome bool   `json:"chrome"`
 		Busy   bool   `json:"busy"`
+		SignIn bool   `json:"signin"`
 	}
 	if json.Unmarshal([]byte(raw), &probe) != nil {
 		return s
@@ -157,6 +164,7 @@ func (c *Client) State(ctx context.Context) PageState {
 	// Only interesting once the document itself is done: before that, Loading
 	// already says everything and saying both would be noise.
 	s.Rendering = !s.Loading && probe.Busy
+	s.SignIn = probe.SignIn
 
 	hay := strings.ToLower(probe.Text + " " + s.Title + " " + s.URL)
 	for _, p := range interstitialPatterns {
@@ -327,4 +335,26 @@ func RefuseUnsafeProceed(s PageState, target string) string {
 			"address, check it is the one they meant.", target)
 	}
 	return ""
+}
+
+// GuestSignIn is the contradiction: a sign-in page, in the context that carries
+// none of the user's logins.
+//
+// "Never sit in the guest context and then say you can't sign in" has been in
+// the sign-in playbook for weeks, and nothing checked it. The failure is not that
+// she cannot sign in — it is that she is standing at a door she brought no key
+// to, concludes the door is locked, and reports a limitation that is not real.
+// The user's session exists; it is one context away.
+//
+// Detected from a password field, which is the one unambiguous marker of a
+// sign-in page and cannot be confused with ordinary content.
+func GuestSignIn(s PageState, guest bool) string {
+	if !guest || !s.SignIn {
+		return ""
+	}
+	return "\n\nThis is a sign-in page and you are in the GUEST context, which carries " +
+		"none of the user's cookies or saved logins — so of course there is no session " +
+		"here. Do not conclude that you cannot sign in, and do not try to type their " +
+		"password. Reopen this page with browser_open in the 'auth' context, where they " +
+		"are already signed in to most things."
 }
