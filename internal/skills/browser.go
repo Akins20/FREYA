@@ -338,6 +338,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"selector": {Type: "string", Description: "A selector copied verbatim from a browser_inspect you just ran — not composed, remembered, or guessed. Plain CSS only (no jQuery :contains())."},
 			}, "selector"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
 			if !ok {
@@ -447,6 +451,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"value":    {Type: "string", Description: "Text to enter. Never a secret."},
 			}, "selector", "value"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, ok := tabs.get(argString(args, "name"))
 			if !ok {

@@ -64,6 +64,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"option":   {Type: "string", Description: "The option's visible text."},
 			}, "selector", "option"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {
@@ -88,6 +92,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"checked":  {Type: "boolean", Description: "True to tick, false to untick. Default true."},
 			}, "selector"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {
@@ -151,6 +159,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 					Description: "Optional: focus this element first."},
 			}, "key"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {
@@ -191,6 +203,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"text":     {Type: "string", Description: "What to type."},
 			}, "selector", "text"),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {
@@ -274,6 +290,10 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"selector": {Type: "string", Description: "A selector inside the form. Defaults to the first form."},
 			}),
 		},
+		// Changes the page, which is what every framework protection keys off:
+		// the certificate-warning refusal installed by Protect, and before/after
+		// sampling. Unset, this tool is exempt from both without saying so.
+		Mutates: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {

@@ -41,6 +41,48 @@ func TestEveryMutatingBrowserToolCarriesTheWarningGuard(t *testing.T) {
 	}
 }
 
+// The test above passed while the guard covered almost nothing, and this is the
+// one that catches that.
+//
+// Protect attaches by `Mutates`, and the interaction family — click, fill, type,
+// press, submit — was never marked as mutating. So the guard skipped exactly the
+// tools it was written for, and the test above skipped them too, because it
+// iterated `s.Mutates` and the unguarded tools are excluded by the very
+// condition under test. It read as coverage and asserted nothing.
+//
+// So this names the tools LITERALLY. A list written out by hand cannot be
+// filtered down to nothing by the bug it is looking for.
+func TestTheClickFamilyIsGuardedByName(t *testing.T) {
+	r := New()
+	g := guard.New(func(context.Context, guard.Action, guard.Assessment) bool { return true }, nil)
+	RegisterBrowser(r, g, NewTabs())
+
+	// Everything that puts input into a page. Typing a password onto a
+	// certificate warning is the disaster this is guarding against, so the fill
+	// and type tools matter at least as much as the click ones.
+	for _, name := range []string{
+		"browser_click", "browser_click_text", "browser_double_click",
+		"browser_right_click", "browser_press", "browser_submit",
+		"browser_fill", "browser_type", "browser_select", "browser_check",
+		"browser_drag", "browser_upload",
+	} {
+		r.mu.RLock()
+		s, ok := r.skills[name]
+		r.mu.RUnlock()
+		if !ok {
+			continue // not registered in this build; nothing to guard
+		}
+		if !s.Mutates {
+			t.Errorf("%s is not marked Mutates, so it gets no warning guard, no "+
+				"verify-after-act and no before/after sampling — every framework "+
+				"protection is keyed off that flag", name)
+		}
+		if s.Precheck == nil {
+			t.Errorf("%s can act on a browser certificate warning", name)
+		}
+	}
+}
+
 // A tool registered after the guard was installed must still get it, because
 // "remember to add the guard" is the failure mode being cured.
 func TestProtectCoversAToolAddedLater(t *testing.T) {
