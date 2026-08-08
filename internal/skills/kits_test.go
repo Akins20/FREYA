@@ -193,16 +193,11 @@ func TestAnUnclassifiedToolLandsInCore(t *testing.T) {
 	}
 }
 
-// The tools she reaches for most must never need a routing decision.
-func TestTheToolsSheUsesMostAreAlwaysOffered(t *testing.T) {
-	// From her telemetry, in order of use.
-	for _, name := range []string{
-		"browser_click_text", "browser_read", "browser_open", "memory_recall",
-		"run_shell", "read_file", "write_file", "web_search",
-	} {
-		if kitOf(name) != KitCore {
-			t.Errorf("%s is not in the core kit, but it is one of the tools she uses "+
-				"most — it would wait on a routing decision", name)
-		}
-	}
-}
+// Superseded by TestTheToolsSheUsesMostAreReallyInCore in coretools_test.go.
+//
+// The version that lived here asserted kitOf(name) == KitCore for a list of
+// names — which passes for ANY unknown string, because an unclassified tool
+// falls through to core by design. So it passed for read_file, write_file and
+// list_dir, none of which is a tool, while the real file_read, file_write and
+// folder_list sat in the files kit and were invisible on most requests. A test
+// that cannot fail is worse than no test, because it reads as coverage.

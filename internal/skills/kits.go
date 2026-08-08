@@ -107,13 +107,18 @@ func kitOf(name string) Kit {
 var coreTools = map[string]bool{
 	"memory_remember": true, "memory_recall": true, "memory_forget": true,
 	"recall_episode": true,
-	"read_file":      true, "write_file": true, "list_dir": true, "change_dir": true,
-	"run_shell": true, "web_search": true, "web_fetch": true,
+	// The real names. These were read_file/write_file/list_dir for weeks — none of
+	// which is a tool. Every one fell through to the files kit instead, so on any
+	// exchange that did not route to files (a portal, a quiz, a download) she had
+	// no way to read or write a file at all. A test now refuses a core entry that
+	// names nothing.
+	"file_read": true, "file_write": true, "folder_list": true, "change_dir": true,
+	"run_shell": true, "run_command": true, "web_search": true, "web_fetch": true,
 	"browser_open": true, "browser_read": true, "browser_click_text": true,
 	"browser_tabs": true, "browser_status": true,
 	"note_add": true, "note_list": true, "note_done": true,
-	"schedule_task": true, "scheduled_list": true,
-	"skill": true, "skills": true, "skill_learn": true, "report_problem": true,
+	"schedule_self": true, "scheduled_list": true,
+	"skill": true, "skill_learn": true, "report_problem": true,
 	// The way back from a narrowed set. It has to be reachable from every
 	// exchange, whatever routing decided, or the catalogue names tools she has
 	// no way to reach — see catalogue.go.

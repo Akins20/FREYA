@@ -1409,6 +1409,20 @@ STILL PROSE ONLY — ranked by what it would cost:
       answers confidently about the wrong thing is worse than none.
       A generic shell fingerprint remains undesigned, and is probably not worth
       designing.
+**The audit turned up something bigger than anything on its own list.** The core
+kit named five tools that do not exist — `read_file`, `write_file`, `list_dir`,
+`schedule_task`, `skills` — against real tools called `file_read`, `file_write`,
+`folder_list` and `schedule_self`. So the three most basic file operations were
+never in the core kit at all: they fell through to the FILES kit, and on any
+exchange that did not mention files (a portal, a quiz, a download) she had no way
+to read or write anything. Nothing failed. The tools were simply not offered.
+
+The test that should have caught it asserted `kitOf("read_file") == KitCore` —
+which passes for any unknown string, because an unclassified name falls through
+to core by design. It validated ghosts. Deleted, and replaced with two that check
+against the REGISTRY: every core entry must name a real tool, and a browsing
+request must still be able to touch a file.
+
 - [ ] **`docx_write` / `pdf_write` / `xlsx_write` / `system_open` unmarked.**
       They write files and open applications with no framework verification.
 - [ ] **"Do NOT rewrite the whole file with file_write."** Nothing stops a
