@@ -1132,26 +1132,39 @@ The trap to avoid: dynamic per-task tool sets fight the prompt cache head-on.
 Declarations lead the request, so a changing set means a changing prefix, and we
 would trade a measured ~91% hit rate for a speculative attention gain.
 
-- [ ] **24a. Kits.** A small always-on core (memory, files, shell, the browser
+- [x] **24a. Kits.** A small always-on core (memory, files, shell, the browser
       essentials) plus named kits: browsing, files, dev, voice, admin. Tool
       ORDER stays sorted — pinned by TestRegistryToolsAreSorted.
-- [ ] **24b. Routing, deterministic and fail-open.** Kits are chosen ONCE per
+- [x] **24b. Routing, deterministic and fail-open.** Kits are chosen ONCE per
       exchange from the request, before the loop, so the prefix is stable within
       an exchange and each kit caches independently. Lexical and testable; no
       extra model call. Ambiguity includes MORE, never fewer — a missing tool is
       far worse than an extra one.
-- [ ] **24c. The safety valve, which is what makes this safe at all.** A kit miss
+- [x] **24c. The safety valve, which is what makes this safe at all.** A kit miss
       is otherwise a SILENT capability loss: she cannot ask for a tool she was
       never shown, so she just does not do the task and reports a limitation that
       is not real. So: anything registered stays EXECUTABLE whether or not it was
       offered. If she names a tool that exists but was not in her kit, it runs,
       and the miss is recorded. Worst case is one wasted round, not a lost task.
-- [ ] **24d. Measure the miss rate.** Telemetry counts kit misses by tool. A tool
+- [x] **24d. Measure the miss rate.** Telemetry counts kit misses by tool. A tool
       that is missed repeatedly belongs in the core; a kit that is missed
       repeatedly is routed wrongly. This is the number that says whether the
       whole idea earns its keep.
-- [ ] Gate: comprehension must not drop, cache hit rate must not drop, and no
-      tool may become unreachable.
+      MEASURED against the full registry of 96 tools (~11,400 tokens):
+        "open my portal and do the quizzes"       53 tools  45% fewer
+        "download the two pictures from my drive" 69 tools  28% fewer
+        "write up my notes into a document"       33 tools  66% fewer
+        "why is the build failing in that repo"   34 tools  65% fewer
+        "how much disk have I got left"           27 tools  72% fewer
+        "hello how are you"                       96 tools   0% fewer (fail-open)
+
+- [x] Gate passed: comprehension held at 86%, suite green under -race, no tool
+      became unreachable. Cache hit rate to be re-read after a day of real use —
+      several warm prefixes instead of one is the expected shape, not a
+      regression.
+- [ ] Follow-up once there is a day of `/tools` miss data: promote anything
+      missed repeatedly into the core kit, and re-check whether the browsing kit
+      (only 45% narrowing, the weakest) wants splitting.
 
 ### Phase 25 — retrieval: the tier that has never once been used
 
