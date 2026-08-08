@@ -32,8 +32,22 @@ type PageState struct {
 	URL   string
 	Title string
 	// Interstitial names a browser warning standing in for the real page, empty
-	// when the page is genuinely the site's own.
+	// when the page is genuinely the site's own. Matched on prose, so it is a
+	// LOOSE signal — good enough to warn her, not good enough to refuse on.
 	Interstitial string
+	// BrowserPage is the same claim made with certainty: this document was served
+	// by Chrome itself, not by any site.
+	//
+	// The distinction is load-bearing because the two carry different costs.
+	// Interstitial matches page text for phrases like "no internet" and
+	// "err_connection", and a developer's browser is full of pages that legitimately
+	// contain those words — a Stack Overflow answer about ERR_CONNECTION_REFUSED
+	// is exactly the page she reads while debugging. Warning her about one of
+	// those wastes a sentence. REFUSING every click on one would break the task,
+	// so the blanket refusal keys on this instead: Chrome's own error and
+	// security interstitials are built from element IDs no site uses, and served
+	// from a scheme no site can claim.
+	BrowserPage bool
 	// Loading reports that navigation has not settled.
 	Loading bool
 	// Errors are console errors, newest last. A page that threw is a page whose
@@ -95,17 +109,24 @@ func (c *Client) State(ctx context.Context) PageState {
 	s.URL, _ = c.URL(ctx)
 	s.Title, _ = c.Title(ctx)
 
+	// The chrome flag looks for Chrome's OWN interstitial markup. These ids and
+	// classes belong to the browser's built-in error and security pages; no site
+	// ships them, which is what makes this safe to refuse on where matching the
+	// page's prose is not.
 	raw, err := c.EvalString(ctx, `JSON.stringify({
       ready: document.readyState,
-      text: (document.body ? (document.body.innerText || '') : '').slice(0, 800)
+      text: (document.body ? (document.body.innerText || '') : '').slice(0, 800),
+      chrome: !!document.querySelector(
+        '#main-frame-error, .interstitial-wrapper, #proceed-link, #security-interstitial')
     })`)
 	if err != nil {
 		return s
 	}
 
 	var probe struct {
-		Ready string `json:"ready"`
-		Text  string `json:"text"`
+		Ready  string `json:"ready"`
+		Text   string `json:"text"`
+		Chrome bool   `json:"chrome"`
 	}
 	if json.Unmarshal([]byte(raw), &probe) != nil {
 		return s
@@ -123,6 +144,15 @@ func (c *Client) State(ctx context.Context) PageState {
 	// a site is how she ends up describing the settings page as the portal.
 	if strings.HasPrefix(s.URL, "chrome-error://") {
 		s.Interstitial = "this is a browser error page, not the site"
+	}
+
+	// Certainty, as opposed to suspicion. Chrome's own markup, or a scheme only
+	// Chrome can serve — either way this document did not come from a site.
+	s.BrowserPage = probe.Chrome ||
+		strings.HasPrefix(s.URL, "chrome-error://") ||
+		strings.HasPrefix(s.URL, "chrome://")
+	if s.BrowserPage && s.Interstitial == "" {
+		s.Interstitial = "this is one of the browser's own pages, not the site"
 	}
 	return s
 }
@@ -210,6 +240,35 @@ var proceedWords = []string{
 	"proceed to", "continue to", "unsafe", "advanced",
 	"accept the risk", "i understand the risks", "visit this unsafe site",
 	"details", "back to safety",
+}
+
+// RefuseInteraction refuses ANY interaction with a browser warning page.
+//
+// RefuseUnsafeProceed reads the target's text, which only works for a tool that
+// has target text to read. A selector click, a keypress, a form submit and a
+// right-click carry no words to match — so the page that one tool refused to
+// push past could be pushed past by any of the other five, while the refusal
+// message told her not to look for another way through. Naming the other ways
+// through and leaving them open is worse than not refusing at all.
+//
+// So the rule here is blanket rather than word-aware, and it is the stronger
+// rule: there is nothing on a certificate warning she has legitimate business
+// clicking, typing into, or submitting. The one legitimate move — leaving — is a
+// navigation, not an interaction, and is untouched. So is reading it, which is
+// exactly what she should do.
+func RefuseInteraction(s PageState, what string) string {
+	// BrowserPage, not Interstitial. Blocking every click on a page merely
+	// SUSPECTED of being a warning would break ordinary work — see the field
+	// comment for why a developer's browser sets that suspicion off constantly.
+	if !s.BrowserPage {
+		return ""
+	}
+	return fmt.Sprintf("refusing to %s: this page is a browser SAFETY WARNING, not the "+
+		"site — %s. Every control on it exists to push past the warning, so there is "+
+		"nothing here to interact with.\n\nDo not look for another way through; there "+
+		"isn't one, and the other interaction tools refuse this page too. Navigate "+
+		"away, or tell the user what the warning says and let them decide. If they "+
+		"gave you the address, check it is the one they meant.", what, s.Interstitial)
 }
 
 // RefuseUnsafeProceed reports why a click must not happen, or empty when it is

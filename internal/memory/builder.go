@@ -24,6 +24,15 @@ type ContextBuilder struct {
 
 	// Persona is Freya's character prompt, prepended to the identity tier.
 	Persona string
+	// Catalogue names every tool she has, whether or not this turn declared it.
+	//
+	// A plain string rather than a registry, so memory keeps knowing nothing
+	// about skills. It is derived once at startup and never changes within a
+	// process — more static than the persona, which /persona can edit — so it
+	// sits in the stable prefix and is cached for the life of the run. Why it
+	// exists at all is in internal/skills/catalogue.go: without it, a tool the
+	// turn did not declare is a capability she cannot know she has.
+	Catalogue string
 	// RetrieveLimit caps how many archived documents may be pulled back in.
 	RetrieveLimit int
 	// SessionStart is when this run began, for temporal grounding.
@@ -80,6 +89,12 @@ func (b *ContextBuilder) Build(query string) (system string, msgs []llm.Message,
 	// The system prompt holds every stable tier, so its bytes change rarely.
 	var sys strings.Builder
 	sys.WriteString(identity)
+	// Directly after identity, because it is exactly as static and changes even
+	// less often — ahead of facts, which are appended to as she learns.
+	if b.Catalogue != "" {
+		sys.WriteString("\n\n# What I can do\n")
+		sys.WriteString(b.Catalogue)
+	}
 	if factText != "" {
 		sys.WriteString("\n\n# What I know\n")
 		sys.WriteString(factText)

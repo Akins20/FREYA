@@ -46,7 +46,20 @@ type Skill struct {
 	// directory. Attached automatically when the skill fails, so a miss hands back
 	// the state needed to succeed instead of an invitation to guess again.
 	Affordances func(ctx context.Context) []string
+	// Precheck refuses the call outright before anything runs.
+	//
+	// For rules that must hold across a whole family of tools rather than at one
+	// call site. The case that produced it: clicking through a browser
+	// certificate warning was refused in browser_click_text and nowhere else,
+	// while the refusal text told her not to look for another way through — and
+	// five other interaction tools were another way through. Install these with
+	// Protect, so a tool added next month inherits the rule instead of needing
+	// someone to remember it.
+	Precheck Precheck
 }
+
+// Precheck decides whether a call may happen at all. A non-nil error refuses it.
+type Precheck func(ctx context.Context, args map[string]any) error
 
 // Registry holds the registered skills.
 type Registry struct {
@@ -68,6 +81,51 @@ func (r *Registry) Register(s Skill) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.skills[s.Tool.Name] = s
+}
+
+// Protect installs a precheck on every MUTATING skill whose name starts with
+// prefix, and reports how many it covered.
+//
+// The rule travels with the family rather than the call site. Registering a new
+// browser interaction tool next month picks up the certificate-warning refusal
+// automatically, because the guard is attached by prefix after registration
+// instead of being a line someone has to remember to type. Reads are left alone
+// deliberately: looking at a warning page is exactly what she should do.
+// The named exceptions are spelled out at the call site rather than inferred,
+// because an exception to a safety rule should be something a reader can see.
+func (r *Registry) Protect(prefix string, pre Precheck, except ...string) int {
+	if pre == nil {
+		return 0
+	}
+	skip := map[string]bool{}
+	for _, n := range except {
+		skip[n] = true
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	n := 0
+	for name, s := range r.skills {
+		if !strings.HasPrefix(name, prefix) || !s.Mutates || skip[name] {
+			continue
+		}
+		// Chain rather than replace, so two rules over one family both apply.
+		if prior := s.Precheck; prior != nil {
+			next := pre
+			s.Precheck = func(ctx context.Context, args map[string]any) error {
+				if err := prior(ctx, args); err != nil {
+					return err
+				}
+				return next(ctx, args)
+			}
+		} else {
+			s.Precheck = pre
+		}
+		r.skills[name] = s
+		n++
+	}
+	return n
 }
 
 // Tools returns every tool declaration, sorted for a stable prompt prefix —
@@ -128,6 +186,14 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 			return "", withOptions(err, s.Affordances(ctx))
 		}
 		return "", err
+	}
+
+	// Refusals that hold for a whole family of tools, enforced here rather than
+	// at each call site — the point being that a call site can be forgotten.
+	if s.Precheck != nil {
+		if err := s.Precheck(ctx, args); err != nil {
+			return "", err
+		}
 	}
 
 	// Sample the world first. Only for skills that change it — a read has nothing

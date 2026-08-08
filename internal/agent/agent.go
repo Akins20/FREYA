@@ -292,8 +292,28 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// An account of the work, for the case where she does not reach an answer.
 	var work trail
 
+	// What find_tools has pulled up so far, so the set is rebuilt only when it
+	// actually grew rather than on every round.
+	var promoted []string
+
 	for round := 1; round <= maxToolRounds; round++ {
 		result.Rounds = round
+
+		// A tool find_tools pulled up in an earlier round joins the set she is
+		// offered, for the rest of the exchange.
+		//
+		// This is the ONE thing allowed to change the declarations mid-loop, and
+		// it earns the exception: a provider only emits a call for a function it
+		// was declared, so handing back a schema she then could not call would
+		// make find_tools a decoration. The cost is one re-processed prefix, in
+		// the exchanges that needed a tool routing did not show her — against a
+		// capability she would otherwise report to the user as impossible. It
+		// also settles rather than churning: a tool already offered is never
+		// surfaced again, so the set grows a handful of times and then holds.
+		if extra := scope.Surfaced(); len(extra) > len(promoted) {
+			promoted = extra
+			tools = a.Skills.ToolsWith(kits, promoted)
+		}
 
 		// Being told to stop has to actually stop her, and that does not follow
 		// from the rest of the loop's design. A failing tool is deliberately data

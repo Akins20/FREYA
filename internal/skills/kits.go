@@ -113,6 +113,10 @@ var coreTools = map[string]bool{
 	"note_add": true, "note_list": true, "note_done": true,
 	"schedule_task": true, "scheduled_list": true,
 	"skill": true, "skills": true, "report_problem": true,
+	// The way back from a narrowed set. It has to be reachable from every
+	// exchange, whatever routing decided, or the catalogue names tools she has
+	// no way to reach — see catalogue.go.
+	"find_tools": true,
 	"work_start": true, "work_list": true, "work_cancel": true,
 }
 
@@ -208,6 +212,39 @@ func (r *Registry) ToolsFor(kits []Kit) []llm.Tool {
 	out := make([]llm.Tool, 0, len(r.skills))
 	for name, s := range r.skills {
 		if want[kitOf(name)] {
+			out = append(out, s.Tool)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// ToolsWith returns the kit declarations plus any named extras, sorted.
+//
+// The extras are what find_tools surfaced: tools outside the routed kits that
+// this piece of work turned out to need. Sorted with everything else rather than
+// appended, because a name is a name — the model has no way to tell a promoted
+// declaration from an original one, and should not.
+func (r *Registry) ToolsWith(kits []Kit, extra []string) []llm.Tool {
+	if len(extra) == 0 {
+		return r.ToolsFor(kits)
+	}
+	want := map[Kit]bool{}
+	for _, k := range kits {
+		want[k] = true
+	}
+	also := map[string]bool{}
+	for _, n := range extra {
+		also[n] = true
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]llm.Tool, 0, len(r.skills))
+	for name, s := range r.skills {
+		// No kits means nothing was narrowed, so everything is already offered
+		// and the extras are already in it.
+		if len(want) == 0 || want[kitOf(name)] || also[name] {
 			out = append(out, s.Tool)
 		}
 	}

@@ -247,7 +247,16 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		skills.RegisterVoice(reg, vs)
 	}
 
+	// The way back from a narrowed tool set. Registered last, so it can see every
+	// other tool — it searches the registry, and anything registered after it
+	// would be invisible to the search.
+	skills.RegisterFinder(reg)
+
 	builder := memory.NewContextBuilder(store, index, persona.Prompt(reg.Names()))
+	// Everything she has, by name, in the cached prefix. Snapshot taken here
+	// because registration is finished: the catalogue must be the whole registry
+	// or it teaches her a blind spot instead of curing one.
+	builder.Catalogue = reg.Catalogue()
 	// Last activity grounds "you haven't been here in a while".
 	if turns := store.Turns(); len(turns) > 0 {
 		builder.LastSeen = turns[len(turns)-1].Timestamp

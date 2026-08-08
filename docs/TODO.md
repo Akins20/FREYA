@@ -1166,6 +1166,66 @@ would trade a measured ~91% hit rate for a speculative attention gain.
       missed repeatedly into the core kit, and re-check whether the browsing kit
       (only 45% narrowing, the weakest) wants splitting.
 
+#### 24e. Catalogue + find_tools — what the kits got wrong
+
+Researched against how Claude Code and the Anthropic tool-search API avoid bloat
+at a much larger tool count. The finding that matters: **they never hide that a
+tool EXISTS, only its schema.** Tools are declared with `defer_loading`, the model
+searches, and matched schemas are APPENDED to the request rather than swapped
+into the tool block — which is what preserves the cache.
+
+Kits hid tools entirely, which is why 24c needed a valve at all: she cannot name
+what she has never seen, so the valve only helped once she already knew. That is
+the exact shape of the `browser_sync_logins` failure — a hundred sessions, zero
+calls, routing not even on.
+
+- [x] **Catalogue.** Every tool named with a one-line gist, in the stable prefix
+      right after identity. Measured ~21 tokens a line against ~87 to declare
+      one: ~2,800 tokens to name all 133 against ~11,600 to declare them, paid
+      once into a prefix that caches forever. Byte-stable and sorted; a test pins
+      the ratio, and another pins its POSITION (before facts, before the clock)
+      because presence alone would let it drift somewhere that re-bills per turn.
+- [x] **find_tools.** Describes the WORK, not the tool name, and returns full
+      argument lists. Lexical with a rarity weight — "browser" appears in forty
+      descriptions and discriminates nothing, "chooser" appears in one and
+      decides it. All seven real-failure cases retrieve the right tool in the top
+      five, five of them ranked first.
+- [x] **Promotion.** A found tool joins the declarations for the rest of the
+      exchange — the one thing allowed to change the set mid-loop, because a
+      provider only emits a call for a function it was declared, so handing back
+      a schema she cannot then call would make the whole thing a decoration.
+- [x] Comprehension **86% → 93%** (13/14). Live: she now answers the Drive
+      question correctly from memory with no tools at all, and the find_tools
+      round-trip returns exact argument names.
+- [ ] The remaining 7% is not a tool-knowledge gap: she correctly identifies the
+      SSL interstitial and proposes to click through anyway. That is judgment,
+      and it is now refused in code (below) rather than argued with.
+
+#### 24f. Protect — a rule at one call site out of six is not a rule
+
+Found while checking whether the substrate actually stops 24e's last failure. It
+did — in `browser_click_text` alone, whose own refusal text read "Do not look for
+another way through" while `browser_click`, `browser_double_click`,
+`browser_right_click`, `browser_press` and `browser_submit` were all another way
+through.
+
+- [x] `Registry.Protect(prefix, precheck, except...)` attaches a refusal to a
+      whole FAMILY of mutating tools after registration, so a browser tool added
+      next month inherits it instead of needing someone to remember. Chains
+      rather than replaces; leaves reads alone; exceptions named at the call site
+      so a reader can see them.
+- [x] `RefuseInteraction` refuses any interaction with a browser's own page —
+      blanket rather than word-aware, because a selector click and a keypress
+      carry no words to match.
+- [x] **Keyed on certainty, not suspicion.** `Interstitial` is matched against
+      page prose for "no internet" and "err_connection"; a developer's browser is
+      full of pages that legitimately contain those — a Stack Overflow answer
+      about ERR_CONNECTION_REFUSED is exactly the page she reads while debugging.
+      Warning her costs a sentence, refusing every click would break the task. So
+      the blanket rule keys on a new `BrowserPage` flag: Chrome's own
+      interstitial markup (`#main-frame-error`, `.interstitial-wrapper`,
+      `#proceed-link`) or a scheme no site can serve.
+
 ### Phase 25 — retrieval: the tier that has never once been used
 
 `internal/reflect` is dead in production: `reflectAfter` is defined and never

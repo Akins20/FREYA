@@ -616,6 +616,38 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			})
 		},
 	})
+
+	// Last, once every browser tool is registered: no interaction with a browser
+	// warning page, whichever tool asks.
+	//
+	// This was a refusal in browser_click_text alone, whose own message told her
+	// "do not look for another way through" while five other interaction tools
+	// were exactly that. Attached by family rather than by call site, so a
+	// browser tool added later is covered without anyone remembering to cover it.
+	//
+	// The exceptions are the ways OUT. Leaving a warning page is the correct
+	// move, so the tools that leave must keep working on one; reads are untouched
+	// already, because only mutating skills are protected.
+	r.Protect("browser_", refuseOnWarning(tabs),
+		"browser_open", "browser_attach", "browser_tabs", "browser_sync_logins")
+}
+
+// refuseOnWarning is the family rule for browser interaction: a certificate or
+// safety interstitial is Chrome talking, not the site, and nothing on it is
+// hers to touch.
+func refuseOnWarning(tabs *Tabs) Precheck {
+	return func(ctx context.Context, args map[string]any) error {
+		tab, _, err := tabNoted(tabs, args)
+		if err != nil {
+			// No tab is the handler's problem to report, with its own better
+			// message. A guard must not turn one failure into a different one.
+			return nil
+		}
+		if why := browser.RefuseInteraction(tab.client.State(ctx), "act on this page"); why != "" {
+			return fmt.Errorf("%s", why)
+		}
+		return nil
+	}
 }
 
 // secretFieldHints name the fields a credential goes into.

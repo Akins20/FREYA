@@ -111,3 +111,35 @@ func TestClickingThroughASafetyWarningIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// The blanket refusal must key on certainty, not suspicion.
+//
+// Interstitial is matched against page prose for phrases like "no internet" and
+// "err_connection". A developer's browser is full of pages that legitimately
+// contain those — a Stack Overflow answer about ERR_CONNECTION_REFUSED is
+// exactly the page she reads while debugging one. Warning her costs a sentence;
+// refusing every click on it would break the task.
+func TestABlanketRefusalNeedsCertaintyNotSuspicion(t *testing.T) {
+	// The real thing: Chrome's own markup or scheme.
+	certain := PageState{BrowserPage: true, Interstitial: "Chrome's certificate warning"}
+	why := RefuseInteraction(certain, "click Advanced")
+	if why == "" {
+		t.Fatal("a genuine browser interstitial allowed interaction")
+	}
+	for _, want := range []string{"SAFETY WARNING", "another way through", "Navigate away"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the refusal is missing %q: %s", want, why)
+		}
+	}
+
+	// Suspicion alone — a page whose text merely mentions a browser error.
+	suspected := PageState{Interstitial: "the connection failed; this is a browser error page"}
+	if why := RefuseInteraction(suspected, "click Run"); why != "" {
+		t.Errorf("a page that only MENTIONS a browser error was locked down: %s", why)
+	}
+
+	// And an ordinary page is untouched.
+	if why := RefuseInteraction(PageState{}, "click Submit"); why != "" {
+		t.Errorf("an ordinary page refused interaction: %s", why)
+	}
+}

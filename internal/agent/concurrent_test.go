@@ -107,6 +107,10 @@ func TestABackgroundJobSharesTheCachedPrefix(t *testing.T) {
 	p := &concurrentProvider{gate: make(chan struct{})}
 	close(p.gate)
 	a, store := newTestAgent(t, p)
+	// The catalogue sits in the stable prefix too, so it is one more thing that
+	// must not differ per worker. Set here so the comparison below actually
+	// exercises it rather than passing on an empty string.
+	a.Builder.Catalogue = "CATALOGUE-MARKER — every tool she has"
 	a.Skills.Register(skills.Skill{
 		Tool:    llm.Tool{Name: "ping", Params: llm.ObjectSchema(nil)},
 		Handler: func(context.Context, map[string]any) (string, error) { return "pong", nil },

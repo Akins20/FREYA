@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -40,6 +41,10 @@ type Scope struct {
 	// ledger records the identifiers this thread of work has actually been shown,
 	// so a composed one can be told apart from an observed one.
 	ledger *Ledger
+	// found is what find_tools has pulled up for this thread of work. A pointer,
+	// because a tool found in round three has to be callable in round four — the
+	// scope is copied into each call, so the set behind it must be shared.
+	found *found
 }
 
 // Ledger is what this thread of work has been shown. Nil when unset, which the
@@ -90,7 +95,8 @@ func (w *Workspace) SetDir(dir string) {
 
 // NewScope builds a scope over a workspace.
 func NewScope(ws *Workspace, tabPrefix, jobID string) Scope {
-	return Scope{ws: ws, TabPrefix: tabPrefix, JobID: jobID, ledger: NewLedger()}
+	return Scope{ws: ws, TabPrefix: tabPrefix, JobID: jobID,
+		ledger: NewLedger(), found: &found{}}
 }
 
 // Dir is where relative paths resolve for this thread of work.
@@ -135,6 +141,7 @@ var (
 	defaultOnce   sync.Once
 	defaultWS     *Workspace
 	defaultLedger *Ledger
+	defaultFound  *found
 )
 
 // ScopeFrom returns the scope carried by ctx, or the process-wide default.
@@ -147,8 +154,9 @@ func ScopeFrom(ctx context.Context) Scope {
 	defaultOnce.Do(func() {
 		defaultWS = NewWorkspace("")
 		defaultLedger = NewLedger()
+		defaultFound = &found{}
 	})
-	return Scope{ws: defaultWS, ledger: defaultLedger}
+	return Scope{ws: defaultWS, ledger: defaultLedger, found: defaultFound}
 }
 
 // expandIn resolves ~, environment variables and relative paths, anchoring a
@@ -191,10 +199,69 @@ func (s Scope) offers(name string) bool {
 	if len(s.kits) == 0 {
 		return true
 	}
+	if s.found != nil && s.found.has(name) {
+		return true
+	}
 	for _, k := range s.kits {
 		if kitOf(name) == k {
 			return true
 		}
 	}
 	return false
+}
+
+// surface records tools find_tools pulled up for this thread of work.
+func (s Scope) surface(names ...string) {
+	if s.found == nil {
+		return
+	}
+	s.found.add(names...)
+}
+
+// Surfaced lists what find_tools has pulled up this exchange, sorted.
+//
+// The agent reads this between rounds and adds these declarations to the set it
+// offers. Handing back a schema she then cannot call would be a cruel joke: a
+// provider only emits a call for a function it was declared, so finding a tool
+// has to actually put it on the table.
+func (s Scope) Surfaced() []string {
+	if s.found == nil {
+		return nil
+	}
+	return s.found.list()
+}
+
+// found is the set of tools find_tools has surfaced, shared by pointer so a
+// scope copied into a goroutine sees the same set.
+type found struct {
+	mu    sync.Mutex
+	names map[string]bool
+}
+
+func (f *found) add(names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.names == nil {
+		f.names = map[string]bool{}
+	}
+	for _, n := range names {
+		f.names[n] = true
+	}
+}
+
+func (f *found) has(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.names[name]
+}
+
+func (f *found) list() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.names))
+	for n := range f.names {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
