@@ -184,10 +184,14 @@ func RegisterBrowserHistory(r *Registry) {
 
 	r.Register(Skill{
 		Tool: llm.Tool{
-			Name: "browser_downloads",
-			Description: "List files the user has downloaded through the browser, most recent " +
-				"first, with where each was saved. Useful for finding a file they mention " +
-				"having downloaded.",
+			Name: "browser_past_downloads",
+			Description: "Files the USER downloaded themselves, in their own Chrome, in the " +
+				"past — useful only for finding something they mention having downloaded a " +
+				"while ago. It is a stale snapshot of a different browser profile.\n\n" +
+				"It is NOT how you check your own downloads. For anything you triggered — " +
+				"is it running, did it finish, where did it go — use browser_downloads, " +
+				"which has the live state. Reaching for this one after a download will " +
+				"show you someone else's history from weeks ago and tell you nothing.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"limit": {Type: "integer", Description: "How many (default 20)."},
 			}),

@@ -1049,6 +1049,68 @@ by hand, stated plainly when used.
 - [ ] Network-idle waiting and console errors: she can tell a page changed but
       not that a request failed or the page threw.
 
+## Phase 23 — the browser as a system, and asking whether she understands it
+
+- [x] **`browser_downloads` read the wrong profile, the wrong source, and had no
+      state.** It queried the SQLite History file of the user's REAL Chrome — not
+      the automation profile — which Chrome flushes lazily and which only ever
+      contains finished transfers. In the Drive run it returned entries from three
+      weeks earlier, which she reasonably read as "nothing I did worked". So
+      "is it downloading?", "did it finish?", "did it fail?" were all
+      unanswerable, on the one action that changes nothing about the page.
+- [x] A live tracker: preparing → downloading (bytes, percent, elapsed) →
+      complete (with the path) / cancelled / failed, assembled from the browser's
+      own events. `preparing` is called out explicitly because it is the state
+      most often mistaken for failure — a server building a zip sits there.
+- [x] It verifies against disk. "The browser said completed" and "a file exists"
+      are different claims, and the gap is where a blocked or quarantined download
+      disappears. It also lists what actually appeared in the folder, so a
+      transfer no event described still shows up.
+- [x] **Chrome's own pages are not the site.** A certificate warning or
+      "Deceptive site ahead" is a real page with real text; read as content it
+      becomes "the site now says something about privacy". Interstitials are
+      detected and flagged on every read, along with "still loading", which is the
+      same trap from the other side (a half-loaded page reads as an empty one).
+- [x] `browser_find` (a long page truncates, so "no" often means "not in the part
+      I read"), `browser_status`, `browser_save_pdf` (keeping something that is
+      not a file to begin with: a receipt, a confirmation).
+
+### Asking her whether she understands what she has
+
+- [x] **`bench -comprehension`.** Every other benchmark asks whether a task got
+      done, which cannot detect the way a TOOLSET fails: she has the right tool,
+      does not think of it, finishes badly by another route, and the artifact
+      check passes. Fourteen situations, all of them real; she answers WITHOUT
+      acting, because otherwise she discovers the answer by trial and the trial is
+      what is being measured. Grading is deliberately crude — a model marking a
+      model's homework launders a guess into a number.
+- [x] It found three things on its first run, and each was a real defect:
+      - she reached for the stale `browser_downloads`, so the old tool was renamed
+        `browser_past_downloads` and stopped shadowing the live one;
+      - she then named `browser_downloads` for the LIVE tool anyway — which I had
+        called `browser_transfers`. **She was right and the name was wrong.** The
+        primary tool now owns the obvious name. Naming a tool what she would
+        reach for is not cosmetic;
+      - one of my grader's answer keys was too narrow and failed a correct answer.
+- [x] **Guidance failed and a guard was needed.** Asked three times what to do on
+      "Your connection is not private" with the user waiting to sign in, she said
+      three times that she would click Advanced and proceed — after the playbook
+      told her not to. Clicking through a safety warning is now REFUSED in code.
+      Prose in a prompt is not a control.
+
+### The tool inventory, measured
+
+- 133 registered tools. **38 have ever been called.** Declarations cost ~11.6k
+  tokens, and they are cached, so the price is attention rather than money.
+- `browser_click_real` is the single most-used tool in the log (233 calls) and
+  its own description says to prefer `browser_click_text`. Three ways to click is
+  itself a source of error.
+
+- [ ] Prune and consolidate before adding a loading mechanism. Dynamic tool sets
+      fight the prompt cache directly (declarations lead the request), so the
+      cheap win is fewer and better-named tools, measured by the comprehension
+      run rather than guessed at.
+
 ## Phase 17 — remaining
 
 - [ ] Chrome control via DevTools Protocol on 9222

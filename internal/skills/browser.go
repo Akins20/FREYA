@@ -156,6 +156,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	RegisterBrowserInteract(r, g, tabs)
 	RegisterBrowserGestures(r, g, tabs)
 	RegisterBrowserAttach(r, g, tabs)
+	RegisterBrowserState(r, g, tabs)
 
 	if g == nil || tabs == nil {
 		return
@@ -271,7 +272,16 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			title, _ := tab.client.Title(ctx)
 			url, _ := tab.client.URL(ctx)
 			limit := clamp(argInt(args, "limit", 12000), 200, 100000)
-			return fmt.Sprintf("%s\n%s\n\n%s", title, url, clipText(text, limit)), nil
+
+			// Whether this is the site at all, said without being asked. A
+			// certificate warning and a safe-browsing block are real pages with
+			// real text: read as content they become "the site now says something
+			// about privacy", and the next twenty rounds are spent on Chrome's
+			// error page. A page that has not finished loading reads as an empty
+			// one, which is the same trap from the other side.
+			state := tab.client.State(ctx)
+			return fmt.Sprintf("%s\n%s\n\n%s%s", title, url,
+				clipText(text, limit), state.Describe()), nil
 		},
 	})
 
@@ -375,6 +385,14 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			text := argString(args, "text")
 			if strings.TrimSpace(text) == "" {
 				return Outcome{}, fmt.Errorf("text is required")
+			}
+			// Not guidance — a refusal. Asked what to do on "Your connection is not
+			// private" with the user waiting to sign in, she said she would click
+			// Advanced and proceed. The page had already been flagged to her as a
+			// browser warning: she read that, understood it, and chose to go
+			// through. Some things have to be unavailable rather than discouraged.
+			if why := browser.RefuseUnsafeProceed(tab.client.State(ctx), text); why != "" {
+				return Outcome{}, fmt.Errorf("%s", why)
 			}
 			action := guard.Action{Kind: guard.KindBrowser, Command: "click text " + text,
 				Reason: fmt.Sprintf("click the element reading %q in tab %q (%s context)", text, tab.name, tab.ctx)}

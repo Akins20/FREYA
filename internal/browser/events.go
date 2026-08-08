@@ -120,6 +120,12 @@ func (c *Client) Watch(ctx context.Context) {
 // answered, so anything slow here is a hang for every other call against the
 // page.
 func (c *Client) handleEvent(method string, params json.RawMessage) {
+	// The download tracker sees the same stream: this log answers "what just
+	// happened", the tracker answers "what is happening now". Both are needed —
+	// an event scrolls away, and a state that exists only as history cannot say
+	// whether something is still running.
+	c.downloadEvent(method, params)
+
 	switch method {
 	case "Page.javascriptDialogOpening":
 		c.handleDialog(params)

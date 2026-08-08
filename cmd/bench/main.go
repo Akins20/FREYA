@@ -25,17 +25,31 @@ import (
 
 func main() {
 	var (
-		binary   = flag.String("bin", "", "path to the freya binary (default: ./bin/freya then $PATH)")
-		category = flag.String("category", "", "run only this category")
-		only     = flag.String("only", "", "run only benchmarks whose name contains this")
-		list     = flag.Bool("list", false, "list benchmarks and exit")
-		parallel = flag.Int("parallel", 2, "how many benchmarks to run at once")
-		keep     = flag.Bool("keep", false, "keep workspaces on disk for inspection")
-		verbose  = flag.Bool("v", false, "stream per-run progress")
-		runs     = flag.Int("runs", 1, "run each benchmark this many times for a pass-rate")
-		serve    = flag.Bool("serve", false, "just start the fake portal and print its URL, for manual testing")
+		binary        = flag.String("bin", "", "path to the freya binary (default: ./bin/freya then $PATH)")
+		category      = flag.String("category", "", "run only this category")
+		only          = flag.String("only", "", "run only benchmarks whose name contains this")
+		list          = flag.Bool("list", false, "list benchmarks and exit")
+		parallel      = flag.Int("parallel", 2, "how many benchmarks to run at once")
+		keep          = flag.Bool("keep", false, "keep workspaces on disk for inspection")
+		verbose       = flag.Bool("v", false, "stream per-run progress")
+		runs          = flag.Int("runs", 1, "run each benchmark this many times for a pass-rate")
+		serve         = flag.Bool("serve", false, "just start the fake portal and print its URL, for manual testing")
+		comprehension = flag.Bool("comprehension", false,
+			"ask her which tool she would use in each of a set of situations, without acting")
 	)
 	flag.Parse()
+
+	// Does she know what she has? A different question from does it work, and one
+	// no artifact check can answer: a tool she never reaches for is invisible to
+	// every other benchmark here.
+	if *comprehension {
+		bin, err := findBinary(*binary)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		comprehensionMain(bin, *verbose)
+	}
 
 	if *serve {
 		ts, err := bench.StartPortal()

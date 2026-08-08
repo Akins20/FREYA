@@ -90,6 +90,9 @@ type Client struct {
 	// events records what the browser did outside the page — downloads, dialogs,
 	// windows opening. See events.go for why the DOM alone is not enough.
 	events *eventLog
+	// downloads is the live state of every file this browser has fetched: what is
+	// preparing, what is in flight, what landed and what failed. See downloads.go.
+	downloads *downloads
 }
 
 // command is one CDP request.
@@ -221,10 +224,11 @@ func Connect(c Context, target *Target) (*Client, error) {
 	}
 
 	client := &Client{
-		Context: c,
-		conn:    conn,
-		pending: map[int64]chan json.RawMessage{},
-		events:  &eventLog{},
+		Context:   c,
+		conn:      conn,
+		pending:   map[int64]chan json.RawMessage{},
+		events:    &eventLog{},
+		downloads: newDownloads(),
 	}
 	go client.readLoop()
 	return client, nil

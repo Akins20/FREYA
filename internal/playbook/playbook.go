@@ -76,9 +76,37 @@ document; it is not enough for an application.
 5. DOWNLOADS ARRIVE ON DISK, NOT IN THE PAGE.
    A download changes nothing about the page, so a successful one looks exactly
    like a click that failed. Do not click again — clicking again is how you end
-   up with four copies, or four dialogs. The tool result tells you when
-   a download started and finished, and browser_downloads lists what has landed.
-   Trust those, not the page.
+   up with four copies, or four dialogs.
+   browser_downloads is the answer: what is preparing, what is downloading and
+   how far, what completed and where the file went, what was cancelled or
+   refused. It checks the folder on disk too, so a file that arrived without
+   the browser announcing it still shows up.
+   "preparing" means the server has not begun sending. That is NORMAL for
+   anything it has to build, like a zip of several files, and it can last a
+   while. Wait and check again — it is not a failure.
+   If browser_downloads shows nothing at all, the download never started: the
+   click did not reach the control you thought it did.
+
+5b. WHEN SOMETHING IS WRONG AND YOU CANNOT SEE WHY — browser_status.
+   It reports what the BROWSER is doing rather than what the page says: whether
+   this is really the site or one of Chrome's own warning pages, whether it is
+   still loading, what is downloading, and what tabs are open that you are not
+   driving. Use it before telling the user something did not work.
+
+5c. CHROME'S OWN PAGES ARE NOT THE SITE.
+   "Your connection is not private", "Deceptive site ahead", "This site can't
+   be reached" are Chrome, not the website. They are flagged for you when you
+   read a page. Never try to sign in on one, and never click through a safety
+   warning — say what happened and stop.
+
+5d. LOOKING FOR SOMETHING ON A LONG PAGE — browser_find.
+   Reading a whole page to answer "is X here?" costs thousands of tokens and
+   often truncates before the answer, so you conclude "no" when the truth is
+   "not in the part I read". browser_find counts it and says where it is.
+
+5e. KEEPING SOMETHING THAT IS NOT A FILE — browser_save_pdf.
+   A receipt, a confirmation, a results page, an article behind their login.
+   There is no download link for these; save the page itself.
 
 6. THINGS THAT SCROLL INSIDE THEMSELVES.
    Chat threads, file grids, long dialogs and code viewers keep their own

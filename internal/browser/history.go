@@ -341,8 +341,14 @@ func RecentHistory(visits []Visit, since time.Duration, limit int) []Visit {
 	return out
 }
 
-// Download is a file the browser fetched.
-type Download struct {
+// PastDownload is a file the user's own Chrome fetched, read from its History
+// database.
+//
+// Distinct from Download, which is the LIVE state of what this automation
+// browser is fetching right now. Conflating the two is what made the question
+// "did my download work?" unanswerable: this record belongs to a different
+// profile, is written lazily, and only ever appears once a transfer is over.
+type PastDownload struct {
 	URL       string
 	Path      string
 	StartedAt time.Time
@@ -351,7 +357,7 @@ type Download struct {
 }
 
 // LoadDownloads reads download history from the same database.
-func LoadDownloads(path string) ([]Download, error) {
+func LoadDownloads(path string) ([]PastDownload, error) {
 	if path == "" {
 		var err error
 		if path, err = HistoryFile(); err != nil {
@@ -367,9 +373,9 @@ func LoadDownloads(path string) ([]Download, error) {
 		return nil, err
 	}
 
-	out := make([]Download, 0, len(rows))
+	out := make([]PastDownload, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Download{
+		out = append(out, PastDownload{
 			URL:       asText(r["tab_url"]),
 			Path:      asText(r["target_path"]),
 			StartedAt: chromeTime(asInt(r["start_time"])),

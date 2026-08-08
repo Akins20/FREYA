@@ -31,6 +31,8 @@ func TestTheAppsPlaybookNamesTheToolsAtTheMomentTheyAreNeeded(t *testing.T) {
 		"inner scrolling": "browser_scroll_within",
 		"dragging":        "browser_drag",
 		"downloads":       "browser_downloads",
+		"page trouble":    "browser_status",
+		"long pages":      "browser_find",
 		"saved logins":    "browser_sync_logins",
 	} {
 		if !strings.Contains(s.Body, tool) {
