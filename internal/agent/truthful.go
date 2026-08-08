@@ -138,6 +138,22 @@ func (a *Agent) checkTruthful(ctx context.Context, system string, msgs []llm.Mes
 		}
 	}
 
+	// Claiming to have made something, having made nothing this turn. Checked
+	// after coverage because it is the narrower of the two. See produced.go.
+	if claimedWithoutProducing(reply, work) {
+		a.trace("retry", "provenance",
+			"reply claims an artefact but nothing was written this turn — asking when it was made")
+		if corrected := a.reask(ctx, system+producedBrief(goal), msgs); corrected != "" {
+			reply = corrected
+		}
+		// And if the rewrite still claims it, say so plainly. The re-ask is a
+		// request; this is a fact, and the framework is the only party here that
+		// can state it with certainty.
+		if claimedWithoutProducing(reply, work) {
+			reply += provenanceNote
+		}
+	}
+
 	attempts, none := nothingWorked(work)
 	if !none || attempts < severeFailure {
 		return reply
