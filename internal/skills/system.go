@@ -231,10 +231,27 @@ func systemOpen(ctx context.Context, args map[string]any) (string, error) {
 	if !have("xdg-open") {
 		return "", fmt.Errorf("xdg-open is not installed and %q is not an executable on PATH", target)
 	}
-	if _, err := run(ctx, 10*time.Second, "xdg-open", target); err != nil {
-		return "", err
+	// The same reasoning as the branch above, which was missing here.
+	//
+	// xdg-open hands the file to the browser and exits almost immediately — but
+	// run() collects output with CombinedOutput, and that waits for every writer
+	// of the pipes to close. The browser inherits them, so it waits for the
+	// BROWSER to exit. Asked to show him the site he had just had built, she
+	// called this and the turn simply stopped: no result, no error, nothing on
+	// screen, until something eventually killed it.
+	//
+	// Detaching the streams rather than firing blind keeps the exit status
+	// meaningful — with nothing inheriting a pipe, Run returns when xdg-open
+	// returns, which is the thing we actually want to know about.
+	launch, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(launch, "xdg-open", target)
+	cmd.Stdout, cmd.Stderr = nil, nil
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("open %s: %w", target, err)
 	}
-	return "Opened " + target + ".", nil
+	return "Opened " + target + " — it is on the user's screen now, in their own " +
+		"browser or application, not in yours.", nil
 }
 
 func clamp(v, lo, hi int) int {
