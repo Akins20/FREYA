@@ -610,14 +610,41 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
           [r.left + r.width/2, r.top + Math.min(12, r.height/2)],
           [r.left + r.width/2, r.bottom - Math.min(12, r.height/2)],
         ];
-        let found = false;
-        for (const [cx, cy] of candidates) {
-          if (lands(cx, cy)) { lx = cx; ly = cy; found = true; break; }
-        }
+        const tryPoints = () => {
+          for (const [cx, cy] of candidates) {
+            if (lands(cx, cy)) { lx = cx; ly = cy; return true; }
+          }
+          return false;
+        };
+        let found = tryPoints();
+
+        // Nothing landed. Before calling that an obstruction, put the element on
+        // screen and try again — an element below the fold is not covered by
+        // anything, it is simply not where the mouse can reach, and that is the
+        // ordinary case on any list longer than a window.
         if (!found) {
-          let blocker = '';
+          try { el.scrollIntoView({block:'center', inline:'center'}); } catch (e) {}
+          const r2 = el.getBoundingClientRect();
+          candidates.length = 0;
+          candidates.push(
+            [r2.left + r2.width/2, r2.top + r2.height/2],
+            [r2.left + Math.min(20, r2.width/2),  r2.top + r2.height/2],
+            [r2.right - Math.min(20, r2.width/2), r2.top + r2.height/2],
+            [r2.left + r2.width/2, r2.top + Math.min(12, r2.height/2)],
+            [r2.left + r2.width/2, r2.bottom - Math.min(12, r2.height/2)]);
+          found = tryPoints();
+        }
+
+        if (!found) {
+          // Only now is it worth naming a blocker, and only if there IS one.
+          // deepFromPoint returns null for a point outside the viewport, and
+          // calling that "nothing is covering it" told her the way was clear
+          // while refusing every click — so the two are reported separately.
           const hp = deepFromPoint(lx, ly);
-          blocker = hp ? hp.tagName.toLowerCase() + (hp.id ? '#' + hp.id : '') : 'nothing';
+          if (!hp) {
+            return JSON.stringify({error:'offscreen', label:label});
+          }
+          const blocker = hp.tagName.toLowerCase() + (hp.id ? '#' + hp.id : '');
           return JSON.stringify({error:'occluded', label:label, blocker:blocker});
         }
       }
@@ -654,11 +681,24 @@ func (c *Client) ClickText(ctx context.Context, text string) (ClickHit, error) {
 		return ClickHit{}, fmt.Errorf("no text given to click")
 	case "not-found":
 		return ClickHit{}, fmt.Errorf("nothing on the page reads %q (searched shadow DOM and iframes too)", text)
+	case "offscreen":
+		// Distinct from occlusion, and it used to be reported as it: deepFromPoint
+		// returns null for a point outside the viewport, and the old code rendered
+		// that as "nothing is covering it" — telling her the way was clear while
+		// refusing every click. She burned thirteen calls on a Drive download
+		// against that message, which is rational: found, unobstructed, retry.
+		//
+		// Reaching this now means scrolling to it did not help either, so it is a
+		// real position problem rather than the routine below-the-fold case.
+		return ClickHit{}, fmt.Errorf("found %q but could not get it on screen — scrolling to "+
+			"it did not bring it into view. It may be inside a panel with its own scrollbar "+
+			"(browser_scroll_within), in a collapsed section, or behind something that moves "+
+			"when the page does", hit.Label)
 	case "occluded":
 		// Reporting this is the point. The click would have landed on something
 		// else, and dispatching it anyway is how an action "succeeds" onto nothing.
 		return ClickHit{}, fmt.Errorf("found %q but %s is covering it, so a click would hit that instead — "+
-			"scroll it into view, close whatever is on top, or click something else",
+			"close whatever is on top, dismiss the dialog or banner, or click something else",
 			hit.Label, hit.Blocker)
 	}
 	if hit.Synthetic {

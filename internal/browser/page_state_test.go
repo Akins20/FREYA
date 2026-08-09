@@ -1,6 +1,8 @@
 package browser
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -202,5 +204,40 @@ func TestASignInPageInTheGuestContextIsCalledOut(t *testing.T) {
 	// And an ordinary page in guest is not a sign-in.
 	if got := GuestSignIn(PageState{}, true); got != "" {
 		t.Errorf("an ordinary guest page was called a sign-in: %s", got)
+	}
+}
+
+// The embedded page scripts are strings to Go, so a typo in them compiles fine
+// and breaks every click at runtime instead. This parses them.
+//
+// Added after a click fix touched the busiest script in the tree: seven blocks
+// of JavaScript that nothing in `go build` or `go test` was checking.
+func TestTheEmbeddedPageScriptsParse(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed; cannot parse the page scripts")
+	}
+	blocks := 0
+	var all strings.Builder
+	for _, src := range []string{sigExpr, deepPrelude} {
+		blocks++
+		all.WriteString("(function(){ " + src + " });\n")
+	}
+	if blocks == 0 {
+		t.Fatal("no scripts found to check")
+	}
+
+	f, err := os.CreateTemp(t.TempDir(), "*.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(all.String()); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	out, err := exec.Command("node", "--check", f.Name()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("an embedded page script does not parse — every call using it would "+
+			"fail at runtime with a script error:\n%s", out)
 	}
 }
