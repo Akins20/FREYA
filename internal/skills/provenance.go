@@ -258,3 +258,72 @@ func CheckURL(ctx context.Context, raw string) (note string, err error) {
 		"reconstruction. If it is not the page you expected, go back and follow a link rather than " +
 		"adjusting the numbers.)", nil
 }
+
+// IDRead is the second, stricter record: pages whose CONTENT actually came back.
+//
+// # Why "seen" is not good enough for a source
+//
+// harvest() records every identifier that appeared in any tool output, which is
+// what makes provenance cheap — forty producing tools feed the ledger without
+// one of them being modified. It also means a URL sitting in a list of search
+// results is "seen", and a search result is a title and two lines of snippet.
+//
+// Anthropic's research system keeps a separate CitationAgent whose whole job is
+// finding, for every claim in a report, the source location that supports it.
+// The failure it exists to catch is citing something nobody opened, and against
+// a ledger that cannot tell reading from glimpsing, that check cannot be made.
+//
+// So retrieval is recorded separately, by the handful of tools that return a
+// page's actual text. Everything else still lands in IDURL and still counts as
+// having been shown to her — this is a narrower claim on top, not a replacement.
+const IDRead IDKind = "read"
+
+// Retrieved records that a page's content came back, not merely its address.
+//
+// Canonicalised on the way IN as well as on the way out. Storing the raw URL and
+// looking up the normalised one is a lookup that can never match, so every
+// citation reads as unopened and the check accuses her of everything — which is
+// the loudest possible way to be useless.
+func (l *Ledger) Retrieved(urls ...string) {
+	for _, u := range urls {
+		l.Observe(IDRead, canonicalURL(u))
+	}
+}
+
+// WasRetrieved reports whether she actually opened a page, as opposed to seeing
+// it listed somewhere.
+func (l *Ledger) WasRetrieved(url string) bool { return l.Seen(IDRead, canonicalURL(url)) }
+
+// readingTools return the text of a page. Anything here has, by the time it
+// succeeds, actually retrieved whatever its url argument pointed at.
+var readingTools = map[string]string{
+	"web_fetch":      "url",
+	"browser_open":   "url",
+	"browser_goto":   "url",
+	"browser_scrape": "url",
+}
+
+// noteRetrieval records a successful read against the ledger.
+func noteRetrieval(ctx context.Context, tool string, args map[string]any) {
+	param, ok := readingTools[tool]
+	if !ok {
+		return
+	}
+	if u := strings.TrimSpace(argString(args, param)); u != "" {
+		ScopeFrom(ctx).Ledger().Retrieved(u)
+	}
+}
+
+// canonicalURL strips the parts that vary without changing what was read, so a
+// citation written back with a trailing slash still matches the fetch.
+func canonicalURL(u string) string {
+	u = strings.TrimSpace(u)
+	u = strings.TrimSuffix(u, "/")
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimPrefix(u, "www.")
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = u[:i]
+	}
+	return strings.ToLower(u)
+}

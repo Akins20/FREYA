@@ -145,3 +145,154 @@ func nudgeNote(ends []string) string {
 	return fmt.Sprintf("\n\n[Not finished — %d dead links left in place after being flagged "+
 		"twice: %s]", len(ends), strings.Join(ends, "; "))
 }
+
+// reCited finds the URLs an answer presents as sources: bare, in a markdown
+// link, or in parentheses. Trailing punctuation is stripped because a sentence
+// ending in a URL is normal writing, not part of the address.
+var reCited = regexp.MustCompile(`https?://[^\s<>"')\]]+`)
+
+// unopenedSources returns the pages she cited without ever opening.
+//
+// # Why this is the research half of "leads nowhere"
+//
+// A dead link is a promise on a page. A source in an answer that nobody read is
+// the same promise in prose, and it is worse, because the reader has no way to
+// tell: the URL resolves, the page exists, and the claim attached to it may have
+// come from anywhere. She has walked identifiers by pattern before — quiz ids
+// incremented one at a time, every one returning HTTP 200 — so a plausible URL
+// that was never fetched is a shape this codebase already knows she produces.
+//
+// Anthropic's research system runs a whole agent for this, matching every claim
+// in a report to a source location. The ledger already knows which pages were
+// actually retrieved, so here it is a lookup.
+//
+// # Narrow on purpose
+//
+// Only fires when the exchange did some reading, so an answer that quotes a URL
+// from memory or from the user's own message is not accused of anything. And a
+// URL she was shown in a search result but did not open still counts as
+// unopened, which is the whole point — that is the distinction between a source
+// and a search hit.
+func unopenedSources(ctx context.Context, reply string, work *trail) []string {
+	ledger := skills.ScopeFrom(ctx).Ledger()
+	if ledger == nil || work == nil {
+		return nil
+	}
+	// Did she read anything at all this exchange? If not, the URLs came from
+	// somewhere else — the user, memory, a page from yesterday — and accusing an
+	// answer that did no research of citing badly would be nonsense.
+	//
+	// snippetsOnly covers the other half: searched and never opened.
+	searched, read := webActivity(work)
+	if !read {
+		_ = searched
+		return nil
+	}
+
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range reCited.FindAllString(reply, -1) {
+		u := strings.TrimRight(raw, ".,;:!?)")
+		key := strings.ToLower(u)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if ledger.WasRetrieved(u) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// webActivity counts what kind of web work happened, from the tools that ran
+// rather than from what the answer sounds like. The false-success work is clear
+// that judging an answer by how it reads is the mistake.
+func webActivity(work *trail) (searched, read bool) {
+	if work == nil {
+		return false, false
+	}
+	for _, s := range work.snapshot() {
+		if s.failed {
+			continue
+		}
+		if readingTool[s.tool] {
+			read = true
+		}
+		if s.tool == "web_search" || s.tool == "news_search" {
+			searched = true
+		}
+	}
+	return searched, read
+}
+
+// snippetsOnly reports an answer built on search results with no page ever
+// opened.
+//
+// # The measurement
+//
+// Asked to compare the three most popular family cargo bikes in the UK and pick
+// one, she ran two searches and answered. No page was fetched. The answer named
+// specific mechanicals — full front and rear suspension, parking a longtail
+// vertically — and implied prices, from titles and two-line snippets, and cited
+// nothing, so the citation check above had no citation to test.
+//
+// That is the worse failure of the two. An unopened citation at least tells the
+// reader where to look and can be checked; an answer with no sources at all,
+// assembled from result summaries, is indistinguishable from one she wrote out
+// of the model's own memory — including where that memory is two years stale,
+// which for "right now, in the UK" is the entire question.
+//
+// # Why the threshold
+//
+// A search that answers a small question from its own result line is fine and
+// common: opening hours, a score, a spelling. The failure needs volume — a long
+// answer resting on snippets. Length is a coarse stand-in for how many claims
+// were made, and it is at least a fact about the output rather than a judgement
+// of it. Deliberately generous, because the cost of firing on a legitimate quick
+// lookup is teaching her to ignore this.
+const snippetAnswerFloor = 700
+
+func snippetsOnly(reply string, work *trail) bool {
+	searched, read := webActivity(work)
+	return searched && !read && len(strings.TrimSpace(reply)) > snippetAnswerFloor
+}
+
+// snippetsBrief is the push for an answer assembled from result summaries.
+func snippetsBrief() string {
+	return "HOLD ON — you searched, opened nothing, and wrote a long answer.\n\n" +
+		"Every claim in there came from titles and two-line snippets, or from what you " +
+		"already believed before you searched. You cannot tell those apart afterwards, and " +
+		"neither can they.\n\n" +
+		"Open the pages. web_fetch the two or three that actually matter for this, read " +
+		"them, and then say what they say — with the specifics that only exist on the page: " +
+		"the current price, the actual spec, whether the thing is still sold. Where a page " +
+		"contradicts what you wrote, the page wins.\n\n" +
+		"If after reading you genuinely cannot confirm something, say so in the answer. " +
+		"'I could not find a current UK price for this' is worth more than a confident " +
+		"number nobody sourced."
+}
+
+// readingTool names the calls that return a page's text, so "did any research
+// happen" is answered by what ran rather than by what the answer sounds like.
+var readingTool = map[string]bool{
+	"web_fetch": true, "web_research": true, "browser_open": true,
+	"browser_read": true, "browser_goto": true, "browser_scrape": true,
+}
+
+// sourcesBrief is the push for citations that were never opened.
+func sourcesBrief(urls []string) string {
+	var sb strings.Builder
+	sb.WriteString("HOLD ON — you are citing pages you never opened.\n\n")
+	for _, u := range urls {
+		sb.WriteString("  · " + u + "\n")
+	}
+	sb.WriteString("\nNone of these was fetched this exchange. Seeing a URL in a list of " +
+		"search results is not reading it: a result is a title and two lines of snippet, and " +
+		"whatever you have attached to it did not come from the page.\n\n" +
+		"So either open each one with web_fetch and keep the claim if the page supports it, " +
+		"or take the citation out and say plainly where the claim actually came from. A " +
+		"reference nobody can check is worse than no reference, because it reads as evidence.")
+	return sb.String()
+}

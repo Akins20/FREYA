@@ -387,6 +387,32 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			if reply == "" {
 				reply = "I've got nothing useful to add there."
 			}
+			// Citations she never opened. Checked here rather than beside the plan,
+			// because it needs the finished ANSWER — the dead links are in files and
+			// exist before she writes a word, these are in the prose itself.
+			// Nothing opened at all, and a long answer resting on it. Checked before
+			// the citation test, because an answer with no sources cannot fail a
+			// citation test and is the worse of the two.
+			if !pushed && snippetsOnly(reply, &work) {
+				pushed = true
+				a.trace("retry", "snippets",
+					"searched but opened nothing — sending her back to read the pages")
+				msgs = append(msgs,
+					llm.Message{Role: llm.RoleAssistant, Text: resp.Text},
+					llm.Message{Role: llm.RoleUser, Text: snippetsBrief()})
+				continue
+			}
+			if !pushed {
+				if bad := unopenedSources(ctx, reply, &work); len(bad) > 0 {
+					pushed = true
+					a.trace("retry", "sources", fmt.Sprintf(
+						"%d cited page(s) were never fetched — sending her back to read them", len(bad)))
+					msgs = append(msgs,
+						llm.Message{Role: llm.RoleAssistant, Text: resp.Text},
+						llm.Message{Role: llm.RoleUser, Text: sourcesBrief(bad)})
+					continue
+				}
+			}
 			// Pushed once and still not done. State it as fact rather than let the
 			// answer stand unqualified.
 			if pushed {

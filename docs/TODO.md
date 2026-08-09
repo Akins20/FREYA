@@ -1613,3 +1613,41 @@ real.
 Still open: em dashes, 4rem padding and one 1200px container survive; the
 second-pass rule has no measurable proxy yet; the plan gate has not been measured
 on a non-web task.
+
+## Research completeness — the same disease off the web
+
+Next phase, researched first. Anthropic's multi-agent research system keeps a
+separate **CitationAgent** whose only job is finding, for every claim in a
+report, the source location that supports it. The failure it exists to catch is
+citing something nobody opened.
+
+The ledger already knew every URL she had been shown — but `harvest()` records
+every identifier appearing in ANY tool output, so a URL sitting in a list of
+search results counted as "seen". A search result is a title and two lines of
+snippet. So `IDRead` is a second, stricter record, written only by the tools that
+return a page's actual text, and `unopenedSources` compares it against the URLs
+in her answer.
+
+**Then the measurement moved the design.** Asked to compare the three most
+popular UK family cargo bikes and pick one, she ran two searches, opened nothing,
+and wrote several hundred words naming suspension layouts and implying prices —
+and cited **zero URLs**, so the citation check had nothing to test. That is the
+worse shape: an unopened citation at least tells the reader where to look, while
+an answer with no sources at all is indistinguishable from one written out of the
+model's own memory, including where that memory is two years stale — which for
+"right now, in the UK" is the whole question.
+
+So `snippetsOnly`: searched, opened nothing, answer over 700 characters. Both
+signals are facts about what ran, not judgements of how the answer reads, which
+is what the false-success work says to do.
+
+Re-run on a fresh research question (UK energy price cap, now vs a year ago) she
+ran three searches, fetched Uswitch and MoneySavingExpert, and attributed both in
+prose. The gate never fired because it had no reason to.
+
+**Still open, and measured:** she did not call `plan_set` on either research
+question, both of which had two clear halves. Exactly the pattern predicted —
+the capability exists and nothing makes her reach for it, same as `site_check`
+before the write-time note. The cure that has worked twice is attaching it to a
+call she already makes; for research that is `web_search`. Not built yet, because
+it should be measured over more than two runs first.

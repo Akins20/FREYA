@@ -236,6 +236,11 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	// without one of them being modified.
 	ScopeFrom(ctx).Ledger().harvest(out.Text)
 
+	// And separately, the stricter record: this call did not merely mention a
+	// page, it read one. See IDRead — a source she cites having never opened is
+	// the research equivalent of a link that goes nowhere.
+	noteRetrieval(ctx, s.Tool.Name, args)
+
 	// An action that reported success while the world stayed identical is the
 	// failure the model cannot see. Only fill in what the skill did not already
 	// determine for itself — a skill that knows better outranks the fingerprint.
