@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -527,5 +528,59 @@ func TestBrowserActionsRunWithoutConfirmation(t *testing.T) {
 		func(ctx context.Context) (string, error) { return "ran", nil })
 	if err == nil {
 		t.Error("a destructive delete of /etc ran without confirmation — the guard is too loose")
+	}
+}
+
+// An action marked as changing the world must appear in the record of the world
+// changing, even when it is not gated.
+//
+// Three tools carry Mutates and never reach Run, so nothing they did showed up
+// in the audit log at all — and the audit log is the only place the user can see
+// what she has been doing. Routing them through Run was the wrong cure: as a
+// KindExec, stopping a server she started would begin asking permission, and as
+// a KindWrite into the data directory (which is on ProtectedPaths) learning a
+// skill would be refused outright and the tool would stop working.
+func TestNoteRecordsWithoutGating(t *testing.T) {
+	dir := t.TempDir()
+	log, err := OpenLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	// nil confirm is the daemon: anything that must ask is denied. Note must not
+	// ask, so this is the case that would catch it turning into a gate.
+	g := New(nil, log)
+	g.ProtectedPaths = []string{dir}
+
+	g.Note(Action{Kind: KindWrite, Command: "learn skill uopeople-signin",
+		Reason: "how to get past the portal"}, "ok", nil)
+	g.Note(Action{Kind: KindExec, Command: "stop server(s) 41799"}, "ok", nil)
+
+	recs, err := log.Recent(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("want both actions recorded, got %d", len(recs))
+	}
+	for _, r := range recs {
+		if r.Outcome != "ok" {
+			t.Errorf("%s recorded as %q — Note must not deny anything, that is Run's job",
+				r.Action.Command, r.Outcome)
+		}
+	}
+	// Recent walks the file backwards, so the newest record is first.
+	if recs[len(recs)-1].Action.Command != "learn skill uopeople-signin" {
+		t.Errorf("the learned skill is missing from the audit log: %q",
+			recs[len(recs)-1].Action.Command)
+	}
+
+	// And a failure is recorded as one rather than quietly as success.
+	g.Note(Action{Kind: KindExec, Command: "stop server(s) 1"}, "ok", errors.New("no such session"))
+	recs, _ = log.Recent(10)
+	last := recs[0]
+	if last.Outcome != "error" || last.Error == "" {
+		t.Errorf("a failed action was recorded as %q with error %q", last.Outcome, last.Error)
 	}
 }

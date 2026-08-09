@@ -395,7 +395,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		fmt.Fprintf(os.Stderr, "%slearned playbooks: %v%s\n", cDim, learnedErr, cReset)
 	}
 	skills.RegisterSyntax(reg)
-	skills.RegisterSkillbook(reg, learned)
+	skills.RegisterSkillbook(reg, g, learned)
 	builder.Learned = learned.Index
 
 	// Ctrl-C cancels the in-flight request rather than killing the process.

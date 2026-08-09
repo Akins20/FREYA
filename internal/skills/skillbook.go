@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/playbook"
 )
@@ -23,7 +24,7 @@ import (
 // not: it changes whenever she learns something, and a changing tool description
 // is a changing prefix. It rides the volatile tail instead — see
 // internal/playbook/learned.go for the whole argument.
-func RegisterSkillbook(r *Registry, learned *playbook.Learned) {
+func RegisterSkillbook(r *Registry, g *guard.Guard, learned *playbook.Learned) {
 	// The available skills are listed in the description so the model sees, every
 	// turn, what know-how exists and when each applies — without spending a tool
 	// call to find out.
@@ -106,6 +107,14 @@ func RegisterSkillbook(r *Registry, learned *playbook.Learned) {
 			if err := learned.Add(s); err != nil {
 				return "", err
 			}
+			// Recorded, not gated. This writes into the data directory, which is on
+			// ProtectedPaths, so routing it through Run would refuse it and the tool
+			// would stop working — but a skill she teaches herself changes how she
+			// behaves from now on, and that belongs in the record of what she did.
+			// See Guard.Note.
+			g.Note(guard.Action{Kind: guard.KindWrite,
+				Command: "learn skill " + s.Name,
+				Reason:  s.Summary}, "ok", nil)
 			// Read it back rather than confirming blandly: she can act on this
 			// within the same exchange, without waiting for the index to carry it.
 			return fmt.Sprintf("Learned %q — %s\n\nYou can consult it any time with "+

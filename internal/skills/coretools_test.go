@@ -38,7 +38,7 @@ func everything(t *testing.T) *Registry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	RegisterSkillbook(r, learned)
+	RegisterSkillbook(r, g, learned)
 
 	store, err := memory.Open(dir)
 	if err != nil {

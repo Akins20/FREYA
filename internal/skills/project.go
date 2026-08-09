@@ -376,6 +376,11 @@ func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
 				}
 			}
 			sort.Strings(stopped)
+			// Recorded rather than gated: this stops a subprocess she started, so
+			// asking permission would be absurd, but leaving it out of the audit log
+			// means /audit under-reports what she did. See Guard.Note.
+			g.Note(guard.Action{Kind: guard.KindExec, Command: "stop server(s) " +
+				strings.Join(stopped, ", "), Reason: "serve_stop"}, "ok", nil)
 			if len(stopped) == 0 {
 				if want != 0 {
 					return fmt.Sprintf("Nothing of yours is serving on port %d.", want), nil

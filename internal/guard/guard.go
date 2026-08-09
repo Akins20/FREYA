@@ -305,3 +305,30 @@ func (a Assessment) Describe() string {
 	}
 	return sb.String()
 }
+
+// Note records an action in the audit log without gating it.
+//
+// # Why this exists rather than routing everything through Run
+//
+// Three tools are marked Mutates and never reach Run, so nothing they do appears
+// in the audit log at all — and the audit log is how the user sees what she did.
+// Marked as changing the world, invisible in the record of the world changing.
+//
+// Sending them through Run instead would be worse than the gap. serve_stop as a
+// KindExec assesses medium and would start asking permission to stop a server it
+// started, in a session where nothing asked before. skill_learn writes into the
+// data directory, which is on ProtectedPaths, so as a KindWrite it would be
+// REFUSED and the tool would simply stop working. A guard call that breaks the
+// thing it guards is not a guard.
+//
+// So: the record without the gate, for actions whose risk was already decided by
+// their existence. It is deliberately not a way to skip Run — anything that could
+// harm anything belongs in Run, and the two callers here stop a subprocess she
+// started and append to her own notebook.
+func (g *Guard) Note(action Action, outcome string, err error) {
+	r := Record{Time: time.Now(), Action: action, Risk: RiskLow.String(), Outcome: outcome}
+	if err != nil {
+		r.Outcome, r.Error = "error", err.Error()
+	}
+	g.record(r)
+}
