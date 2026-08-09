@@ -28,6 +28,8 @@ func everything(t *testing.T) *Registry {
 	RegisterDocWriting(r, g)
 	RegisterFinder(r)
 	RegisterSyntax(r)
+	RegisterPDFDesign(r, g)
+	RegisterSlides(r, g)
 	learned, err := playbook.OpenLearned(dir)
 	if err != nil {
 		t.Fatal(err)

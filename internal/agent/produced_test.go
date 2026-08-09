@@ -142,3 +142,42 @@ func TestTheProvenanceNoteStatesOnlyWhatIsCertain(t *testing.T) {
 		}
 	}
 }
+
+// The list above is hand-kept, and it rotted within a day of being written:
+// pdf_design and slides_design shipped, wrote real files, and were missing from
+// it — so she produced a four-page deck and was told she had written nothing.
+//
+// A false accusation is worse than a missed one. It costs a round, and it
+// teaches her the note means nothing.
+//
+// So the writers are named here literally. A hand-written list cannot be
+// filtered down to nothing by the bug it is looking for — the same reasoning as
+// the click-family guard test.
+func TestEveryFileWriterIsKnownToProduce(t *testing.T) {
+	for _, name := range []string{
+		"file_write", "file_edit", "file_append", "file_copy", "file_move",
+		"folder_create", "archive_create", "archive_extract",
+		"docx_write", "xlsx_write", "pdf_write", "document_convert",
+		"pdf_design", "slides_design",
+		"browser_save_pdf", "browser_screenshot",
+		"run_shell", "run_command",
+	} {
+		if !producingTools[name] {
+			t.Errorf("%s writes a file and is not in producingTools — she will be told "+
+				"she produced nothing after producing something", name)
+		}
+	}
+}
+
+// And things that only look at the world must stay out of it, or the check never
+// fires at all.
+func TestReadersAreNotCountedAsProducing(t *testing.T) {
+	for _, name := range []string{
+		"file_read", "folder_list", "browser_read", "system_open",
+		"dev_git_status", "web_search", "code_check",
+	} {
+		if producingTools[name] {
+			t.Errorf("%s produces nothing but counts as a write — that silences the check", name)
+		}
+	}
+}

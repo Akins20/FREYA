@@ -43,12 +43,20 @@ import (
 // producingTools write, create or modify something. run_shell and run_command
 // are included because a redirection or a generator script produces a file just
 // as much as file_write does.
+//
+// A hand-kept list rots, and this one did within a day: pdf_design and
+// slides_design were added, wrote real files, and were missing from here — so
+// she produced a four-page deck and the framework told her she had written
+// nothing. A false accusation is worse than a missed one, because it teaches her
+// the note means nothing. TestEveryFileWriterIsKnownToProduce names the writers
+// literally so the next one cannot slip through the same way.
 var producingTools = map[string]bool{
 	"file_write": true, "file_edit": true, "file_append": true,
 	"file_copy": true, "file_move": true, "folder_create": true,
 	"docx_write": true, "pdf_write": true, "xlsx_write": true,
 	"document_convert": true, "archive_create": true, "archive_extract": true,
 	"browser_save_pdf": true, "browser_screenshot": true,
+	"pdf_design": true, "slides_design": true,
 	"run_shell": true, "run_command": true, "terminal_run": true,
 	"memory_remember": true, "note_add": true, "skill_learn": true,
 }
