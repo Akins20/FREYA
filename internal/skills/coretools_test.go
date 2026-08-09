@@ -33,6 +33,7 @@ func everything(t *testing.T) *Registry {
 	RegisterPDFDesign(r, g)
 	RegisterSlides(r, g)
 	RegisterSiteCheck(r)
+	RegisterPlan(r)
 	learned, err := playbook.OpenLearned(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +90,10 @@ func TestEveryCoreToolExists(t *testing.T) {
 	// cheap way to build. Their names are checked by the daemon at startup.
 	optional := map[string]bool{
 		"work_start": true, "work_list": true, "work_cancel": true,
+		// Registered only against a provider that can see. A text-only backend has
+		// nothing to review a rendered page with, so offering the tool would
+		// promise something that cannot happen.
+		"review": true,
 	}
 
 	var ghosts []string

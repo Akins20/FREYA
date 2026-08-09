@@ -217,6 +217,8 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	skills.RegisterPDFDesign(reg, g)
 	skills.RegisterSlides(reg, g)
 	skills.RegisterSiteCheck(reg)
+	skills.RegisterPlan(reg)
+	skills.RegisterReview(reg, provider)
 
 	// Terminal sessions outlive the turn that created them, which is what makes
 	// long-running work possible.

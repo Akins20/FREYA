@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/akins/jarvis/internal/skills"
 )
 
 // The gate reads the file, not the tool's opinion of the file.
@@ -32,7 +35,7 @@ func TestAPageFixedByAnyToolIsNotStillOpen(t *testing.T) {
 		output: "Created " + page + " (7200 bytes).\n\n[This page makes promises it does not keep: " +
 			`href="#" — goes nowhere.]`})
 
-	ends := stillOpen(w)
+	ends := stillOpen(context.Background(), w)
 	if len(ends) != 1 {
 		t.Fatalf("precondition: the broken page should be open, got %v", ends)
 	}
@@ -47,7 +50,7 @@ func TestAPageFixedByAnyToolIsNotStillOpen(t *testing.T) {
 	}
 	w.add(step{tool: "file_edit", round: 12, output: "Edited index.html: 1 replacement(s), +12 bytes."})
 
-	if ends := stillOpen(w); len(ends) != 0 {
+	if ends := stillOpen(context.Background(), w); len(ends) != 0 {
 		t.Errorf("a page she repaired is still reported as unfinished: %v\n"+
 			"The verdict has to come from the file, not from what a tool said earlier.", ends)
 	}
@@ -68,7 +71,7 @@ func TestAPageLeftBrokenIsStillCaught(t *testing.T) {
 	w.add(step{tool: "file_write", output: "Created " + page + " (40 bytes)."})
 	w.add(step{tool: "file_edit", output: "Edited style.css: 1 replacement(s), +4 bytes."})
 
-	ends := stillOpen(w)
+	ends := stillOpen(context.Background(), w)
 	if len(ends) != 1 {
 		t.Fatalf("want the dead anchor caught, got %v", ends)
 	}
@@ -87,7 +90,7 @@ func TestNothingIsClaimedAboutFilesThatAreNotThere(t *testing.T) {
 	w := &trail{}
 	w.add(step{tool: "file_write", failed: true, output: "Created /nope/index.html (10 bytes)."})
 	w.add(step{tool: "file_write", output: "Created /also-nope/index.html (10 bytes)."})
-	if ends := stillOpen(w); len(ends) != 0 {
+	if ends := stillOpen(context.Background(), w); len(ends) != 0 {
 		t.Errorf("claimed dead links in files that cannot be read: %v", ends)
 	}
 }
@@ -104,7 +107,52 @@ func TestOnlyPagesAreJudged(t *testing.T) {
 	}
 	w := &trail{}
 	w.add(step{tool: "file_write", output: "Created " + css + " (16 bytes)."})
-	if ends := stillOpen(w); len(ends) != 0 {
+	if ends := stillOpen(context.Background(), w); len(ends) != 0 {
 		t.Errorf("judged a stylesheet: %v", ends)
+	}
+}
+
+// A step she wrote down and never settled must stop the answer, whatever else
+// happened. This is the domain-general half of the gate: a dead link only exists
+// on a web page, but an unfinished step exists on research, a multi-part
+// question, a task with four items in it.
+func TestAnUnfinishedPlanStepHoldsTheAnswer(t *testing.T) {
+	plan := skills.NewPlan()
+	plan.Set([]string{
+		"search for three suppliers",
+		"compare their pricing",
+		"write up the recommendation",
+	})
+	if err := plan.Mark(1, skills.StepDone, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Mark(2, skills.StepDoing, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx := skills.WithScope(context.Background(),
+		skills.NewScopeWithPlan(skills.NewWorkspace(t.TempDir()), plan))
+
+	ends := stillOpen(ctx, &trail{})
+	if len(ends) != 2 {
+		t.Fatalf("want the started-not-finished step and the untouched one, got %d: %v",
+			len(ends), ends)
+	}
+	if !strings.Contains(ends[0], "compare their pricing") ||
+		!strings.Contains(ends[0], "started, not finished") {
+		t.Errorf("the in-progress step is not described usefully: %q", ends[0])
+	}
+	if !strings.Contains(ends[1], "write up the recommendation") {
+		t.Errorf("the untouched step is missing: %q", ends[1])
+	}
+
+	// Settling them — including honestly dropping one — clears the gate.
+	if err := plan.Mark(2, skills.StepDone, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Mark(3, skills.StepDropped, "they only wanted the shortlist", ""); err != nil {
+		t.Fatal(err)
+	}
+	if ends := stillOpen(ctx, &trail{}); len(ends) != 0 {
+		t.Errorf("a settled plan still blocks the answer: %v", ends)
 	}
 }

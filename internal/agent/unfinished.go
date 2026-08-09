@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/akins/jarvis/internal/skills"
 	"github.com/akins/jarvis/internal/wiring"
 )
 
@@ -59,9 +61,14 @@ var touchedPath = regexp.MustCompile(`^(?:Wrote \d+ bytes to|Created|Replaced|Re
 // the write tool's output, and told her a page was unfinished after she had
 // fixed it with file_edit. The file was clean and the exchange still ended with
 // an accusation.
-func stillOpen(work *trail) []string {
+func stillOpen(ctx context.Context, work *trail) []string {
+	// Steps she wrote down herself and has not settled. First, because an
+	// unfinished step is a bigger omission than a dead link and reads as the
+	// more useful thing to be told.
+	out := skills.ScopeFrom(ctx).Plan().Outstanding()
+
 	if work == nil {
-		return nil
+		return out
 	}
 	var pages []string
 	seen := map[string]bool{}
@@ -85,7 +92,6 @@ func stillOpen(work *trail) []string {
 		pages = append(pages, path)
 	}
 
-	var out []string
 	for _, p := range pages {
 		for _, problem := range wiring.Open(p) {
 			out = append(out, shortPath(p)+": "+problem)
@@ -111,16 +117,18 @@ func shortPath(p string) string {
 func finishBrief(ends []string) string {
 	var sb strings.Builder
 	sb.WriteString("HOLD ON — you are about to call this finished and it is not.\n\n")
-	sb.WriteString("Still standing, from your own writes this turn:\n")
+	sb.WriteString("Still standing, from your own plan and your own writes this turn:\n")
 	for _, e := range ends {
 		sb.WriteString("  · " + e + "\n")
 	}
-	sb.WriteString("\nThese were reported to you when you wrote the file and nothing has been " +
-		"done about them since. Each one is a promise on the screen with nothing behind it; " +
-		"they find out by clicking.\n\n" +
-		"Go back and deal with all of them now — add the section or page the link points at, " +
-		"or take the link out. Both are fine. Then re-read what you changed and check the " +
-		"whole folder with site_check before you answer.\n\n" +
+	sb.WriteString("\nYou were told about each of these at the time and nothing has been done " +
+		"about them since. An unfinished step is work they asked for and are not getting; a " +
+		"dead link is a promise on the screen with nothing behind it, and they find out by " +
+		"clicking.\n\n" +
+		"Go back and deal with all of them now. For a step: do it, or drop it with plan_step " +
+		"and say why — deciding it was unnecessary is honest, leaving it open is not. For a " +
+		"link: add what it points at, or take the link out. Then check the whole folder with " +
+		"site_check before you answer.\n\n" +
 		"While you are in there, look again with fresh eyes rather than only patching these " +
 		"lines: a section that is merely acceptable is worth making good, and you are the " +
 		"one who can see it. Do not answer until the work is actually done.")

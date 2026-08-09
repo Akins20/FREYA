@@ -37,11 +37,13 @@ package wiring
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var (
@@ -236,4 +238,139 @@ func exists(dir, ref string) bool {
 	}
 	_, err := os.Stat(filepath.Join(dir, ref))
 	return err == nil
+}
+
+// reRemote finds the URLs a page depends on but does not own: img and script
+// src, stylesheet href, and CSS url() — the last matters most, because a
+// background-image is invisible to every check that only reads HTML.
+var reRemote = regexp.MustCompile(`(?i)(?:src|href)\s*=\s*"(https?://[^"]+)"|url\(\s*['"]?(https?://[^'")]+)`)
+
+// Remote reports the external assets a folder depends on that do not answer.
+//
+// # Why this is worth a network call
+//
+// A pottery site passed every check here — four pages, fifty-seven links, none
+// dead — and rendered with two blank tiles, because two of its six background
+// images were Unsplash photo IDs that do not exist. She had invented them. The
+// markup is perfect, the files are all on disk, and a third of the gallery is
+// empty when anyone opens it.
+//
+// Nothing local can catch that. The URL is well-formed, it is in a stylesheet
+// rather than the HTML, and the only way to know is to ask.
+//
+// # Bounded, and honest when it cannot tell
+//
+// HEAD, a short timeout, a cap on how many. A checker that hangs on a slow host
+// is a checker that gets switched off. A URL that times out is reported as
+// unknown rather than broken — accusing a page of a dead image because the
+// network was busy is the failure mode this package exists to avoid.
+func Remote(dir string, timeout time.Duration, max int) (broken []string, unknown int) {
+	urls := map[string][]string{} // url -> the files that want it
+	var order []string
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if !IsHTML(e.Name()) && ext != ".css" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, m := range reRemote.FindAllStringSubmatch(string(raw), -1) {
+			u := m[1]
+			if u == "" {
+				u = m[2]
+			}
+			if u == "" {
+				continue
+			}
+			if _, seen := urls[u]; !seen {
+				order = append(order, u)
+			}
+			urls[u] = append(urls[u], e.Name())
+		}
+	}
+	if len(order) > max {
+		order = order[:max]
+	}
+
+	client := &http.Client{Timeout: timeout}
+	type verdict struct {
+		url  string
+		code int
+		err  error
+	}
+	out := make(chan verdict, len(order))
+	sem := make(chan struct{}, 6)
+	for _, u := range order {
+		go func(u string) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			// HEAD first; some CDNs refuse it, so a rejection falls back to a GET
+			// that is abandoned as soon as the status is known.
+			resp, err := client.Head(u)
+			if err != nil || resp.StatusCode == http.StatusMethodNotAllowed {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				resp, err = client.Get(u)
+			}
+			if err != nil {
+				out <- verdict{u, 0, err}
+				return
+			}
+			resp.Body.Close()
+			out <- verdict{u, resp.StatusCode, nil}
+		}(u)
+	}
+
+	seen := map[string]bool{}
+	for range order {
+		v := <-out
+		switch {
+		case v.err != nil:
+			unknown++
+		case v.code >= 400:
+			if !seen[v.url] {
+				seen[v.url] = true
+				broken = append(broken, fmt.Sprintf("%s: %s returns %d — it will render "+
+					"as an empty box. That image does not exist; find one that does, or "+
+					"stop referencing it",
+					strings.Join(dedupe(urls[v.url]), ", "), clipURL(v.url), v.code))
+			}
+		}
+	}
+	sort.Strings(broken)
+	return broken, unknown
+}
+
+// clipURL keeps a URL readable in a report.
+func clipURL(u string) string {
+	if i := strings.IndexByte(u, '?'); i > 0 {
+		u = u[:i]
+	}
+	if len(u) > 88 {
+		return u[:88] + "…"
+	}
+	return u
+}
+
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

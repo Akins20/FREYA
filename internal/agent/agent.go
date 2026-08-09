@@ -373,7 +373,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			// as a tool result and the loop continues, so she can actually go and fix
 			// it — a re-ask would only rewrite the sentence. Once per exchange: see
 			// unfinished.go for why this is a refusal and not another note.
-			if ends := stillOpen(&work); len(ends) > 0 && !pushed {
+			if ends := stillOpen(ctx, &work); len(ends) > 0 && !pushed {
 				pushed = true
 				a.trace("retry", "unfinished", fmt.Sprintf(
 					"%d dead end(s) still standing — refusing the answer and sending her back", len(ends)))
@@ -390,7 +390,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			// Pushed once and still not done. State it as fact rather than let the
 			// answer stand unqualified.
 			if pushed {
-				if ends := stillOpen(&work); len(ends) > 0 {
+				if ends := stillOpen(ctx, &work); len(ends) > 0 {
 					reply += nudgeNote(ends)
 				}
 			}

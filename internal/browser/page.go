@@ -900,3 +900,28 @@ func (c *Client) PointForText(ctx context.Context, text string) (float64, float6
 	}
 	return res.X, res.Y, res.Label, nil
 }
+
+// ScreenshotFull captures the whole page, not only what fits on screen.
+//
+// captureBeyondViewport tells Chrome to render past the fold. Without it a
+// screenshot of a landing page is a screenshot of its hero, which is the one
+// part that always got attention — the sections worth reviewing are the ones
+// further down.
+func (c *Client) ScreenshotFull(ctx context.Context) (string, error) {
+	res, err := c.Call(ctx, "Page.captureScreenshot", map[string]any{
+		"format":                "png",
+		"captureBeyondViewport": true,
+	})
+	if err != nil {
+		// Older targets reject the flag rather than ignoring it. A viewport shot
+		// is worth more than nothing.
+		return c.Screenshot(ctx)
+	}
+	var out struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil {
+		return "", err
+	}
+	return out.Data, nil
+}

@@ -1559,3 +1559,57 @@ Three findings worth keeping:
 Still open: em dashes came back (5 across 4 pages), 4rem padding (13), one
 1200px container. All three are the rules phrased as "do X well" rather than
 "stop emitting X" — see the design-tells work above.
+
+## The research pass, and what it changed
+
+Compared against how Claude Code solves the same problem, and against the
+literature, before building anything further.
+
+**What Claude Code has that she did not:** forced enumeration before execution
+(TodoWrite is mandatory at 3+ steps; the documented case is an 18-step workflow
+that silently dropped two steps every run until "write the checklist first"
+became step zero, after which the count went to zero); exactly one item
+in_progress, enforced; completion defined negatively — never done if tests fail,
+implementation is partial, or files are missing; Explore → Plan → Code → Commit
+as named phases; and a Stop hook that can refuse to let the agent finish, with a
+stop_hook_active flag to stop it looping. The finish gate built here is the same
+shape, and `pushed` is the same guard.
+
+**The finding that changed the design.** "Characterizing False Success in LLM
+Agents" (arXiv 2606.09863): agents asserting completion against an environment
+that says otherwise, in 75.8% of self-assessing coding trajectories that made an
+explicit status claim. LLM judges cannot detect it — AUROC 0.65 and 0.54 — because
+they key on confident closing language and on how much the agent did. Detectors
+that check state reach 0.83 to 0.95.
+
+So the rule for everything here: **she does not tick her own boxes where a
+machine can look instead**, and no reviewer is ever shown her account of the
+work. Her fluency is the risk factor, not the mitigation.
+
+Built on that:
+
+- `plan_set` / `plan_step`, held by the framework rather than re-sent each call
+  (a small model asked to re-emit a nine-item list to tick item four returns
+  eight). One step in progress at a time. A step naming a file it will produce
+  cannot be marked done while that file is absent.
+- The finish gate now refuses on open plan steps as well as dead links, which is
+  what makes it domain-general: a dead link only exists on a web page, an
+  unfinished step exists on research, a multi-part question, a four-item task.
+- `review`: a fresh pair of eyes via `AnalyzeImage`, a single stateless call with
+  no conversation, no persona and no tool trail. It gets a full-page screenshot
+  and a brief that asks for the three weakest things, and forbids praise.
+- `wiring.Remote`: the assets she does not own. HEAD with a short timeout;
+  a host that does not answer is reported unknown, never broken.
+
+**What the reviewer found on a site that had passed everything.** Four pages,
+57 links, none dead — and two blank gallery tiles, because two of the six
+Unsplash photo IDs in the stylesheet were invented. Well-formed URLs, in CSS,
+referring to nothing. It also independently called the three-card row "a standard
+Squarespace template feature box" and the lifestyle copy "could belong to a
+candle brand, a linen company, or a boutique soap shop" — without being shown the
+design playbook that names both. Independent corroboration that the tells are
+real.
+
+Still open: em dashes, 4rem padding and one 1200px container survive; the
+second-pass rule has no measurable proxy yet; the plan gate has not been measured
+on a non-web task.

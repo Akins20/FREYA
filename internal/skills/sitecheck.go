@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/wiring"
@@ -76,9 +77,27 @@ func RegisterSiteCheck(r *Registry) {
 			}
 			sort.Strings(problems)
 
+			// Then the assets she does not own. A pottery site passed everything
+			// above — four pages, fifty-seven links, none dead — and rendered with
+			// two blank tiles, because two of its six background images were
+			// Unsplash photo IDs that do not exist. Invented, well-formed, and in a
+			// stylesheet, so nothing local could ever have caught them.
+			dir := root
+			if info, err := os.Stat(root); err == nil && !info.IsDir() {
+				dir = filepath.Dir(root)
+			}
+			remote, unknown := wiring.Remote(dir, 8*time.Second, 40)
+			problems = append(problems, remote...)
+			unreachable := ""
+			if unknown > 0 {
+				unreachable = fmt.Sprintf("\n\n[%d external asset(s) did not answer in time. "+
+					"That is not proof they are broken — it is proof they were not checked.]", unknown)
+			}
+
 			if len(problems) == 0 {
 				return fmt.Sprintf("%d page(s) checked — every link, anchor, image and "+
-					"form target resolves. Nothing leads nowhere.", len(pages)), nil
+					"form target resolves, including the external ones. Nothing leads "+
+					"nowhere.%s", len(pages), unreachable), nil
 			}
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "%d dead end(s) across %d page(s). Each is either something to "+
@@ -86,7 +105,7 @@ func RegisterSiteCheck(r *Registry) {
 			for _, p := range problems {
 				sb.WriteString("  \u00b7 " + p + "\n")
 			}
-			return strings.TrimRight(sb.String(), "\n"), nil
+			return strings.TrimRight(sb.String(), "\n") + unreachable, nil
 		},
 	})
 }

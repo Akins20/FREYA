@@ -1,10 +1,13 @@
 package wiring
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The real page, reduced to the shape that mattered.
@@ -148,5 +151,69 @@ func TestWriteNoteIgnoresFilesNotWrittenYet(t *testing.T) {
 	}
 	if note := Note("style.css", `a { color: red }`); note != "" {
 		t.Errorf("fired on a stylesheet:\n%s", note)
+	}
+}
+
+// The failure that motivated the network pass, reproduced against a local
+// server so the test does not depend on Unsplash still serving anything.
+//
+// The pottery site passed every local check — four pages, fifty-seven links,
+// none dead — and rendered with two blank gallery tiles, because two of its six
+// background images were photo IDs she had invented. Well-formed URLs, in a
+// stylesheet, referring to nothing.
+func TestAnInventedImageURLIsADeadEnd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "real") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "index.html"),
+		`<html><head><link rel="stylesheet" href="style.css"></head>
+		 <body><img src="`+srv.URL+`/real-hero.jpg"></body></html>`)
+	write(t, filepath.Join(dir, "style.css"),
+		`.tile-1 { background-image: url('`+srv.URL+`/real-mug.jpg'); }
+		 .tile-2 { background-image: url("`+srv.URL+`/invented-bowl.jpg"); }`)
+
+	broken, unknown := Remote(dir, 5*time.Second, 40)
+	if unknown != 0 {
+		t.Fatalf("precondition: the local server should answer everything, %d did not", unknown)
+	}
+	if len(broken) != 1 {
+		t.Fatalf("want the one invented URL, got %d: %v", len(broken), broken)
+	}
+	if !strings.Contains(broken[0], "invented-bowl") || !strings.Contains(broken[0], "404") {
+		t.Errorf("the report does not identify the dead image: %q", broken[0])
+	}
+	// The CSS is where it was found, and saying so is the difference between a
+	// finding she can act on and one she has to go hunting for.
+	if !strings.Contains(broken[0], "style.css") {
+		t.Errorf("the report does not say which file wants it: %q", broken[0])
+	}
+	// And the two that answer are not mentioned at all.
+	if strings.Contains(broken[0], "real-hero") || strings.Contains(broken[0], "real-mug") {
+		t.Errorf("reported an image that loads fine: %q", broken[0])
+	}
+}
+
+// A host that never answers is unknown, not broken. Accusing a page of a dead
+// image because the network was slow is the false accusation this package spent
+// the day learning not to make.
+func TestAnUnreachableHostIsNotCalledBroken(t *testing.T) {
+	dir := t.TempDir()
+	// Reserved for documentation, so it never resolves to anything real.
+	write(t, filepath.Join(dir, "index.html"),
+		`<html><body><img src="https://example.invalid/photo.jpg"></body></html>`)
+
+	broken, unknown := Remote(dir, 2*time.Second, 40)
+	if len(broken) != 0 {
+		t.Errorf("called an unreachable host a dead link: %v", broken)
+	}
+	if unknown != 1 {
+		t.Errorf("want 1 unknown, got %d", unknown)
 	}
 }

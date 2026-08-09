@@ -45,7 +45,15 @@ type Scope struct {
 	// because a tool found in round three has to be callable in round four — the
 	// scope is copied into each call, so the set behind it must be shared.
 	found *found
+	// plan is what this piece of work consists of. A pointer for the same reason
+	// as found: a step written in round two is marked in round nine, and the
+	// finish gate reads it after the last round of all.
+	plan *Plan
 }
+
+// Plan is the checklist for this thread of work. Nil when nobody set one up,
+// which every check reads as "no opinion" rather than "nothing to do".
+func (s Scope) Plan() *Plan { return s.plan }
 
 // Ledger is what this thread of work has been shown. Nil when unset, which the
 // checks read as "no opinion" rather than "refuse".
@@ -96,7 +104,7 @@ func (w *Workspace) SetDir(dir string) {
 // NewScope builds a scope over a workspace.
 func NewScope(ws *Workspace, tabPrefix, jobID string) Scope {
 	return Scope{ws: ws, TabPrefix: tabPrefix, JobID: jobID,
-		ledger: NewLedger(), found: &found{}}
+		ledger: NewLedger(), found: &found{}, plan: NewPlan()}
 }
 
 // Dir is where relative paths resolve for this thread of work.
@@ -264,4 +272,12 @@ func (f *found) list() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// NewScopeWithPlan builds a scope around an existing plan. For tests and for
+// anything that needs to inspect the list from outside the tools that write it.
+func NewScopeWithPlan(ws *Workspace, plan *Plan) Scope {
+	s := NewScope(ws, "", "")
+	s.plan = plan
+	return s
 }
