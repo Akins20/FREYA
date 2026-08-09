@@ -83,6 +83,29 @@ type Step struct {
 type Plan struct {
 	mu    sync.Mutex
 	steps []Step
+	// touched records whether this exchange has anything to do with this plan.
+	//
+	// The scope holding it is built once at startup and lives for the whole
+	// process, so without this a plan left open on Monday refuses Tuesday's
+	// answer about something else entirely. The ledger beside it learned exactly
+	// this and has BeginExchange for the same reason — its comment records a
+	// guess budget spent within minutes of the daemon starting and never coming
+	// back, so every later request was refused over an unrelated conversation.
+	//
+	// The list itself is NOT cleared. "Carry on with that" has to keep working,
+	// and a checklist is knowledge; only the gate is about the work in front of
+	// her right now. Touching the plan again re-arms it.
+	touched bool
+}
+
+// BeginExchange parks the plan for a new request, keeping its contents.
+func (p *Plan) BeginExchange() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.touched = false
+	p.mu.Unlock()
 }
 
 // NewPlan makes an empty plan.
@@ -94,6 +117,7 @@ func NewPlan() *Plan { return &Plan{} }
 func (p *Plan) Set(items []string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.touched = true
 
 	// Anything already settled keeps its state, matched on text, so revising the
 	// list does not resurrect finished work.
@@ -120,6 +144,7 @@ func (p *Plan) Set(items []string) int {
 func (p *Plan) Mark(n int, state StepState, note, dir string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.touched = true
 
 	if n < 1 || n > len(p.steps) {
 		return fmt.Errorf("there is no step %d — the plan has %d", n, len(p.steps))
@@ -165,6 +190,10 @@ func (p *Plan) Outstanding() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// A plan this exchange has not touched is somebody else's business.
+	if !p.touched {
+		return nil
+	}
 	var out []string
 	for i, s := range p.steps {
 		if s.State == StepTodo || s.State == StepDoing {

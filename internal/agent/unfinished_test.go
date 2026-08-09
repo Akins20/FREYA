@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/akins/jarvis/internal/llm"
 	"github.com/akins/jarvis/internal/skills"
 )
 
@@ -179,7 +180,7 @@ func TestASearchHitIsNotASourceSheRead(t *testing.T) {
 	reply := "Two thirds of them do this (https://example.com/opened), and margins have " +
 		"narrowed since (https://example.com/glimpsed)."
 
-	bad := unopenedSources(ctx, reply, w)
+	bad := unopenedSources(ctx, "", reply, w)
 	if len(bad) != 1 {
 		t.Fatalf("want only the unopened one, got %d: %v", len(bad), bad)
 	}
@@ -208,7 +209,7 @@ func TestAFullStopDoesNotMakeACitationUnopened(t *testing.T) {
 		"See (http://www.example.com/report)",
 		"See https://example.com/report#findings",
 	} {
-		if bad := unopenedSources(ctx, written, w); len(bad) != 0 {
+		if bad := unopenedSources(ctx, "", written, w); len(bad) != 0 {
 			t.Errorf("%q was called an unopened source: %v", written, bad)
 		}
 	}
@@ -223,7 +224,7 @@ func TestNoReadingThisTurnMeansNoAccusation(t *testing.T) {
 	w := &trail{}
 	w.add(step{tool: "memory_recall", output: "you bookmarked https://example.com/thing"})
 
-	if bad := unopenedSources(ctx, "It's at https://example.com/thing.", w); len(bad) != 0 {
+	if bad := unopenedSources(ctx, "", "It's at https://example.com/thing.", w); len(bad) != 0 {
 		t.Errorf("accused an answer that did no research: %v", bad)
 	}
 }
@@ -295,24 +296,44 @@ func TestASiteNobodyLookedAtHoldsTheAnswer(t *testing.T) {
 		return w
 	}
 
-	if !unreviewedSite(built("index.html", "about.html", "contact.html")) {
+	if !unreviewedSite(built("index.html", "about.html", "contact.html"), withReview()) {
 		t.Error("three pages written, never reviewed, and the answer was allowed")
 	}
 
 	reviewed := built("index.html", "about.html")
 	reviewed.add(step{tool: "review", output: "## index.html\n1. The hero says nothing…"})
-	if unreviewedSite(reviewed) {
+	if unreviewedSite(reviewed, withReview()) {
 		t.Error("fired even though she had it reviewed")
 	}
 
 	// One page is a file, not a site. Firing on every single-file write would
 	// make this the noisiest thing in the loop.
-	if unreviewedSite(built("index.html")) {
+	if unreviewedSite(built("index.html"), withReview()) {
 		t.Error("treated a single page as a site")
+	}
+
+	// A provider that cannot see has no review tool, and ordering her to call one
+	// that does not exist is a wasted round and looks like a broken machine.
+	if unreviewedSite(built("index.html", "about.html"), skills.New()) {
+		t.Error("demanded review on a build where the tool is not registered")
 	}
 
 	// And the push has to say that running it is not the deliverable.
 	if b := reviewBrief(); !strings.Contains(b, "FIX what comes back") {
 		t.Errorf("the push does not say to act on it:\n%s", b)
 	}
+}
+
+// withReview is a registry that has the tool, standing in for a provider that
+// can see.
+func withReview() *skills.Registry {
+	r := skills.New()
+	RegisterReviewStub(r)
+	return r
+}
+
+// RegisterReviewStub registers a name-only review tool for tests that need the
+// gate to believe one exists.
+func RegisterReviewStub(r *skills.Registry) {
+	r.Register(skills.Skill{Tool: llm.Tool{Name: "review", Description: "stub"}})
 }

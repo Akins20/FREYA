@@ -150,6 +150,20 @@ func (r *Registry) Tools() []llm.Tool {
 }
 
 // Names lists registered skill names, sorted.
+// Has reports whether a tool is registered at all, as distinct from whether it
+// was offered on this exchange.
+//
+// Needed because some tools are registered conditionally — review only exists
+// against a provider that can see — and anything that tells her to go and call
+// one has to know it is there. Ordering her to run a tool that does not exist
+// costs a round and reads, from her side, as the machine being broken.
+func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.skills[name]
+	return ok
+}
+
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -173,7 +173,7 @@ var reCited = regexp.MustCompile(`https?://[^\s<>"')\]]+`)
 // URL she was shown in a search result but did not open still counts as
 // unopened, which is the whole point — that is the distinction between a source
 // and a search hit.
-func unopenedSources(ctx context.Context, reply string, work *trail) []string {
+func unopenedSources(ctx context.Context, input, reply string, work *trail) []string {
 	ledger := skills.ScopeFrom(ctx).Ledger()
 	if ledger == nil || work == nil {
 		return nil
@@ -189,6 +189,13 @@ func unopenedSources(ctx context.Context, reply string, work *trail) []string {
 		return nil
 	}
 
+	// A URL the user typed in the request she is answering is theirs, not a
+	// source she is claiming to have read.
+	theirs := map[string]bool{}
+	for _, raw := range reCited.FindAllString(input, -1) {
+		theirs[canonical(raw)] = true
+	}
+
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range reCited.FindAllString(reply, -1) {
@@ -198,12 +205,44 @@ func unopenedSources(ctx context.Context, reply string, work *trail) []string {
 			continue
 		}
 		seen[key] = true
-		if ledger.WasRetrieved(u) {
+		// Her own server is not a citation. She builds a site, serves it, and
+		// tells them where it is; that address was never fetched and never should
+		// have been.
+		if isHers(u) || theirs[canonical(u)] || ledger.WasRetrieved(u) {
 			continue
 		}
 		out = append(out, u)
 	}
 	return out
+}
+
+// isHers reports an address that belongs to this machine rather than to the web.
+func isHers(u string) bool {
+	l := strings.ToLower(u)
+	for _, local := range []string{
+		"http://localhost", "https://localhost",
+		"http://127.0.0.1", "https://127.0.0.1",
+		"http://0.0.0.0", "http://[::1]", "file://",
+	} {
+		if strings.HasPrefix(l, local) {
+			return true
+		}
+	}
+	return false
+}
+
+// canonical matches the ledger's normalisation, so a link written back with a
+// trailing slash still counts as the one the user gave.
+func canonical(u string) string {
+	u = strings.TrimRight(strings.TrimSpace(u), ".,;:!?)")
+	u = strings.TrimSuffix(u, "/")
+	for _, p := range []string{"https://", "http://", "www."} {
+		u = strings.TrimPrefix(u, p)
+	}
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = u[:i]
+	}
+	return strings.ToLower(u)
 }
 
 // webActivity counts what kind of web work happened, from the tools that ran
@@ -323,11 +362,19 @@ func sourcesBrief(urls []string) string {
 // # Narrow, and once
 //
 // Only when two or more pages were written this turn, which is "she built a
-// site" rather than "she touched a file". One push per exchange, like the rest.
+// site" rather than "she touched a file"; and only when review is actually
+// registered. One push per exchange, like the rest.
 // It costs one vision call per build, which is the price of the only check here
 // that can see the page.
-func unreviewedSite(work *trail) bool {
+func unreviewedSite(work *trail, reg *skills.Registry) bool {
 	if work == nil {
+		return false
+	}
+	// Only when there is something to send her to. review exists only against a
+	// provider that can see, so on anthropic or the offline stand-in it is not
+	// registered — and a push telling her to call a tool that does not exist
+	// costs a round and reads, from her side, as the machine being broken.
+	if reg == nil || !reg.Has("review") {
 		return false
 	}
 	pages, reviewed := 0, false

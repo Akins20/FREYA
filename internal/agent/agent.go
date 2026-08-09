@@ -243,6 +243,9 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// ban earned by two guesses in some earlier conversation. What she was shown
 	// carries over — that is knowledge, not a quota.
 	scope.Ledger().BeginExchange()
+	// Same reason, same place: a checklist from an earlier conversation must not
+	// refuse this one's answer. See Plan.BeginExchange.
+	scope.Plan().BeginExchange()
 
 	// Constant location awareness. This is read fresh every turn, so the moment
 	// she changes directory the next turn reflects it — she is never guessing
@@ -392,7 +395,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			// exist before she writes a word, these are in the prose itself.
 			// A site nobody looked at. Before the research checks because it is the
 			// commonest case by far.
-			if !pushed && unreviewedSite(&work) {
+			if !pushed && unreviewedSite(&work, a.Skills) {
 				pushed = true
 				a.trace("retry", "unreviewed",
 					"a site was built and review never ran — sending her to have it looked at")
@@ -414,7 +417,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 				continue
 			}
 			if !pushed {
-				if bad := unopenedSources(ctx, reply, &work); len(bad) > 0 {
+				if bad := unopenedSources(ctx, input, reply, &work); len(bad) > 0 {
 					pushed = true
 					a.trace("retry", "sources", fmt.Sprintf(
 						"%d cited page(s) were never fetched — sending her back to read them", len(bad)))
