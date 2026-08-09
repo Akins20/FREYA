@@ -27,6 +27,7 @@ func everything(t *testing.T) *Registry {
 	RegisterWeb(r, "")
 	RegisterDocWriting(r, g)
 	RegisterFinder(r)
+	RegisterSyntax(r)
 	learned, err := playbook.OpenLearned(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -153,5 +154,39 @@ func TestABrowsingRequestCanStillTouchFiles(t *testing.T) {
 			t.Errorf("%s is not offered on a browsing request — she has no way to save "+
 				"or read anything while working a page", name)
 		}
+	}
+}
+
+// The chart engine was in internal/docs from the day it was written — bar, line
+// and pie, drawn beside the data — and no tool ever offered a way to ask for
+// one. Built, tested, and unreachable, which is the fourth time today.
+func TestAChartCanActuallyBeAskedFor(t *testing.T) {
+	sheets := parseSheets("---SHEET: Revenue---\n" +
+		"---CHART: bar | Revenue by month | categories=0 | values=1,2---\n" +
+		"Month,Online,Retail\nJan,100,50\nFeb,120,60\n")
+	if len(sheets) != 1 {
+		t.Fatalf("got %d sheets", len(sheets))
+	}
+	c := sheets[0].Chart
+	if c == nil {
+		t.Fatal("the chart directive produced no chart")
+	}
+	if c.Kind != "bar" || c.Title != "Revenue by month" {
+		t.Errorf("kind=%q title=%q", c.Kind, c.Title)
+	}
+	if c.CategoryColumn != 0 || len(c.ValueColumns) != 2 {
+		t.Errorf("categories=%d values=%v", c.CategoryColumn, c.ValueColumns)
+	}
+	// Rows are counted once the sheet is fully read, less the header.
+	if c.Rows != 2 {
+		t.Errorf("rows=%d, want 2 (three lines less the header)", c.Rows)
+	}
+	if c.SheetName != "Revenue" {
+		t.Errorf("sheet=%q", c.SheetName)
+	}
+	// A sheet with no directive stays chartless — this must not fire on its own.
+	plain := parseSheets("a,b\n1,2\n")
+	if plain[0].Chart != nil {
+		t.Error("a sheet with no chart directive grew one")
 	}
 }

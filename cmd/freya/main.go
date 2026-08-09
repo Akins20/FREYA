@@ -384,6 +384,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	if learnedErr != nil && cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "%slearned playbooks: %v%s\n", cDim, learnedErr, cReset)
 	}
+	skills.RegisterSyntax(reg)
 	skills.RegisterSkillbook(reg, learned)
 	builder.Learned = learned.Index
 

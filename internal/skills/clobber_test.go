@@ -248,3 +248,45 @@ func TestADocumentWriterWillNotSilentlyReplaceADocument(t *testing.T) {
 		t.Errorf("an explicit replace was refused: %v", err)
 	}
 }
+
+// A surgical edit on a binary is not surgical, it is destruction.
+//
+// file_edit reads a file, replaces a run of bytes and writes it back. On text
+// that is exactly right. On a .docx or .xlsx — zip archives with checksums and a
+// central directory — changing any byte invalidates the container and the file
+// no longer opens. The occurrence count protected against editing the WRONG
+// text; nothing protected against editing something that was never text.
+func TestASurgicalEditRefusesBinaryDocuments(t *testing.T) {
+	r := writeSkills(t)
+	dir := t.TempDir()
+
+	// A real zip container, as every Office document is.
+	docx := filepath.Join(dir, "report.docx")
+	if err := os.WriteFile(docx, []byte("PK\x03\x04\x00\x00binary\x00content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Execute(context.Background(), "file_edit",
+		map[string]any{"path": docx, "old_text": "binary", "new_text": "text"})
+	if err == nil {
+		t.Fatal("a .docx was edited as text — that corrupts it beyond opening")
+	}
+	if !strings.Contains(err.Error(), "docx_write") {
+		t.Errorf("the refusal does not say how to do it properly: %v", err)
+	}
+
+	// Content-sniffed too, for anything without a telltale extension.
+	blob := filepath.Join(dir, "data.bin")
+	os.WriteFile(blob, []byte("some\x00thing"), 0o644)
+	if _, err := r.Execute(context.Background(), "file_edit",
+		map[string]any{"path": blob, "old_text": "some", "new_text": "any"}); err == nil {
+		t.Error("a file containing NUL bytes was edited as text")
+	}
+
+	// And ordinary text is untouched by any of this.
+	txt := filepath.Join(dir, "notes.md")
+	os.WriteFile(txt, []byte("hello world\n"), 0o644)
+	if _, err := r.Execute(context.Background(), "file_edit",
+		map[string]any{"path": txt, "old_text": "world", "new_text": "there"}); err != nil {
+		t.Errorf("an ordinary text edit was refused: %v", err)
+	}
+}

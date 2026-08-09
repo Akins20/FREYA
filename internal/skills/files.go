@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -424,6 +425,20 @@ func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, err
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	// A surgical edit on a binary is not surgical, it is destruction.
+	//
+	// This reads the file, replaces a run of bytes and writes it back. On text
+	// that is exactly right. On a .docx, .xlsx or .pptx — which are zip archives
+	// with checksums and a central directory — changing any byte invalidates the
+	// container, and the result is a file that no longer opens. The occurrence
+	// count protects against editing the WRONG text; nothing protected against
+	// editing something that was never text.
+	if why := looksBinary(raw, path); why != "" {
+		return "", fmt.Errorf("refusing to edit %s: %s. Editing it as text would corrupt "+
+			"it beyond opening. For a document, write a fresh one with docx_write, "+
+			"xlsx_write or pdf_write; document_convert reads the existing content back "+
+			"out first if you need what is in it", filepath.Base(path), why)
 	}
 	content := string(raw)
 
@@ -1152,9 +1167,17 @@ func RegisterDocWriting(r *Registry, g *guard.Guard) {
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "xlsx_write",
-			Description: "Create an Excel spreadsheet. Supply rows as CSV text; use " +
-				"'---SHEET: Name---' on its own line to start a new sheet. Values that " +
-				"look numeric are stored as real numbers so they can be summed and charted.",
+			Description: "Create an Excel spreadsheet, with as many sheets and charts as " +
+				"it needs.\n\n" +
+				"Rows are CSV text. '---SHEET: Name---' on its own line starts a new " +
+				"sheet. A cell beginning with '=' is written as a live formula, so a " +
+				"totals row recalculates instead of going stale. Values that look " +
+				"numeric are stored as numbers, so they can be summed and plotted.\n\n" +
+				"'---CHART: bar | Revenue by month | categories=0 | values=1,2---' draws " +
+				"a chart beside that sheet's data. Kind is bar, line or pie; categories " +
+				"is the column of labels, values the columns to plot, both zero-based. " +
+				"Reach for one whenever the numbers have a shape worth seeing — a trend, " +
+				"a split, a comparison — rather than leaving a grid for them to read.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"path": {Type: "string", Description: "Where to write the .xlsx."},
 				"content": {Type: "string", Description: "CSV rows, optionally split " +
@@ -1224,6 +1247,14 @@ func parseSheets(content string) []docs.Sheet {
 			current = docs.Sheet{Name: name}
 			continue
 		}
+		if strings.HasPrefix(trimmed, "---CHART:") {
+			// The chart engine has been in internal/docs since it was written —
+			// bar, line and pie, drawn beside the data — and no tool ever offered
+			// a way to ask for one. Built, tested, and unreachable.
+			current.Chart = parseChart(strings.TrimSuffix(
+				strings.TrimPrefix(trimmed, "---CHART:"), "---"), current.Name)
+			continue
+		}
 		if trimmed == "" {
 			continue
 		}
@@ -1232,7 +1263,62 @@ func parseSheets(content string) []docs.Sheet {
 	if len(current.Rows) > 0 {
 		sheets = append(sheets, current)
 	}
+	// A chart needs to know how many data rows it is plotting, and that is only
+	// known once the sheet has been read to the end.
+	for i := range sheets {
+		if c := sheets[i].Chart; c != nil {
+			c.SheetName = sheets[i].Name
+			if c.Rows == 0 && len(sheets[i].Rows) > 1 {
+				c.Rows = len(sheets[i].Rows) - 1 // less the header
+			}
+		}
+	}
 	return sheets
+}
+
+// parseChart reads a chart directive: kind, title, and which columns to plot.
+//
+// Forgiving on purpose. Every field has a sensible default, because the failure
+// this replaces is having no chart at all, and refusing a directive over a
+// missing "values=" would be a worse outcome than plotting the second column.
+//
+//	---CHART: bar | Revenue by month | categories=0 | values=1,2---
+func parseChart(spec, sheet string) *docs.Chart {
+	ch := &docs.Chart{Kind: "bar", CategoryColumn: 0, ValueColumns: []int{1}, SheetName: sheet}
+	for i, part := range strings.Split(spec, "|") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		low := strings.ToLower(part)
+		switch {
+		case strings.HasPrefix(low, "categories="):
+			if n, err := strconv.Atoi(strings.TrimSpace(part[len("categories="):])); err == nil {
+				ch.CategoryColumn = n
+			}
+		case strings.HasPrefix(low, "values="):
+			var cols []int
+			for _, v := range strings.Split(part[len("values="):], ",") {
+				if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+					cols = append(cols, n)
+				}
+			}
+			if len(cols) > 0 {
+				ch.ValueColumns = cols
+			}
+		case strings.HasPrefix(low, "rows="):
+			if n, err := strconv.Atoi(strings.TrimSpace(part[len("rows="):])); err == nil {
+				ch.Rows = n
+			}
+		case i == 0 && (low == "bar" || low == "line" || low == "pie"):
+			ch.Kind = low
+		default:
+			if ch.Title == "" {
+				ch.Title = part
+			}
+		}
+	}
+	return ch
 }
 
 // splitCSVLine splits a CSV row, honouring quoted fields so a comma inside a
@@ -1289,4 +1375,28 @@ func (f *fileSkills) placeAware(ctx context.Context, path string) string {
 		return p.Path
 	}
 	return resolved
+}
+
+// looksBinary reports why a file must not be edited as text, or empty when it is
+// safe. Extension first because it is unambiguous for the formats that matter,
+// then content, which catches everything else.
+func looksBinary(raw []byte, path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".pdf", ".zip",
+		".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp3", ".mp4", ".tar", ".gz":
+		return "it is a " + strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".") +
+			" file, which is a binary container rather than text"
+	}
+	// A NUL byte in the first few KB is the classic test, and it is the one thing
+	// that never appears in text people edit.
+	head := raw
+	if len(head) > 8000 {
+		head = head[:8000]
+	}
+	for _, b := range head {
+		if b == 0 {
+			return "it contains binary data (a NUL byte), so it is not a text file"
+		}
+	}
+	return ""
 }
