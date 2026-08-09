@@ -112,7 +112,7 @@ var coreTools = map[string]bool{
 	// exchange that did not route to files (a portal, a quiz, a download) she had
 	// no way to read or write a file at all. A test now refuses a core entry that
 	// names nothing.
-	"code_check": true, "pdf_design": true, "slides_design": true, "file_read": true, "file_write": true, "folder_list": true, "change_dir": true,
+	"code_check": true, "project_new": true, "serve": true, "serve_stop": true, "pdf_design": true, "slides_design": true, "file_read": true, "file_write": true, "folder_list": true, "change_dir": true,
 	"run_shell": true, "run_command": true, "web_search": true, "web_fetch": true,
 	"browser_open": true, "browser_read": true, "browser_click_text": true,
 	"browser_tabs": true, "browser_status": true,

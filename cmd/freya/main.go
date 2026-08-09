@@ -136,6 +136,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	// The foreground conversation's own scope. Background jobs get their own, so
 	// one moving folders cannot move another.
+	skills.SetDaemonMode(daemonize)
 	rootScope := skills.NewScope(skills.NewWorkspace(cfg.WorkDir), "", "")
 
 	if cfg.SafetyThreshold != "" {
@@ -221,6 +222,8 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	terminals := term.NewManager()
 	defer terminals.CloseAll()
 	skills.RegisterTerminal(reg, g, terminals)
+	// Somewhere to put work, and a way to stop what it leaves running.
+	skills.RegisterProjects(reg, g, terminals)
 
 	// Claude Code as a subordinate for heavy engineering work.
 	claudeClient := claude.New(cfg.DataDir)

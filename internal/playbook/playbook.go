@@ -247,6 +247,102 @@ a field yourself. Let Chrome's saved credentials do it. Everything else — usin
 their session, choosing a login, submitting — is ordinary work.`,
 	},
 
+	"design": {
+		Name:    "design",
+		Summary: "making something that does not look generated — read before any UI, page or deck",
+		Body: `DESIGNING SOMETHING
+
+Your colour sense is good. Asked for a picture-book publisher, a corporate law
+firm and a techno festival, you produced coral and Fredoka, cream and Cinzel,
+and near-black with cyan — three palettes with no colour in common. That part is
+not the problem.
+
+The problem is underneath. Those same three pages shared: a 1200px container, a
+768px breakpoint, section padding of 4rem, a three-card auto-fit grid, a gradient
+at exactly 135deg, uppercase letter-spaced eyebrow text, and an em dash in the
+body copy. Different skin, identical skeleton. Anyone who has seen a generated
+page recognises it instantly, and it is why work that should look bespoke reads
+as templated.
+
+None of these is wrong on its own. All of them together, every time, is a tell.
+
+1. THE MEASUREMENTS ARE NOT NEUTRAL.
+   1200px, 768px, 4rem, 135deg, 8px radius, 0.3s ease. These are framework
+   defaults you absorbed, not decisions. Pick numbers the content asks for: a
+   reading column wants 60-70 characters, not 1200px; a photo grid wants the
+   width of the photos. If you cannot say why a number is that number, it is a
+   default and it is showing.
+
+2. STOP REACHING FOR THE THREE-CARD ROW.
+   Hero, three cards, call to action, footer is one layout and you use it for
+   everything. Ask what this particular thing actually is. A bakery is opening
+   hours and where to find it. A law firm is names and credentials. A festival
+   is a lineup and a date. Let the content pick the shape; a page of cards is
+   what you write when you have not decided what matters.
+
+3. BREAKPOINTS BELONG TO THE LAYOUT, NOT TO BOOTSTRAP.
+   768px is where a grid you inherited breaks, not where yours does. Resize your
+   own design in your head and change it where IT stops working. Often that is
+   one breakpoint rather than three, and often not a round number.
+
+4. EM DASHES GIVE YOU AWAY.
+   One appeared in all three pages. Real marketing copy uses full stops and short
+   sentences. While you are there: "Crafting beautiful moments", "Where X meets
+   Y", "Elevate your" and "seamlessly" are the same tell in words.
+
+5. COMMIT TO SOMETHING.
+   The generated look is the average of everything, and the average is what
+   nobody chooses. Pick one idea and push it further than is comfortable: type
+   much larger, one colour doing all the work, asymmetry, a lot of empty space, a
+   photograph bleeding off the edge. A design with one strong decision beats a
+   balanced one nobody remembers.
+
+6. THREE RULES YOU CAN CHECK BEFORE YOU FINISH.
+   These are mechanical on purpose. Guidance about writing well did not change
+   anything; removing a named thing did. So each of these is countable, and you
+   can check your own file against them before you hand it over.
+   - AT MOST ONE uppercase letter-spaced element on the page. Seven appeared on
+     one page after being told to go easy on them. One eyebrow, or none.
+   - NO linear-gradient(135deg...). If a gradient earns its place, choose the
+     angle from the layout — along the edge it follows, or 180deg for a plain
+     vertical wash.
+   - EVERY SECTION HEADING CONTAINS A VERB. "Featured Arrangements" becomes
+     "See what came in this week". "Areas of Practice" becomes "We handle
+     mergers, disputes and estates". This one rule kills the noun-stack habit,
+     because you cannot write a verb without saying who does what.
+   Names of things are exempt: a product, an artist, a person. "Amelie Lens" is
+   a name, not a heading you failed to write.
+
+7. WRITE LIKE A PERSON, NOT A LANDING PAGE.
+   Measured on your own three pages: 66%, 73% and 100% of headings were one to
+   three words with no verb. "Core Principles". "Areas of Practice". "Why
+   Parents & Kids Love Us". Nouns stacked into a label instead of a sentence
+   that says something.
+   Say the actual thing. "Areas of Practice" tells a reader nothing; "We handle
+   mergers, disputes and estates" tells them whether to keep reading. A heading
+   that could sit on any site in the sector is a heading you have not written
+   yet. Power words in a row — Fast. Reliable. Secure. — are the same failure
+   with full stops in it.
+   Fragments are fine when the content IS fragments: a lineup of artist names, a
+   price, a date. The test is whether a sentence would have said more.
+
+8. ORNAMENT IS NOT DESIGN.
+   Also measured: six cards on one page, nine on another, thirteen separate
+   border declarations on a third, and twenty-six emoji on the children's page
+   including "✨ Featured Adventures ✨". Decoration sprinkled on to fill space.
+   A card is for something that is genuinely a repeated unit. A border is for
+   when two things must not be confused. An icon is for when it means something
+   — a phone next to a phone number. If it is there to make the section look
+   finished, it is making it look generated instead. Whitespace, type size and
+   one good photograph do more than a row of bordered boxes with icons on top.
+
+9. WHEN THE BRIEF IS OPEN, DECIDE AND SAY SO.
+   "A site for my mum's flower shop" is the whole brief you will get. Do not ask
+   twenty questions. Choose a direction — hand-drawn and warm rather than minimal
+   and green — build it properly, and say in one line what you chose so they can
+   push back. A committed direction they can reject beats a safe one they cannot
+   react to.`,
+	},
 	"documents": {
 		Name:    "documents",
 		Summary: "producing real docx / xlsx / pdf files with proper structure and correct data",

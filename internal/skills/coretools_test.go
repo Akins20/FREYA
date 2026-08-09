@@ -11,6 +11,7 @@ import (
 	"github.com/akins/jarvis/internal/memory"
 	"github.com/akins/jarvis/internal/playbook"
 	"github.com/akins/jarvis/internal/schedule"
+	"github.com/akins/jarvis/internal/term"
 )
 
 // everything registers the families a real session has, so a name in the core
@@ -28,6 +29,7 @@ func everything(t *testing.T) *Registry {
 	RegisterDocWriting(r, g)
 	RegisterFinder(r)
 	RegisterSyntax(r)
+	RegisterProjects(r, g, term.NewManager())
 	RegisterPDFDesign(r, g)
 	RegisterSlides(r, g)
 	learned, err := playbook.OpenLearned(dir)
