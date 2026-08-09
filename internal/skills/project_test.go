@@ -182,3 +182,64 @@ func TestServeListIsRegisteredAndInCore(t *testing.T) {
 			"on the request happening to route to dev")
 	}
 }
+
+// A link she handed out has to outlive the process that served it, as history.
+//
+// The servers are tied to her process and that is right. The consequence is not:
+// she says "it is at localhost:41799", gets restarted an hour later for an
+// unrelated reason, and the link is dead with nothing anywhere recording that it
+// ever existed. The user only speaks to her — there is no terminal where a dead
+// link is obvious. They click it, get nothing, and the last thing she said was
+// that it was ready.
+func TestAddressesHandedOutSurviveARestartAsHistory(t *testing.T) {
+	dir := t.TempDir()
+
+	// A previous life, serving two folders.
+	LoadServed(dir)
+	serving.Lock()
+	serving.dir[41799] = "/home/akins/freya-workspace/barbershop"
+	serving.dir[38371] = "/home/akins/freya-workspace/record-shop"
+	serving.Unlock()
+	persistServed()
+
+	// She is restarted: fresh maps, nothing running.
+	serving.Lock()
+	serving.dir = map[int]string{}
+	serving.stale = nil
+	serving.file = ""
+	serving.Unlock()
+
+	LoadServed(dir)
+	serving.Lock()
+	got := len(serving.stale)
+	ports := map[int]string{}
+	for _, r := range serving.stale {
+		ports[r.Port] = r.Dir
+	}
+	serving.Unlock()
+
+	if got != 2 {
+		t.Fatalf("want both previous addresses remembered, got %d", got)
+	}
+	if ports[41799] != "/home/akins/freya-workspace/barbershop" {
+		t.Errorf("the folder behind port 41799 was lost: %q", ports[41799])
+	}
+
+	// And nothing is claimed to be running, because nothing is.
+	serving.Lock()
+	running := len(serving.dir)
+	serving.Unlock()
+	if running != 0 {
+		t.Errorf("a restarted process claims %d live servers", running)
+	}
+}
+
+// No data directory means no record, and nothing crashes for want of one.
+func TestNoDataDirIsNotAnError(t *testing.T) {
+	serving.Lock()
+	serving.file = ""
+	serving.stale = nil
+	serving.Unlock()
+	LoadServed("")
+	persistServed() // must be a no-op rather than a panic
+}

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -60,10 +61,85 @@ import (
 // and she has no other way to find that out.
 var serving struct {
 	sync.Mutex
-	dir map[int]string
+	dir   map[int]string
+	stale []servedRecord // what a previous life was serving, reported once
+	file  string         // where the record survives a restart, empty to not keep one
 }
 
 func init() { serving.dir = map[int]string{} }
+
+// servedRecord is what she was serving when she was last stopped.
+//
+// # Why this outlives the servers themselves
+//
+// The servers are tied to her process, which is correct. The CONSEQUENCE is not:
+// she tells someone "it is at localhost:41799", gets restarted an hour later for
+// an unrelated reason, and that link is dead with nothing anywhere saying so.
+// The session record died with the process too, so she cannot even find out that
+// she used to be serving something.
+//
+// The user only ever speaks to her. There is no terminal where a dead link is
+// obvious — they click it, get nothing, and the last thing she said on the
+// subject was that it was ready.
+//
+// So the addresses she handed out survive her, marked as stale, and she is told
+// on the first serve_list after a restart. Not restarted automatically: a folder
+// that was worth serving an hour ago may not be, and quietly reopening ports on
+// startup is the kind of helpfulness nobody asked for.
+type servedRecord struct {
+	Port int    `json:"port"`
+	Dir  string `json:"dir"`
+}
+
+// LoadServed restores what she was serving before, so a restart is something she
+// can report rather than something that silently invalidates what she said.
+func LoadServed(dataDir string) {
+	if dataDir == "" {
+		return
+	}
+	path := filepath.Join(dataDir, "serving.json")
+	serving.Lock()
+	serving.file = path
+	serving.Unlock()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var prev []servedRecord
+	if json.Unmarshal(raw, &prev) != nil {
+		return
+	}
+	serving.Lock()
+	defer serving.Unlock()
+	for _, r := range prev {
+		// Only as history. It is not running — this process has just started —
+		// and saying otherwise is the failure being fixed.
+		serving.stale = append(serving.stale, r)
+	}
+}
+
+// persistServed writes the current set. Best effort: failing to record this must
+// never fail a serve.
+func persistServed() {
+	serving.Lock()
+	path := serving.file
+	out := make([]servedRecord, 0, len(serving.dir))
+	for p, d := range serving.dir {
+		out = append(out, servedRecord{Port: p, Dir: d})
+	}
+	serving.Unlock()
+	if path == "" {
+		return
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Port < out[j].Port })
+	if b, err := json.Marshal(out); err == nil {
+		tmp := path + ".tmp"
+		if os.WriteFile(tmp, b, 0o644) == nil {
+			_ = os.Rename(tmp, path)
+		}
+	}
+}
 
 // RegisterProjects adds project folders, servers and their cleanup.
 func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
@@ -237,10 +313,28 @@ func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
 			sort.Strings(live)
 			sort.Strings(dead)
 
+			// Anything a previous life was serving, said once and then forgotten.
+			// This is the only moment she can learn that a link she gave out has
+			// stopped working.
+			serving.Lock()
+			was := serving.stale
+			serving.stale = nil
+			serving.Unlock()
+			var before string
+			if len(was) > 0 {
+				var b strings.Builder
+				b.WriteString("\n\n[Before you were last restarted you were serving:\n")
+				for _, r := range was {
+					fmt.Fprintf(&b, "  http://localhost:%d  →  %s\n", r.Port, r.Dir)
+				}
+				b.WriteString("Those are dead. If you gave anyone one of those addresses, " +
+					"say so and serve it again — they have no way of knowing, and the last " +
+					"thing you told them was that it was ready.]")
+				before = b.String()
+			}
+
 			if len(live)+len(dead) == 0 {
-				return "Nothing of yours is serving. Anything you started before your last " +
-					"restart is gone with it — if you gave someone a localhost URL earlier, " +
-					"it is dead and needs serving again.", nil
+				return "Nothing of yours is serving." + before, nil
 			}
 			var sb strings.Builder
 			for _, l := range live {
@@ -249,7 +343,8 @@ func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
 			for _, l := range dead {
 				sb.WriteString("  " + l + "\n")
 			}
-			fmt.Fprintf(&sb, "\n%d running, %d not answering.%s", len(live), len(dead), oneShotWarning())
+			fmt.Fprintf(&sb, "\n%d running, %d not answering.%s%s", len(live), len(dead),
+				before, oneShotWarning())
 			return strings.TrimLeft(sb.String(), "\n"), nil
 		},
 	})

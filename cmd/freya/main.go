@@ -226,6 +226,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	defer terminals.CloseAll()
 	skills.RegisterTerminal(reg, g, terminals)
 	// Somewhere to put work, and a way to stop what it leaves running.
+	skills.LoadServed(cfg.DataDir)
 	skills.RegisterProjects(reg, g, terminals)
 
 	// Claude Code as a subordinate for heavy engineering work.
