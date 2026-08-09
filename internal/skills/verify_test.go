@@ -32,10 +32,12 @@ func TestEveryMutatingBrowserToolCanTellItDidNothing(t *testing.T) {
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	checked := 0
 	for name, s := range r.skills {
 		if !strings.HasPrefix(name, "browser_") || !s.Mutates || offPage[name] {
 			continue
 		}
+		checked++
 		if s.Observe == nil {
 			t.Errorf("%s changes the page but has no fingerprint, so 'I did it and "+
 				"nothing moved' is invisible — the exact failure this phase exists for", name)
@@ -43,6 +45,16 @@ func TestEveryMutatingBrowserToolCanTellItDidNothing(t *testing.T) {
 		if s.Affordances == nil {
 			t.Errorf("%s fails without saying what IS available on the page", name)
 		}
+	}
+	// The floor. Every assertion above is gated on s.Mutates, which is exactly
+	// the flag that was missing from seven interaction tools and made an
+	// earlier version of this test pass while proving nothing. If the flag
+	// goes again the loop body simply never runs, and without this the suite
+	// stays green while the guard it checks has been switched off wholesale.
+	if checked < 12 {
+		t.Errorf("only %d browser tools reached the assertion, expected at least 12 — "+
+			"either Mutates has been dropped again or this test has stopped testing "+
+			"anything", checked)
 	}
 }
 
