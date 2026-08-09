@@ -602,102 +602,32 @@ func (c *Client) Submit(ctx context.Context, selector string) error {
 // The output is deliberately compact. A real page has hundreds of elements and
 // listing them all would swamp the context that has to hold the rest of the
 // conversation.
+// Inspect lists the interactive elements on a page.
+//
+// # A field's value is not its label
+//
+// label() ended with (el.innerText || el.value), which is right for a button and
+// catastrophic for an input: an <input> has no innerText, so every filled field
+// was labelled with its own contents. On a sign-in page that is the password —
+// and this string is returned as a tool result, appended to the archive, and
+// resent to the model on every later turn of the conversation. It reached a real
+// account.
+//
+// Nothing failed and nothing warned, because the output looked exactly like an
+// ordinary element listing. That is the shape of every bug in this file worth
+// having a comment.
+//
+// So a field that might hold a credential reports its LENGTH and never its
+// contents. Matched three ways — type, autocomplete, and the name or id —
+// because plenty of real sign-in forms build a custom widget without
+// type=password, and a check that only reads the type fails on exactly the pages
+// where it matters. page.go's fingerprint already carries counts and lengths for
+// the same reason; this was the other place values were getting out.
 func (c *Client) Inspect(ctx context.Context, limit int) (string, error) {
 	if limit <= 0 {
 		limit = 60
 	}
-	expr := deepPrelude + fmt.Sprintf(`(() => {
-      const out = [];
-      const seen = new Set();
-
-      // Gather every document to search: the top page, each same-origin iframe,
-      // and every open shadow root, so radios and buttons that live inside the
-      // quiz frame are listed like any other. Without this the quiz looked empty.
-      const roots = [];
-      const collect = (root) => {
-        roots.push(root);
-        let list; try { list = root.querySelectorAll('*'); } catch (e) { return; }
-        for (const x of list) { const s = __descend(x); if (s) collect(s); }
-      };
-      collect(document);
-      const inFrame = (el) => { try { return el.ownerDocument !== document; } catch (e) { return false; } };
-      const qsa = (q) => { let r = []; for (const root of roots) { try { r = r.concat(Array.from(root.querySelectorAll(q))); } catch (e) {} } return r; };
-
-      // A stable, short way to refer back to an element. Prefer whatever the
-      // page already gives us over a generated path.
-      const sel = el => {
-        const doc = el.ownerDocument || document;
-        if (el.id && !/^[0-9]/.test(el.id) && doc.querySelectorAll('#'+CSS.escape(el.id)).length === 1)
-          return '#' + CSS.escape(el.id);
-        for (const a of ['name','data-testid','aria-label','placeholder']) {
-          const v = el.getAttribute && el.getAttribute(a);
-          if (v) {
-            const s = el.tagName.toLowerCase() + '[' + a + '=' + JSON.stringify(v) + ']';
-            try { if (doc.querySelectorAll(s).length === 1) return s; } catch (e) {}
-          }
-        }
-        const p = el.parentElement;
-        if (!p) return el.tagName.toLowerCase();
-        const same = Array.from(p.children).filter(x => x.tagName === el.tagName);
-        const i = same.indexOf(el) + 1;
-        const parentSel = p.id ? '#' + CSS.escape(p.id) : p.tagName.toLowerCase();
-        return parentSel + ' > ' + el.tagName.toLowerCase() + ':nth-of-type(' + i + ')';
-      };
-
-      const label = el => {
-        if (el.getAttribute && el.getAttribute('aria-label')) return el.getAttribute('aria-label');
-        if (el.labels && el.labels.length) return (el.labels[0].innerText||'').trim();
-        if (el.placeholder) return el.placeholder;
-        if (el.name) return el.name;
-        if (el.title) return el.title;
-        return (el.innerText||el.value||'').trim().replace(/\s+/g,' ').slice(0,60);
-      };
-
-      const add = (el, kind, extra) => {
-        if (out.length >= %d || !__vis(el)) return;
-        const s = sel(el);
-        const key = (inFrame(el) ? 'f:' : '') + s + '|' + label(el);
-        if (seen.has(key)) return;
-        seen.add(key);
-        out.push(kind + ' | ' + s + ' | ' + (label(el)||'(no label)') + (extra||'') + (inFrame(el) ? ' | in iframe — click by text' : ''));
-      };
-
-      qsa('input,textarea').forEach(el => {
-        const t = (el.type||'text').toLowerCase();
-        if (t === 'hidden') return;
-        // Whether a secret is present, never what it is.
-        //
-        // Reporting el.value for every field put the user's actual password into
-        // a tool result — and from there into the archive on disk, and into the
-        // request sent to the model provider. Chrome had autofilled the field and
-        // inspect read it straight back off the DOM. The credential store is
-        // carefully never read for exactly this reason; this was the same secret
-        // arriving by the other door.
-        //
-        // The agent only ever needs to know whether the box is filled, which is
-        // what it uses to decide the form is ready to submit.
-        const secret = t === 'password' ||
-          /password|passwd|pwd|otp|one-time|cvv|cvc|security-?code/i
-            .test((el.name||'') + ' ' + (el.id||'') + ' ' + (el.autocomplete||''));
-        let extra = '';
-        if (t === 'checkbox' || t === 'radio') extra = el.checked ? ' | CHECKED' : ' | unchecked';
-        else if (secret) extra = el.value ? ' | filled' : ' | empty';
-        else if (el.value) extra = ' | currently: ' + String(el.value).slice(0,30);
-        if (el.required) extra += ' | required';
-        add(el, secret ? 'password' : 'field(' + t + ')', extra);
-      });
-
-      qsa('select').forEach(el => {
-        const opts = Array.from(el.options).slice(0,12).map(o => (o.text||'').trim()).filter(Boolean);
-        add(el, 'dropdown', ' | options: ' + opts.join(', ') +
-            (el.options.length > 12 ? ' …+' + (el.options.length-12) : ''));
-      });
-
-      qsa('button,[role=button],[role=radio],[role=checkbox],input[type=submit],input[type=button],a[href]')
-        .forEach(el => add(el, el.tagName.toLowerCase() === 'a' ? 'link' : 'button', el.disabled ? ' | DISABLED' : ''));
-
-      return out.join('\n');
-    })()`, limit)
+	expr := inspectScript(limit)
 
 	res, err := c.EvalString(ctx, expr)
 	if err != nil {
@@ -782,4 +712,115 @@ func (c *Client) RightClick(ctx context.Context, selector string) error {
 	}
 	c.WaitStable(ctx, 3*time.Second)
 	return nil
+}
+
+// inspectScript is the page listing, kept as a function so the credential test
+// reads the JavaScript that actually ships rather than a paraphrase of it.
+func inspectScript(limit int) string {
+	return deepPrelude + fmt.Sprintf(`(() => {
+      const out = [];
+      const seen = new Set();
+
+      // Gather every document to search: the top page, each same-origin iframe,
+      // and every open shadow root, so radios and buttons that live inside the
+      // quiz frame are listed like any other. Without this the quiz looked empty.
+      const roots = [];
+      const collect = (root) => {
+        roots.push(root);
+        let list; try { list = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const x of list) { const s = __descend(x); if (s) collect(s); }
+      };
+      collect(document);
+      const inFrame = (el) => { try { return el.ownerDocument !== document; } catch (e) { return false; } };
+      const qsa = (q) => { let r = []; for (const root of roots) { try { r = r.concat(Array.from(root.querySelectorAll(q))); } catch (e) {} } return r; };
+
+      // A stable, short way to refer back to an element. Prefer whatever the
+      // page already gives us over a generated path.
+      const sel = el => {
+        const doc = el.ownerDocument || document;
+        if (el.id && !/^[0-9]/.test(el.id) && doc.querySelectorAll('#'+CSS.escape(el.id)).length === 1)
+          return '#' + CSS.escape(el.id);
+        for (const a of ['name','data-testid','aria-label','placeholder']) {
+          const v = el.getAttribute && el.getAttribute(a);
+          if (v) {
+            const s = el.tagName.toLowerCase() + '[' + a + '=' + JSON.stringify(v) + ']';
+            try { if (doc.querySelectorAll(s).length === 1) return s; } catch (e) {}
+          }
+        }
+        const p = el.parentElement;
+        if (!p) return el.tagName.toLowerCase();
+        const same = Array.from(p.children).filter(x => x.tagName === el.tagName);
+        const i = same.indexOf(el) + 1;
+        const parentSel = p.id ? '#' + CSS.escape(p.id) : p.tagName.toLowerCase();
+        return parentSel + ' > ' + el.tagName.toLowerCase() + ':nth-of-type(' + i + ')';
+      };
+
+      const secret = el => {
+        const t = (el.type||'').toLowerCase();
+        if (t === 'password') return true;
+        const a = ((el.autocomplete||'') + ' ' +
+                   ((el.getAttribute && el.getAttribute('autocomplete')) || '')).toLowerCase();
+        if (/password|cc-number|cc-csc|one-time-code/.test(a)) return true;
+        const n = ((el.name||'') + ' ' + (el.id||'')).toLowerCase();
+        return /passw|pwd|(^|[^a-z])otp([^a-z]|$)|cvv|cvc|cardnum|card-number/.test(n);
+      };
+
+      const label = el => {
+        if (secret(el)) {
+          const n = (el.value||'').length;
+          return n ? '(' + n + ' characters entered)' : '(empty)';
+        }
+        if (el.getAttribute && el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+        if (el.labels && el.labels.length) return (el.labels[0].innerText||'').trim();
+        if (el.placeholder) return el.placeholder;
+        if (el.name) return el.name;
+        if (el.title) return el.title;
+        return (el.innerText||el.value||'').trim().replace(/\s+/g,' ').slice(0,60);
+      };
+
+      const add = (el, kind, extra) => {
+        if (out.length >= %d || !__vis(el)) return;
+        const s = sel(el);
+        const key = (inFrame(el) ? 'f:' : '') + s + '|' + label(el);
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(kind + ' | ' + s + ' | ' + (label(el)||'(no label)') + (extra||'') + (inFrame(el) ? ' | in iframe — click by text' : ''));
+      };
+
+      qsa('input,textarea').forEach(el => {
+        const t = (el.type||'text').toLowerCase();
+        if (t === 'hidden') return;
+        // Whether a secret is present, never what it is.
+        //
+        // Reporting el.value for every field put the user's actual password into
+        // a tool result — and from there into the archive on disk, and into the
+        // request sent to the model provider. Chrome had autofilled the field and
+        // inspect read it straight back off the DOM. The credential store is
+        // carefully never read for exactly this reason; this was the same secret
+        // arriving by the other door.
+        //
+        // The agent only ever needs to know whether the box is filled, which is
+        // what it uses to decide the form is ready to submit.
+        const secret = t === 'password' ||
+          /password|passwd|pwd|otp|one-time|cvv|cvc|security-?code/i
+            .test((el.name||'') + ' ' + (el.id||'') + ' ' + (el.autocomplete||''));
+        let extra = '';
+        if (t === 'checkbox' || t === 'radio') extra = el.checked ? ' | CHECKED' : ' | unchecked';
+        else if (secret) extra = el.value ? ' | filled' : ' | empty';
+        else if (el.value) extra = ' | currently: ' + String(el.value).slice(0,30);
+        if (el.required) extra += ' | required';
+        add(el, secret ? 'password' : 'field(' + t + ')', extra);
+      });
+
+      qsa('select').forEach(el => {
+        const opts = Array.from(el.options).slice(0,12).map(o => (o.text||'').trim()).filter(Boolean);
+        add(el, 'dropdown', ' | options: ' + opts.join(', ') +
+            (el.options.length > 12 ? ' …+' + (el.options.length-12) : ''));
+      });
+
+      qsa('button,[role=button],[role=radio],[role=checkbox],input[type=submit],input[type=button],a[href]')
+        .forEach(el => add(el, el.tagName.toLowerCase() === 'a' ? 'link' : 'button', el.disabled ? ' | DISABLED' : ''));
+
+      return out.join('\n');
+    })()`, limit)
 }
