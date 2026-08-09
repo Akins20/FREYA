@@ -188,21 +188,28 @@ func resetTurns() {
 }
 
 // Always-on listening must be something the user chose, not something that
-// arrives when an unrelated setting is fixed.
+// arrives when an unrelated setting is fixed — and not something that arrives
+// from setting nothing at all.
 //
-// It had no off switch at all: wake listening started whenever voice was
-// available, and the only reason it was ever quiet was that starting it had
-// FAILED. Restoring an API key therefore turned on a microphone that records the
-// room almost continuously.
-func TestWakeListeningCanBeTurnedOff(t *testing.T) {
-	for _, off := range []string{"off", "OFF", "no", "false", "0", "deaf", " off "} {
+// It had no off switch at all to begin with: wake listening started whenever
+// voice was available, and the only reason it was ever quiet was that starting
+// it had FAILED. Restoring an API key therefore turned on a microphone that
+// records the room almost continuously.
+//
+// The switch added then was real and the DEFAULT was still on, because an empty
+// string fell through to "forever". The user found it the same way as last time:
+// the indicator lit up and the microphone was live without them asking for it.
+// Unset now means off. Anyone who wants it says so.
+func TestWakeListeningIsOffUnlessAskedFor(t *testing.T) {
+	for _, off := range []string{"", "   ", "off", "OFF", "no", "false", "0", "deaf", " off "} {
 		if !wakeDisabled(&config.Config{Wake: off}) {
-			t.Errorf("FREYA_WAKE=%q did not turn always-on listening off", off)
+			t.Errorf("FREYA_WAKE=%q left always-on listening ON — an unset variable must "+
+				"never open the microphone", off)
 		}
 	}
-	for _, on := range []string{"", "on", "yes", "true"} {
+	for _, on := range []string{"on", "yes", "true", "forever", "2h"} {
 		if wakeDisabled(&config.Config{Wake: on}) {
-			t.Errorf("FREYA_WAKE=%q silently disabled listening", on)
+			t.Errorf("FREYA_WAKE=%q silently disabled listening the user asked for", on)
 		}
 	}
 }

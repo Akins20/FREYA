@@ -805,11 +805,14 @@ func startWakeListening(ctx context.Context, a *agent.Agent, v *voiceState, ind 
 	}
 	v.indicator = ind
 
+	// Unset is off. See wakeDisabled — an always-on microphone is not something
+	// to arrive at by leaving a variable blank.
 	arg := strings.ToLower(strings.TrimSpace(os.Getenv("FREYA_WAKE")))
 	switch arg {
-	case "off", "no", "false":
-		return fmt.Errorf("disabled by FREYA_WAKE=off")
-	case "", "on", "forever", "always", "indefinite":
+	case "", "off", "no", "false", "0", "deaf":
+		return fmt.Errorf("off by default — set FREYA_WAKE=on for always-on listening, " +
+			"or use push-to-talk, which needs nothing")
+	case "on", "yes", "true", "forever", "always", "indefinite":
 		arg = "forever"
 	}
 
@@ -838,14 +841,32 @@ func (v *voiceState) speak(ctx context.Context, pri voice.Priority, text string)
 	return said
 }
 
-// wakeDisabled reports whether the user has turned always-on listening off.
+// wakeDisabled reports whether always-on listening is off. Unset counts as off.
 //
 // Separate from "it failed to start", which is what the banner used to conflate:
 // a microphone that records the room continuously should be on because somebody
 // said so, not because nothing prevented it.
+//
+// # Why the default is off, and why that was worth changing
+//
+// It used to be on. Not by decision — by an empty string falling through to
+// "forever" in a switch. So the way to get a microphone recording the room
+// continuously, and uploading it for transcription, was to install this and do
+// nothing.
+//
+// That is the second time the same default has bitten. The first time, listening
+// started whenever voice was available and was quiet only because starting it
+// happened to FAIL; restoring an unrelated API key turned the microphone on. The
+// off switch added then was real, and the default it left behind was still on.
+//
+// There is no local wake-word model here. While this is on, speech near the
+// microphone is recorded and sent away whether or not it was meant for her — so
+// it belongs to the class of things that are only ever switched on deliberately.
+// FREYA_WAKE=on enables it; a duration like 2h enables it with a timeout.
+// Push-to-talk is unaffected either way and needs nothing set.
 func wakeDisabled(cfg *config.Config) bool {
 	switch strings.ToLower(strings.TrimSpace(cfg.Wake)) {
-	case "off", "no", "false", "0", "deaf":
+	case "", "off", "no", "false", "0", "deaf":
 		return true
 	}
 	return false
