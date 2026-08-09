@@ -2,6 +2,8 @@ package skills
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,5 +131,54 @@ func TestStartingAProjectHandsOverTheDesignRules(t *testing.T) {
 		if !strings.Contains(brief, want) {
 			t.Errorf("the rules handed over do not include %q", want)
 		}
+	}
+}
+
+// She has to be able to tell a live URL from one she handed over before a
+// restart, because nothing else will tell her.
+//
+// Servers are tied to her process, which is right — they should not outlive her
+// — but it means every localhost URL she has ever given out goes dead the moment
+// she is restarted, silently, with the session record gone too. Liveness is
+// therefore asked of the PORT, not inferred from the bookkeeping.
+func TestServeListReportsWhetherAPortStillAnswers(t *testing.T) {
+	port, err := freePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if busy(port) {
+		t.Fatalf("precondition: %d should be free", port)
+	}
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !busy(port) {
+		t.Error("a port with something listening on it reported as free")
+	}
+	ln.Close()
+	if busy(port) {
+		t.Error("a port reported as answering after its listener closed — a dead URL " +
+			"would be reported as live, which is the whole failure")
+	}
+}
+
+// The tool exists and is offered without waiting on a routing decision, the same
+// as serve and serve_stop.
+func TestServeListIsRegisteredAndInCore(t *testing.T) {
+	r := everything(t)
+	found := false
+	for _, n := range r.Names() {
+		if n == "serve_list" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("serve_list is not registered")
+	}
+	if !coreTools["serve_list"] {
+		t.Error("serve_list is not in the core kit, so 'what have I got running' waits " +
+			"on the request happening to route to dev")
 	}
 }

@@ -94,10 +94,21 @@ func RegisterSiteCheck(r *Registry) {
 					"That is not proof they are broken — it is proof they were not checked.]", unknown)
 			}
 
+			// Clean is the moment to hand it to the reviewer, not the moment to stop.
+			// The rule saying so has been in the design playbook since it was pushed
+			// at project start, and the next build ran site_check, served the site and
+			// handed it over without ever calling review. Attaching it to a call she
+			// already makes is the only thing that has ever worked.
 			if len(problems) == 0 {
 				return fmt.Sprintf("%d page(s) checked — every link, anchor, image and "+
 					"form target resolves, including the external ones. Nothing leads "+
-					"nowhere.%s", len(pages), unreachable), nil
+					"nowhere.%s\n\n[That is the half a regex can answer. It says nothing "+
+					"about whether the page is any good — whether the copy says anything, "+
+					"whether the spacing has a rhythm, whether the eye knows where to go. "+
+					"Run review on this folder now: it shows the rendered page to somebody "+
+					"who has never seen your work and asks for the three weakest things. "+
+					"Expect it to find them, and fix them before you hand this over.]",
+					len(pages), unreachable), nil
 			}
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "%d dead end(s) across %d page(s). Each is either something to "+

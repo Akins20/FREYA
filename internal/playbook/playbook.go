@@ -285,10 +285,12 @@ None of these is wrong on its own. All of them together, every time, is a tell.
    own design in your head and change it where IT stops working. Often that is
    one breakpoint rather than three, and often not a round number.
 
-4. EM DASHES GIVE YOU AWAY.
-   One appeared in all three pages. Real marketing copy uses full stops and short
-   sentences. While you are there: "Crafting beautiful moments", "Where X meets
-   Y", "Elevate your" and "seamlessly" are the same tell in words.
+4. ZERO EM DASHES IN ANYTHING THAT GOES ON A PAGE. Not one.
+   Written as a count because the descriptive version did not work: "em dashes
+   give you away" was in this playbook, was read, and the next four-page site had
+   five of them. Use a full stop. Use a comma. Use two sentences.
+   The same tell in words: "Crafting beautiful moments", "Where X meets Y",
+   "Elevate your", "seamlessly", "curated", "rooted in", "crafted with care".
 
 5. COMMIT TO SOMETHING.
    The generated look is the average of everything, and the average is what
@@ -297,7 +299,7 @@ None of these is wrong on its own. All of them together, every time, is a tell.
    photograph bleeding off the edge. A design with one strong decision beats a
    balanced one nobody remembers.
 
-6. THREE RULES YOU CAN CHECK BEFORE YOU FINISH.
+6. FIVE RULES YOU CAN CHECK BEFORE YOU FINISH.
    These are mechanical on purpose. Guidance about writing well did not change
    anything; removing a named thing did. So each of these is countable, and you
    can check your own file against them before you hand it over.
@@ -310,6 +312,10 @@ None of these is wrong on its own. All of them together, every time, is a tell.
      "See what came in this week". "Areas of Practice" becomes "We handle
      mergers, disputes and estates". This one rule kills the noun-stack habit,
      because you cannot write a verb without saying who does what.
+   - NO max-width: 1200px, AND NO 4rem PADDING. Both are defaults you reach for
+     without deciding. Thirteen uses of 4rem appeared on one site. Pick widths
+     and spacing from the content: a reading column is narrower than a gallery,
+     and the space above a section heading is not the space inside a footer.
    Names of things are exempt: a product, an artist, a person. "Amelie Lens" is
    a name, not a heading you failed to write.
 
@@ -343,7 +349,18 @@ None of these is wrong on its own. All of them together, every time, is a tell.
    push back. A committed direction they can reject beats a safe one they cannot
    react to.
 
-10. A NAV ITEM IS A PAGE. BUILD THE PAGES.
+10. HAVE IT LOOKED AT BEFORE YOU HAND IT OVER.
+   Run site_check, then run review. They answer different questions and neither
+   can do the other's job: site_check says whether everything is wired up, review
+   is somebody seeing the rendered page cold with no idea what you intended.
+   You cannot do the second one for yourself. You know what you meant, so you
+   read the page as the thing you intended rather than the thing that is there.
+   Expect it to find three problems. That is the job, not a verdict on you — go
+   and fix them rather than explaining why they are fine. A page passing every
+   mechanical check and still being flat and generic is the normal case, not the
+   unlucky one.
+
+11. A NAV ITEM IS A PAGE. BUILD THE PAGES.
    Every site you have made so far is one index.html with #anchors standing in
    for the pages: flower shop, grooming salon, bike shop, all of them. Nobody
    asked for one page. It is simply what happens when you stop at the first

@@ -390,6 +390,17 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 			// Citations she never opened. Checked here rather than beside the plan,
 			// because it needs the finished ANSWER — the dead links are in files and
 			// exist before she writes a word, these are in the prose itself.
+			// A site nobody looked at. Before the research checks because it is the
+			// commonest case by far.
+			if !pushed && unreviewedSite(&work) {
+				pushed = true
+				a.trace("retry", "unreviewed",
+					"a site was built and review never ran — sending her to have it looked at")
+				msgs = append(msgs,
+					llm.Message{Role: llm.RoleAssistant, Text: resp.Text},
+					llm.Message{Role: llm.RoleUser, Text: reviewBrief()})
+				continue
+			}
 			// Nothing opened at all, and a long answer resting on it. Checked before
 			// the citation test, because an answer with no sources cannot fail a
 			// citation test and is the worse of the two.

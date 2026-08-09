@@ -145,6 +145,20 @@ func Note(path, content string) string {
 		"the ones that span files.]", strings.Join(problems, "; "))
 }
 
+// StyleNote is the house-style count, appended to a write. Separate from Note
+// because it applies to stylesheets too, and because a dead link and an em dash
+// are different kinds of problem and should not arrive as one paragraph.
+func StyleNote(path, content string) string {
+	found := HouseStyle(path, content)
+	if len(found) == 0 {
+		return ""
+	}
+	return "\n\n[House style, counted: " + strings.Join(found, "; ") +
+		". These are the tells that make work read as generated, and they are the ones no " +
+		"instruction has moved — so they are counted instead. Fix them now while the file " +
+		"is in front of you.]"
+}
+
 // Open re-reads a page from disk and says what is still wrong with it. Used at
 // the end of an exchange, where the only trustworthy answer is the current file
 // — she may have fixed it with any tool, or with three.
@@ -373,4 +387,91 @@ func dedupe(in []string) []string {
 		}
 	}
 	return out
+}
+
+// House style, for the tells that no instruction has ever moved.
+//
+// # Why these and not the others
+//
+// Most of the generated-look tells went to zero when the design playbook named
+// them: cards, emoji, auto-fit grids, 135deg gradients, 768px breakpoints. Two
+// did not, and one got worse under a stronger rule.
+//
+//	                   named descriptively   named as a hard count
+//	em dashes                  5                      7
+//	uppercase eyebrows         1                      4
+//
+// The rule for em dashes was rewritten from "em dashes give you away" to "ZERO
+// EM DASHES. Not one." and the count went up. That rules out the theory that
+// naming a removable thing is what works, because this is as removable and as
+// named as anything gets.
+//
+// The difference is what kind of decision each one is. A card is a structural
+// choice made once, deliberately, and a rule can reach it. An em dash is
+// punctuation emitted mid-sentence by a habit far below the level any
+// instruction operates at. Asking a model not to reach for a token it reaches
+// for constantly is asking the wrong layer.
+//
+// So they get counted instead, like everything else here that stuck. Reported,
+// never rewritten: silently editing her prose would make the page better and
+// teach her nothing, and the point is that she stops producing them.
+func HouseStyle(path, content string) []string {
+	var out []string
+	switch {
+	case IsHTML(path):
+		// Only the prose. An em dash inside a <style> or <script> block is not
+		// something a reader sees.
+		text := stripTags(content)
+		if n := strings.Count(text, "—"); n > 0 {
+			out = append(out, fmt.Sprintf("%d em dash(es) in the copy — every one of them is a "+
+				"full stop, a comma, or two sentences", n))
+		}
+		// Cards drift back. Zero when the playbook first named them, then three,
+		// then four, then eleven on a page rewritten to ACT on a review that asked
+		// for more visual variety — because "vary the layout" gets implemented as
+		// more boxes. Counted for the same reason as the em dashes: the rule is
+		// read, agreed with, and then not followed.
+		if n := len(reCardClass.FindAllString(content, -1)); n > cardsPerPage {
+			out = append(out, fmt.Sprintf("%d card elements — a page made of boxes. Some of "+
+				"these are a list, a table, or just text with space around it", n))
+		}
+	case strings.EqualFold(filepath.Ext(path), ".css"):
+		if n := len(reUppercase.FindAllString(content, -1)); n > 1 {
+			out = append(out, fmt.Sprintf("%d uppercase letter-spaced elements — one eyebrow "+
+				"on a page, or none", n))
+		}
+		if n := strings.Count(content, "135deg"); n > 0 {
+			out = append(out, fmt.Sprintf("%d gradient(s) at 135deg — take the angle from the "+
+				"layout, or use 180deg", n))
+		}
+		if n := strings.Count(content, "auto-fit"); n > 0 {
+			out = append(out, fmt.Sprintf("%d auto-fit grid(s) — decide how many columns the "+
+				"content wants", n))
+		}
+	}
+	return out
+}
+
+// cardsPerPage is where a few grouped things becomes a page of boxes. Generous:
+// three is a normal row and this is not meant to fire on it.
+const cardsPerPage = 4
+
+var (
+	reCardClass = regexp.MustCompile(`(?i)class\s*=\s*"[^"]*\bcard\b[^"]*"`)
+	reUppercase = regexp.MustCompile(`(?i)text-transform\s*:\s*uppercase`)
+	// Two patterns rather than one with a backreference: Go's regexp is RE2 and
+	// has none, and MustCompile panics at init, so this is caught by any test at
+	// all rather than at runtime on a page with a <script> in it.
+	reScript = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
+	reStyle  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
+	reAnyTag = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// stripTags leaves roughly what a reader sees, which is all this needs: the
+// count only has to be right about prose, and a stray attribute value counted or
+// missed changes nothing about the advice.
+func stripTags(html string) string {
+	html = reScript.ReplaceAllString(html, " ")
+	html = reStyle.ReplaceAllString(html, " ")
+	return reAnyTag.ReplaceAllString(html, " ")
 }

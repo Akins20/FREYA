@@ -278,3 +278,41 @@ func TestAnAnswerWithNoSearchingIsNotShallowResearch(t *testing.T) {
 		t.Error("accused an answer that never claimed to be research")
 	}
 }
+
+// Two pages written and no review is a site nobody looked at.
+//
+// review has had both softer rungs already — a numbered rule in the design
+// playbook, handed over by project_new at the start of every build, and a line
+// in site_check's own success message. Two four-page sites since, neither
+// reviewed.
+func TestASiteNobodyLookedAtHoldsTheAnswer(t *testing.T) {
+	built := func(pages ...string) *trail {
+		w := &trail{}
+		for _, p := range pages {
+			w.add(step{tool: "file_write", output: "Created /w/site/" + p + " (900 bytes)."})
+		}
+		w.add(step{tool: "site_check", output: "4 page(s) checked — nothing leads nowhere."})
+		return w
+	}
+
+	if !unreviewedSite(built("index.html", "about.html", "contact.html")) {
+		t.Error("three pages written, never reviewed, and the answer was allowed")
+	}
+
+	reviewed := built("index.html", "about.html")
+	reviewed.add(step{tool: "review", output: "## index.html\n1. The hero says nothing…"})
+	if unreviewedSite(reviewed) {
+		t.Error("fired even though she had it reviewed")
+	}
+
+	// One page is a file, not a site. Firing on every single-file write would
+	// make this the noisiest thing in the loop.
+	if unreviewedSite(built("index.html")) {
+		t.Error("treated a single page as a site")
+	}
+
+	// And the push has to say that running it is not the deliverable.
+	if b := reviewBrief(); !strings.Contains(b, "FIX what comes back") {
+		t.Errorf("the push does not say to act on it:\n%s", b)
+	}
+}

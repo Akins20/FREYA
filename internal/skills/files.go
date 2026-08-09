@@ -320,13 +320,13 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 		if madeParent {
 			return fmt.Sprintf("Wrote %d bytes to %s.\n(%s did not exist, so it was created. "+
 				"If you expected that folder to be there already, this went somewhere new.)",
-				len(content), path, filepath.Dir(path)) + wiring.Note(path, content), nil
+				len(content), path, filepath.Dir(path)) + wiring.Note(path, content) + wiring.StyleNote(path, content), nil
 		}
 		if !hadFile {
 			return fmt.Sprintf("Created %s (%d bytes).", path, len(content)) +
-				wiring.Note(path, content), nil
+				wiring.Note(path, content) + wiring.StyleNote(path, content), nil
 		}
-		return replacementNote(path, replaced, content) + wiring.Note(path, content), nil
+		return replacementNote(path, replaced, content) + wiring.Note(path, content) + wiring.StyleNote(path, content), nil
 	})
 }
 
@@ -490,7 +490,7 @@ func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, err
 		// specifically to repair a dead link is the one that says nothing about
 		// whether it worked.
 		return fmt.Sprintf("Edited %s: %d replacement(s), %+d bytes.",
-			filepath.Base(path), count, delta) + wiring.Note(path, updated), nil
+			filepath.Base(path), count, delta) + wiring.Note(path, updated) + wiring.StyleNote(path, updated), nil
 	})
 }
 

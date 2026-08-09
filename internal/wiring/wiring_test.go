@@ -217,3 +217,69 @@ func TestAnUnreachableHostIsNotCalledBroken(t *testing.T) {
 		t.Errorf("want 1 unknown, got %d", unknown)
 	}
 }
+
+// The tells no instruction has moved, counted instead.
+//
+// Cards, emoji, auto-fit grids and 135deg gradients all went to zero when the
+// design playbook named them. Em dashes did the opposite: the rule was sharpened
+// from "em dashes give you away" to "ZERO. Not one." and the next four-page site
+// had seven instead of five. Uppercase eyebrows went from one to four the same
+// way. A card is a structural decision a rule can reach; punctuation emitted
+// mid-sentence is not.
+func TestTheTellsThatResistInstructionAreCounted(t *testing.T) {
+	page := `<html><head><style>.a{content:"—"}</style></head><body>
+	  <h1>Records, sorted by hand — every week</h1>
+	  <p>Come in and dig — we have the time.</p>
+	</body></html>`
+
+	found := HouseStyle("index.html", page)
+	if len(found) != 1 || !strings.Contains(found[0], "2 em dash") {
+		t.Fatalf("want the two em dashes in the COPY counted, not the one in the CSS: %v", found)
+	}
+
+	css := `.eyebrow{text-transform:uppercase}
+	        .label{text-transform: UPPERCASE}
+	        .hero{background:linear-gradient(135deg,#000,#fff)}
+	        .grid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}`
+	got := strings.Join(HouseStyle("style.css", css), " | ")
+	for _, want := range []string{"2 uppercase", "135deg", "auto-fit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s not counted: %s", want, got)
+		}
+	}
+}
+
+// One eyebrow is the rule, so one must not be reported — and a clean file must
+// produce nothing at all, or the note becomes background noise.
+func TestHouseStyleIsSilentWhenThereIsNothingToSay(t *testing.T) {
+	if n := HouseStyle("style.css", `.eyebrow{text-transform:uppercase}`); len(n) != 0 {
+		t.Errorf("reported a single eyebrow, which the rule allows: %v", n)
+	}
+	if n := HouseStyle("index.html", `<p>Records, sorted by hand. Every week.</p>`); len(n) != 0 {
+		t.Errorf("reported a clean page: %v", n)
+	}
+	if n := HouseStyle("script.js", `const dash = "—";`); len(n) != 0 {
+		t.Errorf("counted an em dash inside JavaScript: %v", n)
+	}
+}
+
+// Cards come back, and the review pass is one of the things that brings them.
+//
+// Zero when the design playbook first named them, then three, then four, then
+// eleven on a page rewritten specifically to act on a review asking for more
+// visual variety. "Vary the layout" gets implemented as more boxes.
+func TestAPageMadeOfBoxesIsCounted(t *testing.T) {
+	many := strings.Repeat(`<div class="service-card">…</div>`, 11)
+	got := strings.Join(HouseStyle("index.html", many), " ")
+	if !strings.Contains(got, "11 card elements") {
+		t.Errorf("eleven cards went unreported: %q", got)
+	}
+	// A normal row must stay silent, or this fires on every page ever built.
+	if n := HouseStyle("index.html", strings.Repeat(`<div class="card">…</div>`, 3)); len(n) != 0 {
+		t.Errorf("reported an ordinary three-card row: %v", n)
+	}
+	// And a class that merely contains the letters must not count.
+	if n := HouseStyle("index.html", strings.Repeat(`<div class="cardigan-swatch">…</div>`, 9)); len(n) != 0 {
+		t.Errorf("matched a word that only contains 'card': %v", n)
+	}
+}

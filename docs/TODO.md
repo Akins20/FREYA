@@ -1651,3 +1651,61 @@ the capability exists and nothing makes her reach for it, same as `site_check`
 before the write-time note. The cure that has worked twice is attaching it to a
 call she already makes; for research that is `web_search`. Not built yet, because
 it should be measured over more than two runs first.
+
+## Counting beats instructing — the finding that held up
+
+Three builds, each adding one thing, measuring the tells the design playbook had
+never moved:
+
+| tell | pottery | record shop | nursery | barbershop |
+|---|---|---|---|---|
+| em dash | 5 | 7 | **0** | **0** |
+| uppercase | 1 | 4 | 1 | 1 |
+| 4rem | 13 | 6 | 4 | 5 |
+| 1200px | 1 | 0 | 1 | 0 |
+| dead links | 0 | 0 | 0 | 0 |
+| cards | 3 | 3 | 4 | **11** |
+
+Between record shop and nursery the em dash rule was rewritten from "em dashes
+give you away" to "ZERO EM DASHES. Not one." — and the count went UP, 5 to 7.
+Then it was counted at write time instead, and went to zero and stayed there.
+
+That kills the earlier theory that naming a removable thing is the active
+ingredient; an em dash is as removable and as named as anything gets. The real
+split is what kind of decision it is. A card is structural, chosen once, and a
+rule reaches it. Punctuation emitted mid-sentence is a habit far below the level
+any instruction operates at. So: **if a tell survives being named twice, stop
+writing rules about it and count it.**
+
+`wiring.HouseStyle` counts em dashes, uppercase eyebrows, 135deg, auto-fit and
+now cards, reported on every write and never rewritten for her — silently fixing
+her prose would improve the page and teach her nothing.
+
+## The ladder, now a rule of this codebase
+
+Three times the same shape, and it is worth stating as a rule rather than
+rediscovering it:
+
+1. **Tell her in a playbook** — works for structural decisions, nothing else.
+2. **Attach it to a call she already makes** — works often. site_check's success
+   message, project_new handing over the design rules, the write-time note.
+3. **Refuse to finish without it** — works.
+
+`review` had rungs one and two (a numbered playbook rule delivered at project
+start, and a line in site_check's own output) and was never called across two
+four-page builds. With the gate: she ran it, then rewrote four files "based on
+review feedback", re-checked all five, re-served and re-opened. 31 rounds.
+
+That is also the answer to whether the second-pass rule does anything on its own.
+It does not. The gate does.
+
+**And the review pass has a cost worth recording:** cards went 4 → 11 on the page
+rewritten to act on it, because "vary the layout" gets implemented as more boxes.
+Cards are now counted for the same reason em dashes are.
+
+## Servers
+
+They are tied to her process, which is right — but every localhost URL she has
+handed over dies silently when she restarts, and nothing told her. `serve_list`
+now reports what is running, what folder it serves, and whether the port still
+ANSWERS, asked of the port rather than inferred from the session record.

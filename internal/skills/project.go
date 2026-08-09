@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akins/jarvis/internal/guard"
@@ -45,6 +47,23 @@ import (
 // four ports nobody remembers starting. Serving records the port and the session
 // together so stopping is one call, and so "what have I got running" has an
 // answer.
+
+// serving records what each port is for. The terminal session knows its name and
+// its start time and nothing about the folder, and "port 41799" is not an answer
+// to "what have I got running".
+//
+// Process-lifetime on purpose, matching the sessions themselves: a server is tied
+// to her, not to the exchange that started it, and not to anything that outlives
+// her. Restarting her takes the servers with it, which is correct and is also why
+// this list has to report whether a port still ANSWERS rather than whether she
+// once started something on it — a URL she handed over before a restart is dead,
+// and she has no other way to find that out.
+var serving struct {
+	sync.Mutex
+	dir map[int]string
+}
+
+func init() { serving.dir = map[int]string{} }
 
 // RegisterProjects adds project folders, servers and their cleanup.
 func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
@@ -176,6 +195,62 @@ func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
 					"their screen. Session %q; stop it with serve_stop when you are "+
 					"done.%s", dir, port, session, oneShotWarning()), nil
 			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "serve_list",
+			Description: "What you have running, and whether it still answers.\n\n" +
+				"Servers live as long as you do, not as long as the reply — so one you " +
+				"started earlier in the conversation is still up, and one you started " +
+				"before you were last restarted is not. A URL you handed someone can be " +
+				"dead without anything telling you. Check here before pointing anyone at " +
+				"a link you gave out a while ago, and before starting a second server for " +
+				"a folder you are already serving.",
+			Params: llm.ObjectSchema(map[string]llm.Property{}),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			var live, dead []string
+			for _, sess := range terminals.List() {
+				if !strings.HasPrefix(sess.Name, "serve-") {
+					continue
+				}
+				port, err := strconv.Atoi(strings.TrimPrefix(sess.Name, "serve-"))
+				if err != nil {
+					continue
+				}
+				serving.Lock()
+				dir := serving.dir[port]
+				serving.Unlock()
+				if dir == "" {
+					dir = "(folder not recorded)"
+				}
+				age := time.Since(sess.Started).Round(time.Second)
+				line := fmt.Sprintf("http://localhost:%d  →  %s  (up %s)", port, dir, age)
+				if busy(port) {
+					live = append(live, line)
+				} else {
+					dead = append(dead, line+" — NOT ANSWERING; serve it again if anyone has that link")
+				}
+			}
+			sort.Strings(live)
+			sort.Strings(dead)
+
+			if len(live)+len(dead) == 0 {
+				return "Nothing of yours is serving. Anything you started before your last " +
+					"restart is gone with it — if you gave someone a localhost URL earlier, " +
+					"it is dead and needs serving again.", nil
+			}
+			var sb strings.Builder
+			for _, l := range live {
+				sb.WriteString("  " + l + "\n")
+			}
+			for _, l := range dead {
+				sb.WriteString("  " + l + "\n")
+			}
+			fmt.Fprintf(&sb, "\n%d running, %d not answering.%s", len(live), len(dead), oneShotWarning())
+			return strings.TrimLeft(sb.String(), "\n"), nil
 		},
 	})
 

@@ -296,3 +296,74 @@ func sourcesBrief(urls []string) string {
 		"reference nobody can check is worse than no reference, because it reads as evidence.")
 	return sb.String()
 }
+
+// unreviewedSite reports a site built this turn that nobody looked at.
+//
+// # The ladder, for the third time
+//
+// The pattern is now consistent enough to be a rule of this codebase. A
+// capability she is told to use does not get used; the same capability attached
+// to a call she already makes gets used sometimes; a refusal to finish without it
+// gets used. site_check went note → gate. The dead-end check went note → gate.
+// review has now had both softer rungs — a numbered rule in the design playbook,
+// which project_new hands her at the start of every build, and a line in
+// site_check's own success message telling her the mechanical half is done. Two
+// four-page sites since: site_check run, served, handed over, review never called.
+//
+// # Why it is worth a gate rather than being dropped
+//
+// Because the checks that DO run cannot see the thing the user keeps asking
+// about. The nursery site passed everything — four pages, fifty-two links, no
+// dead ends, no em dashes — and none of that speaks to whether the copy says
+// anything or whether the eye knows where to go. The one time a reviewer did
+// look, it found a blank gallery tile, called the three-card row a template
+// feature box, and described the body copy as something that could belong to a
+// candle brand. All true, all invisible to every regex here.
+//
+// # Narrow, and once
+//
+// Only when two or more pages were written this turn, which is "she built a
+// site" rather than "she touched a file". One push per exchange, like the rest.
+// It costs one vision call per build, which is the price of the only check here
+// that can see the page.
+func unreviewedSite(work *trail) bool {
+	if work == nil {
+		return false
+	}
+	pages, reviewed := 0, false
+	seen := map[string]bool{}
+	for _, s := range work.snapshot() {
+		if s.failed {
+			continue
+		}
+		if s.tool == "review" {
+			reviewed = true
+		}
+		if s.tool != "file_write" {
+			continue
+		}
+		if m := touchedPath.FindStringSubmatch(strings.TrimSpace(s.output)); m != nil {
+			p := strings.TrimRight(m[1], ".,:")
+			if wiring.IsHTML(p) && !seen[p] {
+				seen[p] = true
+				pages++
+			}
+		}
+	}
+	return pages >= 2 && !reviewed
+}
+
+// reviewBrief is the push to have it looked at.
+func reviewBrief() string {
+	return "HOLD ON — nobody has looked at this.\n\n" +
+		"Every check you ran reads the markup. None of them can tell you whether the copy " +
+		"says anything, whether the spacing has a rhythm, or whether the eye knows where to " +
+		"go first. A page passes all of them and is still flat.\n\n" +
+		"Run review on the folder. It shows the rendered page to somebody who has never seen " +
+		"your work and has no idea what you were aiming for, and asks for the three weakest " +
+		"things on it.\n\n" +
+		"Then FIX what comes back. Running it and reporting what it said is not the point — " +
+		"the point is the page is better afterwards. If you genuinely disagree with one of " +
+		"the three, say which and why in your answer, but the default is that a stranger " +
+		"looking at your page cold is right about what they saw."
+}
