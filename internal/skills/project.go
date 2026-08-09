@@ -12,6 +12,7 @@ import (
 
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/playbook"
 	"github.com/akins/jarvis/internal/term"
 )
 
@@ -93,10 +94,12 @@ func RegisterProjects(r *Registry, g *guard.Guard, terminals *term.Manager) {
 				scope.SetDir(dir)
 				if existed {
 					return fmt.Sprintf("%s already existed — working in it now. Anything you "+
-						"write with a relative path lands here.\n\n%s", dir, listBrief(dir)), nil
+						"write with a relative path lands here.\n\n%s", dir, listBrief(dir)) +
+						designBrief(), nil
 				}
 				return fmt.Sprintf("Created %s and moved into it. Anything you write with a "+
-					"relative path now lands here rather than in the workspace root.", dir), nil
+					"relative path now lands here rather than in the workspace root.", dir) +
+					designBrief(), nil
 			})
 		},
 	})
@@ -309,3 +312,34 @@ var daemonMode bool
 func SetDaemonMode(on bool) { daemonMode = on }
 
 func isDaemon() bool { return daemonMode }
+
+// designBrief hands over the design playbook at the moment a piece of work
+// starts, rather than waiting to be asked for it.
+//
+// # Why it is pushed and not offered
+//
+// The playbooks are progressive disclosure: an index in the skill tool's
+// description, bodies fetched on demand. That is the right shape for most of
+// them and the wrong shape for this one, because the moment design matters is
+// the moment before anything exists, and at that moment she is not looking for
+// advice — she is starting.
+//
+// Measured. After the design playbook landed, three sites came back with zero
+// cards, zero emoji, zero em dashes and no 1200px container. Two builds later,
+// with the identical rules still sitting in the index: nine cards and two emoji,
+// and the skill tool never called once across the whole exchange. The rules did
+// not stop working. They stopped being read.
+//
+// So it rides on project_new, which is the first call of every build and costs
+// nothing on the exchanges that never make one. Same shape as every other cure
+// today — attach the thing she needs to a call she already makes, rather than
+// asking her to remember to make another one.
+func designBrief() string {
+	s, ok := playbook.Get("design")
+	if !ok {
+		return ""
+	}
+	return "\n\n---\n\n[Design rules for anything with a look — read them now, they are " +
+		"measured from your own past work and every one of them names something you have " +
+		"actually done:]\n\n" + s.Body
+}

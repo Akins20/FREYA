@@ -296,6 +296,10 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 	// actually grew rather than on every round.
 	var promoted []string
 
+	// Whether she has already been sent back over work she left half-connected.
+	// Once per exchange — a gate that will not take an answer is a hang.
+	var pushed bool
+
 	for round := 1; round <= maxToolRounds; round++ {
 		result.Rounds = round
 
@@ -365,9 +369,30 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 
 		// No tools requested: this is the final answer.
 		if len(resp.ToolCalls) == 0 {
+			// Unless something she was already told about is still broken. Sent back
+			// as a tool result and the loop continues, so she can actually go and fix
+			// it — a re-ask would only rewrite the sentence. Once per exchange: see
+			// unfinished.go for why this is a refusal and not another note.
+			if ends := stillOpen(&work); len(ends) > 0 && !pushed {
+				pushed = true
+				a.trace("retry", "unfinished", fmt.Sprintf(
+					"%d dead end(s) still standing — refusing the answer and sending her back", len(ends)))
+				msgs = append(msgs,
+					llm.Message{Role: llm.RoleAssistant, Text: resp.Text},
+					llm.Message{Role: llm.RoleUser, Text: finishBrief(ends)})
+				continue
+			}
+
 			reply := strings.TrimSpace(resp.Text)
 			if reply == "" {
 				reply = "I've got nothing useful to add there."
+			}
+			// Pushed once and still not done. State it as fact rather than let the
+			// answer stand unqualified.
+			if pushed {
+				if ends := stillOpen(&work); len(ends) > 0 {
+					reply += nudgeNote(ends)
+				}
 			}
 			// An answer written on top of an exchange in which nothing worked gets
 			// the facts put in front of it and is asked again. She once reported a

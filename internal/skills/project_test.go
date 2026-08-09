@@ -112,3 +112,22 @@ func TestStoppingNothingIsNotAFailure(t *testing.T) {
 		t.Errorf("unclear answer: %s", out)
 	}
 }
+
+// Starting a project must hand over the design rules, not merely make them
+// available. They were available the whole time a build came back with nine
+// cards and two emoji, and the skill tool was never called.
+func TestStartingAProjectHandsOverTheDesignRules(t *testing.T) {
+	brief := designBrief()
+	if brief == "" {
+		t.Fatal("project_new says nothing about design")
+	}
+	for _, want := range []string{
+		"THREE-CARD ROW",       // the rule the last build broke nine times
+		"A NAV ITEM IS A PAGE", // the one that keeps her off single-page sites
+		"EM DASHES",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("the rules handed over do not include %q", want)
+		}
+	}
+}

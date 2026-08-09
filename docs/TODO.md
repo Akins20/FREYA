@@ -1519,3 +1519,43 @@ say so honestly.
 - Episode summaries are mechanical, not model-written (Phase 4).
 - BM25 is lexical — it will miss paraphrases that share no vocabulary.
 - Reminders store a due time but nothing fires them yet (Phase 4).
+
+## Completeness — everything that leads somewhere must lead somewhere
+
+The complaint: "why would you create a page with 5 links that goes nowhere".
+Measured on her own output before touching anything — the flower shop had five
+dead links in fifteen, four of them nav items (#weddings, #contact) with no
+section behind them. The six-page agisada replica had zero in fifty-nine. The
+difference is who chose the page list: she wires up what the brief names and
+abandons what she thought of herself.
+
+Four interventions, each measured on a fresh terse brief:
+
+| build | dead / links | pages | what was added |
+|---|---|---|---|
+| flower shop | 5 / 15 | 1 | — |
+| grooming | 2 / 13 | 1 | persona: "anything you name, you owe" |
+| bike shop | 1 / 16 | 1 | + dead-end note on every html write |
+| bakery | 0 / 10 | 1 | + finish gate (fired; she went back and fixed) |
+| yoga | 0 / 14 | 1 | (she ran site_check unprompted) |
+| pottery | **0 / 57** | **4** | + design playbook pushed by project_new |
+
+Three findings worth keeping:
+
+- **A note is advice and advice loses.** The bike-shop note fired correctly and
+  is in the archive; she read it, wrote two more files, served the site and
+  called it done with the dead link still in it. What was missing was the
+  refusal — internal/agent/unfinished.go will not let the exchange end while a
+  page she wrote this turn is still broken. One push, then it lets go.
+- **A checker that is wrong gets obeyed, not ignored.** A form rule that only
+  looked for action= flagged a form wired with onsubmit, and she duly replaced
+  the working handler with action="javascript:void(0)". Every rule in
+  internal/wiring now treats every legitimate wiring as wired.
+- **Progressive disclosure fails for rules needed before the work starts.** The
+  design playbook sat in the skill index while a build came back with nine cards
+  and two emoji and the skill tool was never called. project_new hands it over
+  now. Same cure as everything else here: attach it to a call she already makes.
+
+Still open: em dashes came back (5 across 4 pages), 4rem padding (13), one
+1200px container. All three are the rules phrased as "do X well" rather than
+"stop emitting X" — see the design-tells work above.

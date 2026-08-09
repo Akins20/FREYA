@@ -32,6 +32,7 @@ func everything(t *testing.T) *Registry {
 	RegisterProjects(r, g, term.NewManager())
 	RegisterPDFDesign(r, g)
 	RegisterSlides(r, g)
+	RegisterSiteCheck(r)
 	learned, err := playbook.OpenLearned(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -216,6 +216,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// HTML rendered by the browser: the lane for anything where it has to look good.
 	skills.RegisterPDFDesign(reg, g)
 	skills.RegisterSlides(reg, g)
+	skills.RegisterSiteCheck(reg)
 
 	// Terminal sessions outlive the turn that created them, which is what makes
 	// long-running work possible.

@@ -341,7 +341,22 @@ None of these is wrong on its own. All of them together, every time, is a tell.
    twenty questions. Choose a direction — hand-drawn and warm rather than minimal
    and green — build it properly, and say in one line what you chose so they can
    push back. A committed direction they can reject beats a safe one they cannot
-   react to.`,
+   react to.
+
+10. A NAV ITEM IS A PAGE. BUILD THE PAGES.
+   Every site you have made so far is one index.html with #anchors standing in
+   for the pages: flower shop, grooming salon, bike shop, all of them. Nobody
+   asked for one page. It is simply what happens when you stop at the first
+   thing that works, and it is also where every dead link came from — an anchor
+   named Weddings, or Gallery, with no section behind it.
+   So when the nav says Services, About and Contact, that is three more files:
+   services.html, about.html, contact.html, each with the same header and
+   footer, each linking back to the others, each with real content on it. Five
+   nav items is five pages. Write them all, then run site_check on the folder.
+   A section on a long page is the right answer only when the content really is
+   one continuous read — a one-product landing page, a personal profile. If you
+   are about to write four <section> tags because it is quicker than four files,
+   that is the wrong reason, and you know it while you are doing it.`,
 	},
 	"documents": {
 		Name:    "documents",

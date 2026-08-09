@@ -16,6 +16,7 @@ import (
 	"github.com/akins/jarvis/internal/docs"
 	"github.com/akins/jarvis/internal/guard"
 	"github.com/akins/jarvis/internal/llm"
+	"github.com/akins/jarvis/internal/wiring"
 )
 
 // File and folder operations.
@@ -319,12 +320,13 @@ func (f *fileSkills) write(ctx context.Context, args map[string]any) (string, er
 		if madeParent {
 			return fmt.Sprintf("Wrote %d bytes to %s.\n(%s did not exist, so it was created. "+
 				"If you expected that folder to be there already, this went somewhere new.)",
-				len(content), path, filepath.Dir(path)), nil
+				len(content), path, filepath.Dir(path)) + wiring.Note(path, content), nil
 		}
 		if !hadFile {
-			return fmt.Sprintf("Created %s (%d bytes).", path, len(content)), nil
+			return fmt.Sprintf("Created %s (%d bytes).", path, len(content)) +
+				wiring.Note(path, content), nil
 		}
-		return replacementNote(path, replaced, content), nil
+		return replacementNote(path, replaced, content) + wiring.Note(path, content), nil
 	})
 }
 
@@ -483,8 +485,12 @@ func (f *fileSkills) edit(ctx context.Context, args map[string]any) (string, err
 			return "", err
 		}
 		delta := len(updated) - len(content)
+		// The same wiring report as a write, because an edit is how a page is
+		// usually FIXED, and reporting only on writes means the one call made
+		// specifically to repair a dead link is the one that says nothing about
+		// whether it worked.
 		return fmt.Sprintf("Edited %s: %d replacement(s), %+d bytes.",
-			filepath.Base(path), count, delta), nil
+			filepath.Base(path), count, delta) + wiring.Note(path, updated), nil
 	})
 }
 
