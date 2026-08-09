@@ -127,7 +127,10 @@ var coreTools = map[string]bool{
 	// a site she had just built, she pasted the markup into the reply instead —
 	// this must never wait on a routing decision.
 	"system_open": true,
-	"work_start":  true, "work_list": true, "work_cancel": true,
+	// The pause for a person. It has to be reachable whatever the request routed
+	// to, because a verification wall can appear on any page at any time.
+	"browser_hand_over": true,
+	"work_start":        true, "work_list": true, "work_cancel": true,
 }
 
 // kitSignals are the words that call for a kit.

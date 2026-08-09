@@ -157,6 +157,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	RegisterBrowserGestures(r, g, tabs)
 	RegisterBrowserAttach(r, g, tabs)
 	RegisterBrowserState(r, g, tabs)
+	// The pause for a person: a Cloudflare check, a CAPTCHA, a 2FA code. See
+	// handover.go — none of those can be clicked past, which is the point of them.
+	RegisterHandover(r, g, tabs)
 
 	if g == nil || tabs == nil {
 		return
@@ -672,7 +675,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 	// move, so the tools that leave must keep working on one; reads are untouched
 	// already, because only mutating skills are protected.
 	r.Protect("browser_", refuseOnWarning(tabs),
-		"browser_open", "browser_attach", "browser_tabs", "browser_sync_logins")
+		"browser_open", "browser_attach", "browser_tabs", "browser_sync_logins",
+		// Touches no page — it raises a window and waits for a person. Gating it
+		// on what the page is would be gating the way OUT of a bad page.
+		"browser_hand_over")
 }
 
 // refuseOnWarning is the family rule for browser interaction: a certificate or

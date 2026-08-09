@@ -241,3 +241,34 @@ func TestTheEmbeddedPageScriptsParse(t *testing.T) {
 			"fail at runtime with a script error:\n%s", out)
 	}
 }
+
+// A wall that exists to prove a person is present is a different kind of problem
+// from a slow page or a warning, and it was being treated as the first.
+//
+// Measured: she hit a Cloudflare check on a job site, waited five seconds for a
+// phrase that was never coming, waited ten more, read the page again and
+// reported that she could not proceed. True, and useless — the user could not
+// act on it either, because it was sitting in a browser window they did not know
+// existed.
+func TestAHumanVerificationWallIsNamedAsOne(t *testing.T) {
+	wall := PageState{NeedsHuman: true}
+	d := wall.Describe()
+	for _, want := range []string{"HUMAN VERIFICATION", "nothing you can click", "browser_hand_over"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description is missing %q: %s", want, d)
+		}
+	}
+	// It must say retrying is pointless — that is the behaviour being corrected.
+	if !strings.Contains(d, "retrying will not help") {
+		t.Errorf("nothing tells her not to keep trying: %s", d)
+	}
+
+	// An ordinary page says nothing about verification.
+	if strings.Contains((PageState{}).Describe(), "HUMAN VERIFICATION") {
+		t.Error("an ordinary page was called a verification wall")
+	}
+	// And a merely-slow page is still just slow.
+	if strings.Contains((PageState{Loading: true}).Describe(), "HUMAN VERIFICATION") {
+		t.Error("a loading page was called a verification wall")
+	}
+}

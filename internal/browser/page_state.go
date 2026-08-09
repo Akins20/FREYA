@@ -62,6 +62,17 @@ type PageState struct {
 	// answer instead of as looking too early. That instruction was in prose and
 	// nothing checked it.
 	Rendering bool
+	// NeedsHuman reports a wall that exists specifically to confirm a person is
+	// present — a Cloudflare interstitial, a Turnstile or reCAPTCHA widget, a
+	// "verify you are human" gate.
+	//
+	// Named separately from Loading and Interstitial because the remedy is
+	// different in kind. Those two are waits and warnings; this one cannot be
+	// solved by anything she does, at any speed, in any number of rounds. It is
+	// the class of problem where the correct move is to stop and fetch the user,
+	// and until it was detected she burned rounds on browser_wait timeouts and
+	// then reported a failure that was not hers.
+	NeedsHuman bool
 	// SignIn reports a password field on the page, which is the one unambiguous
 	// marker of a sign-in. Used to catch a contradiction rather than to act: a
 	// sign-in page in the GUEST context means she is looking at a door she has no
@@ -82,6 +93,13 @@ func (s PageState) Describe() string {
 	if s.Loading {
 		lines = append(lines, "  · the page is still loading — read it again in a moment "+
 			"rather than concluding it is empty")
+	}
+	if s.NeedsHuman {
+		lines = append(lines, "  · this page is a HUMAN VERIFICATION check — a Cloudflare "+
+			"challenge, a CAPTCHA or similar. It exists to confirm a person is present, so "+
+			"there is nothing you can click, type or wait for that will satisfy it, and "+
+			"retrying will not help. Use browser_hand_over to bring the window to the "+
+			"user's attention and let them clear it")
 	}
 	if s.Rendering {
 		lines = append(lines, "  · the page has finished loading but is still filling in — "+
@@ -144,7 +162,11 @@ func (c *Client) State(ctx context.Context) PageState {
       busy: !!document.querySelector(
         '[aria-busy="true"], [role="progressbar"], [class*="skeleton"], ' +
         '[class*="shimmer"], [class*="placeholder"], [class*="animate-pulse"]'),
-      signin: !!document.querySelector('input[type="password"]')
+      signin: !!document.querySelector('input[type="password"]'),
+      human: !!document.querySelector(
+        'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #cf-challenge-running, ' +
+        '#challenge-form, iframe[src*="recaptcha"], .g-recaptcha, iframe[src*="hcaptcha"], ' +
+        '.h-captcha, [data-sitekey]')
     })`)
 	if err != nil {
 		return s
@@ -156,6 +178,7 @@ func (c *Client) State(ctx context.Context) PageState {
 		Chrome bool   `json:"chrome"`
 		Busy   bool   `json:"busy"`
 		SignIn bool   `json:"signin"`
+		Human  bool   `json:"human"`
 	}
 	if json.Unmarshal([]byte(raw), &probe) != nil {
 		return s
@@ -165,6 +188,14 @@ func (c *Client) State(ctx context.Context) PageState {
 	// already says everything and saying both would be noise.
 	s.Rendering = !s.Loading && probe.Busy
 	s.SignIn = probe.SignIn
+	// The widget, or the text Cloudflare shows while its own check runs. The text
+	// alone is too weak to act on — a page may discuss verification — so it only
+	// counts alongside a title that is the challenge rather than the site.
+	low := strings.ToLower(probe.Text + " " + s.Title)
+	s.NeedsHuman = probe.Human ||
+		strings.Contains(low, "verify you are human") ||
+		strings.Contains(low, "checking your browser") ||
+		(strings.Contains(low, "just a moment") && strings.Contains(strings.ToLower(s.Title), "just a moment"))
 
 	hay := strings.ToLower(probe.Text + " " + s.Title + " " + s.URL)
 	for _, p := range interstitialPatterns {

@@ -449,3 +449,16 @@ func SyncAuthProfile(ctx context.Context) (string, error) {
 	}
 	return text, nil
 }
+
+// ProfileMarker identifies her own Chrome among the ones running.
+//
+// Her window and the user's are both titled "… - Google Chrome", so raising one
+// by title is a coin flip — and raising theirs would put them in front of their
+// own browser wondering what they were meant to click. The profile directory
+// appears in her command line and nowhere in theirs, which makes it the only
+// reliable handle.
+const ProfileMarker = "user-data-dir=" + profileRoot
+
+// profileRoot is the parent of her browser profiles, as it appears on the
+// command line. Kept in step with profileDir below.
+const profileRoot = ".config/freya-chrome"

@@ -26,6 +26,12 @@ func TestEveryMutatingBrowserToolCarriesTheWarningGuard(t *testing.T) {
 	ways := map[string]bool{
 		"browser_open": true, "browser_attach": true,
 		"browser_tabs": true, "browser_sync_logins": true,
+		// Raises a window and waits for a person; it clicks nothing itself, so it
+		// cannot be a way through anything. If a human then chooses to click
+		// through a certificate warning on their own screen, that is a decision
+		// they made with the page in front of them — which is the outcome this
+		// guard exists to force, not one it exists to prevent.
+		"browser_hand_over": true,
 	}
 
 	r.mu.RLock()
