@@ -13,10 +13,7 @@ a local LLM.
 ```
 ❯ build a four page site for my plant nursery
 
-  → file_write   index.html
-                 [House style, counted: 1 em dash in the copy]
-  → file_edit    index.html          removed it, one round later
-  → file_write   catalog.html · care.html · contact.html
+  → file_write   index.html · catalog.html · care.html · contact.html
   → site_check   contact.html: form action="#" submits to nowhere
   → file_edit    contact.html
   → site_check   4 pages, nothing leads nowhere
@@ -24,17 +21,16 @@ a local LLM.
   → file_write   ×4  rewritten against the review
   → site_check   still clean
 
-24 rounds. Nobody asked her to count the em dash, check the form, or have the
-thing looked at.
+24 rounds. Nobody asked her to check the form or have the thing looked at.
 ```
 
 Those are the calls from a real run, in the order they happened, with the
 reasoning between them cut for length. `-v` prints all of it.
 
-The em dash is the whole idea in one line. A rule in her playbook told her not to
-use them, twice, in increasingly emphatic language, and the count went **up**.
-Counting them at the moment of the write and handing the number back took it to
-zero. Most of this README is about why those two things are different.
+A dead link is the whole idea in one line. Told not to leave them, she left
+fewer. Told twice, more firmly, she left fewer still and never none. Counting
+them at the moment of the write and handing the number back took it to zero, and
+kept it there. Most of this README is about why those two things are different.
 
 ## Start her
 
@@ -95,27 +91,32 @@ nobody can re-run them, so weigh them as a log rather than as a result. What is
 in the repo is the mechanism they produced, in `wiring.HouseStyle`, and you can
 watch it fire on the first page you ask her to write.
 
-| tell | before | named | later builds | counted |
+| tell | before | named | named harder | counted |
 |---|---|---|---|---|
 | emoji | 26 / 6 / 3 | 0 | 0 / 0 | n/a |
-| cards per site | 6 / 6 / 9 | 0 | 3 / 3 / 4 / 11 | not yet measured |
-| em dashes | 1 / 1 / 1 | 0 | 5 / **7** | **0 / 0** |
+| cards per page | 6 / 6 / 9 | 0 | 3 / 3 / 4 / **11** | not yet measured |
 | dead links | 5 of 15 | 2 of 13 | 1 of 16 | **0 of 52, 0 of 62** |
 
-Read the em dash row across. Naming it worked, then stopped working. When it came
-back the rule was sharpened from "em dashes give you away" to "ZERO EM DASHES.
-Not one." and the count went from five to **seven**. Counting them at write time
-took it to zero on the next build and the one after.
+Emoji is the easy case. One line in a playbook, gone, stayed gone.
 
-Cards are the same story one step behind: named, gone, then back, and worst on
-the page rewritten to act on a review, because "vary the layout" gets implemented
-as more boxes. They are counted now and there has not yet been a build to measure
-it on, which is why that cell says so rather than guessing.
+Read the dead links row across. Naming the rule helped and never finished the
+job: five of fifteen, then two of thirteen, then one of sixteen, with the rule
+getting firmer each time. One dead link is not better than five, because the
+person clicking it does not know they got the good build. Counting them at the
+moment of the write took it to none of fifty-two, and then none of sixty-two.
 
-A card is a structural decision made once, and a rule reaches it. Punctuation
-emitted mid-sentence is a habit below the level any instruction operates at. The
-rule that came out of it, and that now governs this codebase: **if something
-survives being named twice, stop writing rules about it and count it.**
+Cards are the same story from the other side. Named once, they went to zero.
+Then they crept back, and the worst page of any build was the one rewritten to
+act on a review asking for more visual variety, because "vary the layout" gets
+implemented as more boxes. They are counted now and there has not yet been a
+build to measure it on, which is why that cell says so rather than guessing.
+
+The difference is what kind of decision it is. Emoji, and the shape of a section,
+are decided once and a rule can reach them. An `href` is written mid-markup,
+one attribute at a time, a hundred times a page, and no instruction operates at
+that level. The rule that came out of it, and that now governs this codebase:
+**if something survives being named twice, stop writing rules about it and count
+it.**
 
 The counting never rewrites anything for her. `wiring.HouseStyle` reports the
 number and stops. Silently fixing her prose would improve the page and teach her
@@ -163,8 +164,9 @@ hang.
 **How often it has fired: once, in ten measured runs.** Site builds of one, two,
 two and four pages, a research task with citations, documents, a data question
 and a destructive request, all against a live model. Nine times something earlier
-got there first: the house-style count caught an em dash inside a round,
-`site_check` caught a form posting to `#`, the playbook got `review` called with
+got there first: the house-style count caught a tell at the moment of the write
+and it was fixed a round later, `site_check` caught a form posting to `#` on a
+page that had passed everything else, the playbook got `review` called with
 no gate involved, and on the research task every URL in the answer had actually
 been fetched, so the citation check had nothing to say.
 
