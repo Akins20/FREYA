@@ -427,10 +427,6 @@ func WriteXLSX(path string, sheets []Sheet) error {
 	return writeZip(path, parts)
 }
 
-func xlsxSheet(rows [][]string) string {
-	return xlsxSheetWithDrawing(rows, false)
-}
-
 func xlsxSheetWithDrawing(rows [][]string, drawing bool) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

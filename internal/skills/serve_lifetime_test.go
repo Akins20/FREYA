@@ -43,8 +43,9 @@ func TestAServerOutlivesTheExchangeAndDiesWithHer(t *testing.T) {
 	if err := s.Send(fmt.Sprintf("python3 -m http.server %d", port)); err != nil {
 		t.Fatal(err)
 	}
-	if !waitListening(port, 10*time.Second) {
-		t.Fatalf("the server never came up on %d", port)
+	if !waitListening(port, serverStartBudget) {
+		t.Fatalf("the server never came up on %d in %s. Session output:\n%s",
+			port, serverStartBudget, s.Read())
 	}
 
 	// Turns end. Nothing in the loop touches the manager, so this is what the
@@ -96,8 +97,9 @@ func TestAOneShotRunTakesItsServersWithIt(t *testing.T) {
 	if err := s.Send(fmt.Sprintf("python3 -m http.server %d", port)); err != nil {
 		t.Fatal(err)
 	}
-	if !waitListening(port, 10*time.Second) {
-		t.Fatalf("the server never came up on %d", port)
+	if !waitListening(port, serverStartBudget) {
+		t.Fatalf("the server never came up on %d in %s. Session output:\n%s",
+			port, serverStartBudget, s.Read())
 	}
 
 	// run()'s deferred CloseAll, which is what the end of a -ask process is.
@@ -106,6 +108,20 @@ func TestAOneShotRunTakesItsServersWithIt(t *testing.T) {
 		t.Error("a one-shot run left an orphan server behind")
 	}
 }
+
+// serverStartBudget is how long to wait for python3 to bind a port.
+//
+// Ten seconds passed in isolation and failed under `make check`, which runs every
+// package's tests at once. This machine is a two-core i7-4600U, which is the
+// machine this project is meant to be comfortable on, and a cold python3 start
+// while twenty other packages are compiling and testing is genuinely slower than
+// ten seconds. Nothing was wrong with the code and the test was still red.
+//
+// Generous rather than tuned, because the cost of the larger number is paid only
+// on a machine slow enough to need it, and the cost of the smaller one is a test
+// that fails for reasons that have nothing to do with what it checks. A flaky
+// test is worse than no test: it teaches you to read red as noise.
+const serverStartBudget = 45 * time.Second
 
 // answers asks the port rather than the bookkeeping, the same as serve_list.
 func answers(port int) bool {
