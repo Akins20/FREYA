@@ -56,6 +56,17 @@ variables always win.
 | `FREYA_DOWNLOAD_DIR` | Where browser downloads land. Set explicitly on every tab so the OS "Save as" window never opens — that window is not page content, so nothing can drive it and she cannot even tell it is there. Defaults to `~/Downloads`. |
 | `FREYA_WAKE` | Always-on wake-word listening. **Off unless you set it** — `on` enables it, a duration like `2h` enables it with a timeout. There is no local wake-word model, so while it is on, speech near the mic is recorded and sent for transcription whether or not it was meant for her; that is opt-in only. It had no off switch at first, and was quiet only because starting the listener happened to fail — then the switch landed with the default still on, because an empty string fell through to `forever`, and the mic came on for a user who had set nothing. Push-to-talk needs none of this and is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
+| `FREYA_SAFETY` | Gemini's content filter threshold. **Defaults to `OFF`** — set it to a Gemini threshold name (`BLOCK_MEDIUM_AND_ABOVE`, etc.) to turn filtering on. Undocumented until an audit found six settings the code reads and nothing described; this one decides whether a filter runs at all, so it is the one worth knowing about. |
+| `FREYA_DRY_RUN` | Assess every action and execute none. The `-dry-run` flag, as an environment variable, for the daemon. |
+| `FREYA_CHATTINESS` | How readily the daemon speaks unprompted. |
+| `FREYA_WAKE_ACK` | What she says when the wake word fires. Only reachable when `FREYA_WAKE` is on, which is off by default. |
+| `FREYA_GLOW` | The status light. `off` disables it; it once cost an evening to track down. |
+| `FREYA_HOTKEY_KEYCODE` | Overrides the push-to-talk keycode for keyboards where the default is wrong. |
+| `FREYA_ADDRESS` | What she calls you. Overrides the persona's stored form of address. |
+| `FREYA_VERBOSE` | Tool tracing and token accounting, as the `-v` flag but for the daemon. |
+| `FREYA_VOICE_NAME` | Which Gemini neural voice to synthesise with. |
+| `FREYA_WHISPER_MODEL` | Model path for offline STT, used only when `FREYA_STT=whisper`. |
+| `FREYA_PIPER_MODEL` | Model path for Piper TTS, used only when `FREYA_TTS=piper`. |
 
 State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `defects.jsonl`, `facts.json`,
 `episodes.json`, `notes.json`, `persona.json`, `voicestyle.json`, `voiceprint.json`
