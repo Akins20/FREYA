@@ -42,9 +42,16 @@ import (
 // key takeaways" is real content that mentions summarising, and it survives —
 // there is a test for exactly that line.
 var thoughtPreamble = regexp.MustCompile(`(?i)^\s*(?:` +
-	// "Okay, here's my take on ...", "Here is my interpretation of ...".
+	// "Okay, here's my take on ...", "Here is my interpretation of ...",
+	// "Here's my thought process, distilled:".
 	`(?:ok(?:ay)?|alright|right|sure)?[,.]?\s*here(?:'s| is| goes)\s+(?:my|a|the|your)\s+` +
-	`(?:take|summary|attempt|interpretation|reading|version|account|rendering|stab)\b` +
+	`(?:take|summary|attempt|interpretation|reading|version|account|rendering|stab` +
+	`|thought process|thinking|thoughts)\b` +
+	`|` +
+	// "Okay, here's what's going through my mind:" — the same move without a noun
+	// for the summary, so it has to be matched on the whole phrase.
+	`(?:ok(?:ay)?|alright|right|sure)?[,.]?\s*here(?:'s| is)\s+what(?:'s| is)\s+` +
+	`(?:going through my mind|on my mind|running through my head)` +
 	`|` +
 	// "I'm ready to summarize my thoughts ...", "Let me summarise the thinking ...".
 	`(?:ok(?:ay)?|alright|right)?[,.]?\s*(?:i'?m ready to|let me|i'?ll)\s+summari[sz]` +

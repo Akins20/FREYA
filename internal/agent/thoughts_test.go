@@ -31,6 +31,11 @@ var realPreambles = []string{
 	"Okay, here's my take on those \"thoughts,\" presented from my perspective as a seasoned professional:",
 	"Here's a summary of my immediate thought process:",
 	"Okay, here's my take on those thoughts, framed as an expert's internal monologue:",
+	// Found in the run after the filter first shipped, which is why the list is
+	// the place this grows rather than the pattern being widened on a hunch.
+	"Here's my thought process, distilled:",
+	"Okay, here's what's going through my mind:",
+	"Okay, here's my thought process as I approach this task:",
 }
 
 // Run over every thought line captured across six live runs, the filter matched

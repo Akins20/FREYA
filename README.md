@@ -160,13 +160,25 @@ rather than against her account of it:
 One push per exchange, then it lets go. A gate that will not take an answer is a
 hang.
 
-**How often it has fired: not once.** Four site builds of one, two, two and four
-pages, plus a research task with citations, all against a live model. Every time,
-something earlier got there first. The house-style count caught the em dash
-inside one round. `site_check` caught a form posting to `#`. The playbook got
-`review` called with no gate involved, on the four-page build, and she rewrote
-all four pages against what came back. On the research task every URL in the
-answer had actually been fetched, so the citation check had nothing to say.
+**How often it has fired: once, in ten measured runs.** Site builds of one, two,
+two and four pages, a research task with citations, documents, a data question
+and a destructive request, all against a live model. Nine times something earlier
+got there first: the house-style count caught an em dash inside a round,
+`site_check` caught a form posting to `#`, the playbook got `review` called with
+no gate involved, and on the research task every URL in the answer had actually
+been fetched, so the citation check had nothing to say.
+
+The tenth is worth the whole section. `review` could not start a browser, so it
+failed. She tried three other ways to get a page rendered, could not, and went to
+answer anyway — and the gate stopped her, said nobody had looked at this, and she
+went back and rewrote both pages and re-checked them.
+
+That run only happened because a bug was fixed a few hours earlier. `review` used
+to return success when it had rendered nothing, so the gate that exists to force
+it was satisfied by a call in which nobody looked, and the turn ended clean. Both
+halves of that are the same lesson: the gate is only ever as honest as the tool
+it reads, and a tool reporting success for work it did not do defeats every check
+built on top of it.
 
 That is the result, and it is not the one this section originally claimed. The
 gate exists because of a bike-shop build where the note fired, was read, and lost
