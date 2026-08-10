@@ -78,6 +78,7 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 				return runProcess(ctx, dir, command, argv...)
 			})
 		},
+		Precheck: refuseWholeDiskWalk,
 	})
 
 	r.Register(Skill{
@@ -111,6 +112,7 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 				return runProcess(ctx, dir, "bash", "-c", script)
 			})
 		},
+		Precheck: refuseWholeDiskWalk,
 	})
 
 	r.Register(Skill{
@@ -380,4 +382,104 @@ func shellOnly(argv []string) string {
 		}
 	}
 	return ""
+}
+
+// Walking the whole disk to find a file that is in front of her.
+//
+// # The measurement
+//
+// Asked to read sales.csv, she ran
+//
+//	find / -name "sales.csv" 2>/dev/null
+//
+// from a working directory the file was sitting in. On this machine that walk
+// crosses a near-full NTFS mount and takes minutes; in the run where it happened
+// it needed a confirmation nobody was there to give, so it was cancelled and
+// three more rounds went by before she read the file.
+//
+// The affordances now attached to every file tool answer the question that walk
+// was asking, in the failure itself, for nothing. This refusal is the other half:
+// it says so at the moment she reaches for the expensive answer instead of after.
+//
+// # Narrow on purpose
+//
+// Only a walk rooted at the filesystem root, and only when it is looking for a
+// plain name rather than a path. Searching /etc for a config, or / for something
+// with a directory in its pattern, is a different and often reasonable act. A
+// rule that is wrong here does not get ignored, it gets obeyed, and what she
+// obeys it with is a slower way of doing the same thing.
+func refuseWholeDiskWalk(ctx context.Context, args map[string]any) error {
+	argv := strings.Fields(argString(args, "script"))
+	if len(argv) == 0 {
+		argv = append([]string{argString(args, "command")}, splitArgs(argString(args, "args"))...)
+	}
+	if len(argv) < 2 {
+		return nil
+	}
+
+	// rootAt is the index of the argument naming where the walk starts, which
+	// differs per command and has to be excluded from the pattern test below —
+	// it is a bare "/", so counting it as a pattern containing a directory
+	// exempted every walk there is.
+	rootAt := -1
+	switch filepath.Base(argv[0]) {
+	case "find":
+		rootAt = 1
+	case "grep", "rg", "ag":
+		// The root of a recursive grep is its last argument.
+		if !hasFlag(argv, "-r", "-R", "--recursive") {
+			return nil
+		}
+		rootAt = len(argv) - 1
+	case "ls":
+		if !hasFlag(argv, "-R", "--recursive") {
+			return nil
+		}
+		rootAt = len(argv) - 1
+	default:
+		return nil
+	}
+	if strings.Trim(argv[rootAt], `"'`) != "/" {
+		return nil
+	}
+
+	// A pattern carrying a directory is looking for a location, not a loose file,
+	// and the working folder cannot answer it.
+	//
+	// Redirections are skipped, because 2>/dev/null is on almost every search a
+	// model writes and its slash says nothing about what is being looked for.
+	// Missing one only ever means refusing a walk that would have been refused
+	// anyway; counting one means exempting every walk there is.
+	for i, a := range argv {
+		if i == 0 || i == rootAt || strings.ContainsAny(a, "><") {
+			continue
+		}
+		if strings.Contains(strings.Trim(a, `"'*`), "/") {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("refused: this walks the entire filesystem, which takes minutes here "+
+		"and mostly returns other people's files. What you are looking for is almost always "+
+		"nearer than that: folder_list on the folder you are in (a failed file tool now lists "+
+		"it for you), dev_find for anything inside a project, or `which` for a program. If it "+
+		"genuinely is somewhere unknown, search the one place you actually suspect rather "+
+		"than %s", strings.Join(argv[:2], " "))
+}
+
+// hasFlag reports whether argv carries any of these flags, including inside a
+// bundled short form like -rn.
+func hasFlag(argv []string, flags ...string) bool {
+	for _, a := range argv[1:] {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+			if len(f) == 2 && strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") &&
+				strings.ContainsRune(a[1:], rune(f[1])) {
+				return true
+			}
+		}
+	}
+	return false
 }

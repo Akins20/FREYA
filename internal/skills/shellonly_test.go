@@ -94,3 +94,79 @@ func TestRunShellStillTakesShellSyntax(t *testing.T) {
 		t.Errorf("the pipeline did not actually run: %q", out)
 	}
 }
+
+// Walking the whole disk for a file that is in the folder she is standing in.
+//
+// Measured. Asked to read sales.csv she ran `find / -name "sales.csv"` from a
+// directory the file was in. On this machine that crosses a near-full NTFS mount
+// and takes minutes, and in that run it needed a confirmation nobody could give,
+// so it was cancelled and three more rounds went by before she read the file.
+func TestAWholeDiskWalkIsRefused(t *testing.T) {
+	r := New()
+	RegisterShell(r, approveAll())
+
+	refused := []map[string]any{
+		{"script": `find / -name "sales.csv"`},
+		{"script": `find / -name sales.csv 2>/dev/null`},
+		{"script": "grep -rn needle /"},
+		{"command": "find", "args": "/ -name sales.csv"},
+		{"script": "ls -R /"},
+	}
+
+	for _, args := range refused {
+		tool := "run_shell"
+		if _, ok := args["command"]; ok {
+			tool = "run_command"
+		}
+		_, err := r.Execute(context.Background(), tool, args)
+		if err == nil {
+			t.Errorf("%v was allowed to walk the whole disk", args)
+			continue
+		}
+		if !strings.Contains(err.Error(), "entire filesystem") {
+			t.Errorf("%v was refused for the wrong reason: %v", args, err)
+		}
+	}
+}
+
+// The half that matters more. This rule is wrong if it stops ordinary work, and
+// what she does when a rule is wrong is obey it with something slower.
+func TestOrdinarySearchesAreLeftAlone(t *testing.T) {
+	r := New()
+	RegisterShell(r, approveAll())
+
+	allowed := []string{
+		`find . -name "*.go"`,
+		`find /etc -name "hosts"`,
+		"find /home/me/project -name go.mod",
+		// A pattern carrying a directory is looking for a location, and the
+		// working folder cannot answer it.
+		`find / -name "*/site-packages"`,
+		"grep -rn needle ./src",
+		"ls -la /",
+		"ls /",
+		"which chromium",
+		"git status",
+	}
+	for _, script := range allowed {
+		_, err := r.Execute(context.Background(), "run_shell", map[string]any{"script": script})
+		if err != nil && strings.Contains(err.Error(), "entire filesystem") {
+			t.Errorf("%q was refused as a disk walk", script)
+		}
+	}
+}
+
+// An empty or malformed call is the handler's to report, with its own better
+// message. A guard must not turn one failure into a different one.
+func TestTheWalkGuardStaysQuietOnNonsense(t *testing.T) {
+	for _, args := range []map[string]any{
+		{},
+		{"script": ""},
+		{"script": "find"},
+		{"command": "find"},
+	} {
+		if err := refuseWholeDiskWalk(context.Background(), args); err != nil {
+			t.Errorf("%v was refused by the walk guard: %v", args, err)
+		}
+	}
+}
