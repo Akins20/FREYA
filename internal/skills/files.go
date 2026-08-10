@@ -67,7 +67,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"whole_file": {Type: "boolean", Description: "Return everything, ignoring offset and limit."},
 			}, "path"),
 		},
-		Handler: f.read,
+		Handler:     f.read,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -84,7 +85,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"reason": {Type: "string", Description: "Why, shown when confirming."},
 			}, "path", "content"),
 		},
-		Handler: f.write,
+		Handler:     f.write,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -102,7 +104,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"reason":   {Type: "string", Description: "Why, shown when confirming."},
 			}, "path", "old_text", "new_text"),
 		},
-		Handler: f.edit,
+		Handler:     f.edit,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -116,7 +119,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 					"exists at that path. Without it this refuses rather than replacing it."},
 			}, "path", "content"),
 		},
-		Handler: f.append,
+		Handler:     f.append,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -127,7 +131,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"path": {Type: "string", Description: "Path to inspect."},
 			}, "path"),
 		},
-		Handler: f.info,
+		Handler:     f.info,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -140,7 +145,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"pattern":   {Type: "string", Description: "Optional glob to filter names, e.g. '*.go'."},
 			}, "path"),
 		},
-		Handler: f.list,
+		Handler:     f.list,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -151,7 +157,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"path": {Type: "string", Description: "Directory to create."},
 			}, "path"),
 		},
-		Handler: f.mkdir,
+		Handler:     f.mkdir,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -166,7 +173,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 					"replacing what is there."},
 			}, "source", "destination"),
 		},
-		Handler: f.copy,
+		Handler:     f.copy,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -182,7 +190,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 					"replacing what is there."},
 			}, "source", "destination"),
 		},
-		Handler: f.move,
+		Handler:     f.move,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -196,7 +205,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"reason":    {Type: "string", Description: "Why, shown when confirming."},
 			}, "path"),
 		},
-		Handler: f.remove,
+		Handler:     f.remove,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -211,7 +221,8 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 					"replacing what is there."},
 			}, "source", "destination"),
 		},
-		Handler: f.archive,
+		Handler:     f.archive,
+		Affordances: f.affordances,
 	})
 
 	r.Register(Skill{
@@ -223,13 +234,61 @@ func RegisterFiles(r *Registry, g *guard.Guard, places *PlaceBook) {
 				"destination": {Type: "string", Description: "Directory to extract into."},
 			}, "path", "destination"),
 		},
-		Handler: f.extract,
+		Handler:     f.extract,
+		Affordances: f.affordances,
 	})
 }
 
 type fileSkills struct {
 	guard  *guard.Guard
 	places *PlaceBook
+}
+
+// maxAffordanceEntries bounds the listing attached to a failure. Long enough to
+// contain the name she meant, short enough that it does not become the tool
+// result.
+const maxAffordanceEntries = 40
+
+// affordances lists what is actually in the folder she is working in.
+//
+// Attached to every file tool that can fail on a path, because the failure it
+// exists for is the one where the name is nearly right. Measured: asked to read
+// sales.csv, she got "no such file or directory" and nothing else, then spent
+// three rounds on place_list, dev_find and a second reader before reaching the
+// file. Every one of those rounds was asking a question the directory listing
+// answers.
+//
+// The scope's directory rather than the directory in the failed path, because
+// Affordances is handed the context and not the arguments, and a relative path
+// resolves against the scope anyway — which is the case that goes wrong. An
+// absolute path into somewhere else still gets the listing, and it is still
+// worth having, because it says where she actually is.
+func (f *fileSkills) affordances(ctx context.Context) []string {
+	dir := ScopeFrom(ctx).Dir()
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{fmt.Sprintf("you are in %s, and it could not be listed: %v", dir, err)}
+	}
+	if len(entries) == 0 {
+		return []string{fmt.Sprintf("you are in %s and it is empty", dir)}
+	}
+
+	out := []string{fmt.Sprintf("you are in %s, which holds:", dir)}
+	for i, e := range entries {
+		if i == maxAffordanceEntries {
+			out = append(out, fmt.Sprintf("... and %d more", len(entries)-maxAffordanceEntries))
+			break
+		}
+		if e.IsDir() {
+			out = append(out, e.Name()+"/")
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 func (f *fileSkills) read(ctx context.Context, args map[string]any) (string, error) {

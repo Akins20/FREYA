@@ -578,3 +578,69 @@ func unzip(t *testing.T, path string) map[string]string {
 	}
 	return out
 }
+
+// A file tool that fails on a path must say what is actually there.
+//
+// Measured. Asked to read sales.csv, she got "no such file or directory" and
+// nothing else, and then spent three rounds on place_list, dev_find and a second
+// reader before reaching the file. Every one of those rounds was asking a
+// question that listing the folder answers in the same breath as the failure.
+//
+// The Affordances hook was built for exactly this and was wired to sixteen
+// browser and job tools and to no file tool at all.
+func TestAFailedReadSaysWhatIsHere(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"sales.csv", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	ctx := WithScope(context.Background(), NewScope(NewWorkspace(dir), "", ""))
+
+	_, err := r.Execute(ctx, "file_read", map[string]any{"path": "sales.cvs"})
+	if err == nil {
+		t.Fatal("reading a file that is not there returned success")
+	}
+	msg := err.Error()
+	for _, want := range []string{"sales.csv", "notes.txt", "archive/", dir} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the failure does not mention %q:\n%s", want, msg)
+		}
+	}
+}
+
+// Every file tool that takes a path gets it, not just the reader. A rule that
+// lives at one call site is a rule that the next tool does not inherit.
+func TestEveryPathToolCarriesAffordances(t *testing.T) {
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	for _, name := range []string{
+		"file_read", "file_write", "file_edit", "file_append", "file_info",
+		"folder_list", "folder_create", "file_copy", "file_move", "file_delete",
+		"archive_create", "archive_extract",
+	} {
+		if r.AffordancesFor(context.Background(), name) == nil {
+			t.Errorf("%s has no affordances, so a miss hands back nothing to act on", name)
+		}
+	}
+}
+
+// An empty folder has to say so rather than say nothing, because "nothing is
+// here" and "I could not look" lead to different next moves.
+func TestAnEmptyFolderSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	ctx := WithScope(context.Background(), NewScope(NewWorkspace(dir), "", ""))
+
+	got := r.AffordancesFor(ctx, "file_read")
+	if len(got) != 1 || !strings.Contains(got[0], "empty") {
+		t.Errorf("an empty working folder reported %q", got)
+	}
+}
