@@ -160,11 +160,13 @@ rather than against her account of it:
 One push per exchange, then it lets go. A gate that will not take an answer is a
 hang.
 
-**How often it has fired: not once, in four measured runs.** One page, two pages,
-two pages again, four pages. Every time, something earlier got there first. The
-house-style count caught the em dash inside one round. `site_check` caught a form
-posting to `#`. The playbook got `review` called without any gate involved, on
-the four-page build, and she rewrote all four pages against what came back.
+**How often it has fired: not once.** Four site builds of one, two, two and four
+pages, plus a research task with citations, all against a live model. Every time,
+something earlier got there first. The house-style count caught the em dash
+inside one round. `site_check` caught a form posting to `#`. The playbook got
+`review` called with no gate involved, on the four-page build, and she rewrote
+all four pages against what came back. On the research task every URL in the
+answer had actually been fetched, so the citation check had nothing to say.
 
 That is the result, and it is not the one this section originally claimed. The
 gate exists because of a bike-shop build where the note fired, was read, and lost
@@ -295,9 +297,9 @@ make install        # to ~/.local/bin
 go test ./... -race
 ```
 
-`go test ./...` runs 626 tests. On a bare machine 604 pass, 22 skip and none
-fail; the skips are the ones that need Chrome running or probe documents that are
-not in the repo. The race detector is clean.
+`go test ./...` runs 628 tests. On a bare machine 606 pass, 22 skip and none
+fail; the skips are the ones that need Chrome running, or the LibreOffice-produced
+documents that `FREYA_PROBE_DOCS` points at. The race detector is clean.
 
 ## What it needs
 
