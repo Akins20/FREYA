@@ -1,4 +1,4 @@
-# JARVIS / Freya — build tracker
+# Freya — build tracker
 
 Living checklist. Updated as work lands.
 

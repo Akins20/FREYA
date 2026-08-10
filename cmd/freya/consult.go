@@ -89,11 +89,12 @@ func newEngineer(j *defect.Journal, c *claude.Client, sourceDir, projectsDir, da
 //
 // Every candidate is checked by its go.mod rather than its name, so a renamed or
 // moved checkout is still found and a directory that merely happens to be called
-// JARVIS is not. Returning empty is the right answer when nothing matches: a
+// FREYA is not. Returning empty is the right answer when nothing matches: a
 // consult pointed at the wrong tree would read someone else's code and change it.
 func findSource(sourceDir, projectsDir string) string {
 	candidates := []string{
 		sourceDir,
+		filepath.Join(projectsDir, "FREYA"),
 		filepath.Join(projectsDir, "JARVIS"),
 		projectsDir,
 	}

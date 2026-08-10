@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-JARVIS is the project; **Freya** is the assistant's persona. A personal AI assistant
+Freya is the assistant; the repository is named for her. A personal AI assistant
 in Go with a terminal REPL and an optional spoken mode (`/voice on`).
 
 **Zero external dependencies — pure standard library.** This is deliberate: builds are

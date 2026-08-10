@@ -9,14 +9,25 @@ import (
 
 // probeDir holds documents produced by LibreOffice, so the parsers are tested
 // against files real software actually emits rather than hand-built fixtures
-// that only exercise the happy path.
-const probeDir = "/tmp/claude-1000/-run-media-akins-Akins-Drive1-Development-JARVIS/efee1d9b-e792-4ccf-adc7-86ba3beaeb7c/scratchpad/docs"
+// that only exercise the happy path. Point FREYA_PROBE_DOCS at a folder holding
+// source.txt, source.docx, source.pdf, data.xlsx, source.odt and archive.zip to
+// run these; without it they skip.
+//
+// It used to be an absolute path on my machine, which meant these tests could
+// only ever run here and everyone else got six silent skips and a line of my
+// directory layout. A skip that nobody can turn into a pass is a test that does
+// not exist.
+func probeDir() string { return os.Getenv("FREYA_PROBE_DOCS") }
 
 func probe(t *testing.T, name string) string {
 	t.Helper()
-	p := filepath.Join(probeDir, name)
+	dir := probeDir()
+	if dir == "" {
+		t.Skip("set FREYA_PROBE_DOCS to a folder of LibreOffice-produced documents to run this")
+	}
+	p := filepath.Join(dir, name)
 	if _, err := os.Stat(p); err != nil {
-		t.Skipf("probe document %s not present", name)
+		t.Skipf("probe document %s not present in %s", name, dir)
 	}
 	return p
 }

@@ -1,4 +1,4 @@
-// Command freya is the terminal interface to the JARVIS assistant.
+// Command freya is the terminal interface to Freya.
 package main
 
 import (

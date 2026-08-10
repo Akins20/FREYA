@@ -1,6 +1,6 @@
 # Freya
 
-**An AI assistant that refuses to say it's finished when it isn't.**
+**An AI assistant that counts what it just wrote, and hands the number back.**
 
 Written in Go, with zero external dependencies. One binary, builds in seconds.
 47,000 lines of standard library, 17,000 lines of tests. Developed on a 2014
@@ -10,27 +10,30 @@ The reasoning runs on a hosted model (Gemini or Anthropic). There is an offline
 mode, but the stand-in it uses is a keyword matcher for exercising the loop, not
 a local LLM.
 
-The project is JARVIS; the assistant is **Freya**.
-
 ```
-❯ build a site for my plant nursery
+❯ build a four page site for my plant nursery
 
-  → project_new       name=plant-nursery
-  → file_write        index.html · catalog.html · care.html · contact.html · style.css
-  → code_check        ×5
-  → site_check        found a background image returning 404
-  → file_edit         index.html
-  → site_check        4 pages, 52 links, nothing leads nowhere
-  → review            "the hero says nothing about what you sell"
-  → file_write        ×4  rewritten against the review
-  → serve · system_open
+  → file_write   index.html
+                 [House style, counted: 1 em dash in the copy]
+  → file_edit    index.html          removed it, one round later
+  → file_write   catalog.html · care.html · contact.html
+  → site_check   contact.html: form action="#" submits to nowhere
+  → file_edit    contact.html
+  → site_check   4 pages, nothing leads nowhere
+  → review       three weakest things, from someone who has never seen her work
+  → file_write   ×4  rewritten against the review
+  → site_check   still clean
 
-Four pages, on your screen. I rewrote the homepage after having it looked at
-cold. The original hero could have been any garden centre in the country.
+24 rounds. Nobody asked her to count the em dash, check the form, or have the
+thing looked at.
 ```
 
-She was not told to check the links, notice the dead image, have it reviewed, or
-go back and rewrite it. Most of this README is about why she did anyway.
+That is a real run, not a mock-up. The trace is what `-v` prints.
+
+The em dash is the whole idea in one line. A rule in her playbook told her not to
+use them, twice, in increasingly emphatic language, and the count went **up**.
+Counting them at the moment of the write and handing the number back took it to
+zero. Most of this README is about why those two things are different.
 
 ## Start her
 
@@ -59,9 +62,11 @@ browser on a real display and not a headless one, for the same reason: a window
 you can watch, on the machine you are sitting at.
 
 **Finishes what she starts.** Writes files, checks the syntax, checks that every
-link goes somewhere, serves it, and puts it on your screen. When she tries to end
-a turn with a page she wrote still leading nowhere, the loop hands it back to her
-and she goes and fixes it.
+link goes somewhere, serves it, and puts it on your screen. `site_check` resolves
+every link, anchor, local file and external image; the external ones matter,
+because one site passed every local check and rendered with two blank tiles after
+two of its six image URLs turned out to be invented. When she tries to end a turn
+with a page she wrote still leading nowhere, the loop hands it back to her.
 
 **Makes documents that look made.** DOCX, multi-sheet XLSX with charts, and PDFs
 rendered from her own HTML and CSS through Chrome, so gradients, web fonts and
@@ -79,30 +84,7 @@ task goes badly and runs an engineer against its own source to find out why.
 
 ## The parts worth reading
 
-### She cannot claim to be finished
-
-Every check that made a difference here is a state check, not a judgement, and
-that is not an aesthetic preference. [Recent
-work](https://arxiv.org/abs/2606.09863) measures agents asserting completion
-against an environment that says otherwise in **75.8%** of self-assessing coding
-trajectories, and measures LLM judges detecting it at AUROC 0.65 and 0.54,
-close enough to chance to be useless, because judges key on confident closing
-language and on how much the agent did. Lightweight detectors over the
-trajectory reach 0.83 to 0.95, so the signal is there and asking a model for a
-verdict is what loses it.
-
-So nothing here asks her whether she is done. It looks:
-
-- `site_check` resolves every link, anchor, local file and external image. The
-  external ones matter: one site passed every local check and rendered with two
-  blank tiles, because two of its six image URLs were invented.
-- The agent refuses a final answer while a page she wrote this turn is broken, or
-  a step she wrote down is unsettled. One push per exchange, then it lets go.
-- Sources she cites are checked against the pages she actually opened, which is a
-  different set from the pages she saw in search results.
-- Claims of having produced something are checked against what was produced.
-
-### Instructions do not work, and here is the measurement
+### Count it, do not instruct it
 
 Every rule in her design playbook was written after measuring her own output.
 Some rules worked and some did nothing, and the pattern took a while to see.
@@ -134,19 +116,61 @@ emitted mid-sentence is a habit below the level any instruction operates at. The
 rule that came out of it, and that now governs this codebase: **if something
 survives being named twice, stop writing rules about it and count it.**
 
+The counting never rewrites anything for her. `wiring.HouseStyle` reports the
+number and stops. Silently fixing her prose would improve the page and teach her
+nothing, and the point is the next page.
+
 ### Three rungs, in order
 
 The same shape appeared often enough to be a rule rather than a discovery:
 
 1. **Put it in a playbook.** Reaches structural decisions and nothing else.
-2. **Attach it to a call she already makes.** Works often. The design rules ride
-   on `project_new`; the wiring report rides on `file_write`.
-3. **Refuse to finish without it.** Works.
+2. **Attach it to a call she already makes.** Where nearly all of the work
+   happens. The design rules ride on `project_new`; the wiring report and the
+   house-style count ride on `file_write`.
+3. **Refuse to finish without it.** The backstop, for when rung two is read and
+   then outrun.
 
-`review` (a fresh pair of eyes that sees a screenshot of the rendered page and
-nothing about her: no conversation, no persona, no tool trail) had rungs one and
-two and was never called across two four-page builds. With the gate, she ran it
-and then rewrote four files against what came back.
+Rung two is the one to copy. Rung three is the one that sounds impressive, and
+the section below is honest about how often it has actually been needed.
+
+### The gate, and how often it fires
+
+Nothing here asks her whether she is done. It looks, because asking does not
+work: [recent work](https://arxiv.org/abs/2606.09863) measures agents asserting
+completion against an environment that says otherwise in **75.8%** of
+self-assessing coding trajectories, and measures LLM judges detecting it at AUROC
+0.65 and 0.54, close enough to chance to be useless, because judges key on
+confident closing language and on how much the agent did. Lightweight detectors
+over the trajectory reach 0.83 to 0.95, so the signal is in the record of what
+happened and asking a model for a verdict on it is what loses it.
+
+So when she tries to end a turn, four things are checked against the record
+rather than against her account of it:
+
+- A page she wrote this turn that still leads nowhere, or a step she wrote down
+  and never settled. The verdict comes from re-reading the file on disk, never
+  from the trail, because she may have fixed it with any tool in any order.
+- A site built this turn that nobody looked at, where `review` is available.
+- A long answer built on search results with no page ever opened.
+- Sources cited in the answer that were never fetched, which is a different set
+  from the pages she saw listed.
+
+One push per exchange, then it lets go. A gate that will not take an answer is a
+hang.
+
+**How often it has fired: not once, in four measured runs.** One page, two pages,
+two pages again, four pages. Every time, something earlier got there first. The
+house-style count caught the em dash inside one round. `site_check` caught a form
+posting to `#`. The playbook got `review` called without any gate involved, on
+the four-page build, and she rewrote all four pages against what came back.
+
+That is the result, and it is not the one this section originally claimed. The
+gate exists because of a bike-shop build where the note fired, was read, and lost
+anyway: she wrote two more files, ran `code_check` three times, served the site,
+put it on the screen and called it done with the dead link still in it. It is
+worth keeping for that. But on the evidence so far it is a backstop and not the
+mechanism, and the mechanism is the rung below it.
 
 ### Memory is a budget, not a bucket
 
