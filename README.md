@@ -1,11 +1,12 @@
-# JARVIS
+# Freya
 
-A personal AI assistant that runs on your own machine. The project is JARVIS;
-the assistant is **Freya**.
+**An AI assistant that refuses to say it's finished when it isn't.**
 
-Written in Go with **zero external dependencies**. The whole thing is standard
-library: 47,000 lines of it, 613 tests, one static binary, builds in seconds,
-offline, on a 2014 laptop with no GPU.
+Written in Go, with zero external dependencies. One static binary, builds in seconds.
+It runs offline on a 2014 laptop with no GPU. 47,000 lines of standard library,
+613 tests.
+
+The project is JARVIS; the assistant is **Freya**.
 
 ```
 ❯ build a site for my plant nursery
@@ -21,11 +22,11 @@ offline, on a 2014 laptop with no GPU.
   → serve · system_open
 
 Four pages, on your screen. I rewrote the homepage after having it looked at
-cold — the original hero could have been any garden centre in the country.
+cold. The original hero could have been any garden centre in the country.
 ```
 
-She was not told to check the links, notice the dead image, have it reviewed,
-or go back and rewrite it. Most of this README is about why.
+She was not told to check the links, notice the dead image, have it reviewed, or
+go back and rewrite it. Most of this README is about why she did anyway.
 
 ## Start her
 
@@ -78,7 +79,7 @@ Every check that made a difference here is a state check, not a judgement, and
 that is not an aesthetic preference. [Recent
 work](https://arxiv.org/abs/2606.09863) measures agents asserting completion
 against an environment that says otherwise in **75.8%** of self-assessing coding
-trajectories, and measures LLM judges detecting it at AUROC 0.65 and 0.54 —
+trajectories, and measures LLM judges detecting it at AUROC 0.65 and 0.54,
 close enough to chance to be useless, because judges key on confident closing
 language and on how much the agent did. Detectors that look at state reach 0.83
 to 0.95.
@@ -88,10 +89,10 @@ So nothing here asks her whether she is done. It looks:
 - `site_check` resolves every link, anchor, local file and external image. The
   external ones matter: one site passed every local check and rendered with two
   blank tiles, because two of its six image URLs were invented.
-- The agent refuses a final answer while a page she wrote this turn is broken,
-  or a step she wrote down is unsettled. One push per exchange, then it lets go.
-- Sources she cites are checked against the pages she actually opened, which is
-  a different set from the pages she saw in search results.
+- The agent refuses a final answer while a page she wrote this turn is broken, or
+  a step she wrote down is unsettled. One push per exchange, then it lets go.
+- Sources she cites are checked against the pages she actually opened, which is a
+  different set from the pages she saw in search results.
 - Claims of having produced something are checked against what was produced.
 
 ### Instructions do not work, and here is the measurement
@@ -101,7 +102,7 @@ Some rules worked and some did nothing, and the pattern took a while to see.
 
 | tell | before | named | later builds | counted |
 |---|---|---|---|---|
-| emoji | 26 / 6 / 3 | 0 | 0 / 0 | — |
+| emoji | 26 / 6 / 3 | 0 | 0 / 0 | n/a |
 | cards per site | 6 / 6 / 9 | 0 | 3 / 3 / 4 / 11 | not yet measured |
 | em dashes | 1 / 1 / 1 | 0 | 5 / **7** | **0 / 0** |
 | dead links | 5 of 15 | 2 of 13 | 1 of 16 | **0 of 52, 0 of 62** |
@@ -130,8 +131,8 @@ The same shape appeared often enough to be a rule rather than a discovery:
    on `project_new`; the wiring report rides on `file_write`.
 3. **Refuse to finish without it.** Works.
 
-`review` — a fresh pair of eyes that sees a screenshot of the rendered page and
-nothing about her, no conversation, no persona, no tool trail — had rungs one and
+`review` (a fresh pair of eyes that sees a screenshot of the rendered page and
+nothing about her: no conversation, no persona, no tool trail) had rungs one and
 two and was never called across two four-page builds. With the gate, she ran it
 and then rewrote four files against what came back.
 
@@ -171,7 +172,7 @@ or refused. Deleting data, touching system paths and escalating to root are
 refused outright when there is nobody to ask. Shell-outs invoke binaries directly
 with a timeout, never through a shell, so arguments cannot inject commands.
 
-Credential fields report their length and never their contents — `browser_inspect`
+Credential fields report their length and never their contents. `browser_inspect`
 once labelled an input with its own value, which put a real password into the
 archive and into every subsequent request.
 
@@ -242,3 +243,7 @@ go test ./... -race
 ```
 
 Developed on Linux Lite 8, i7-4600U, no GPU. It is meant to be comfortable there.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
