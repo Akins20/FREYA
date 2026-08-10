@@ -353,3 +353,36 @@ func TestDoubleCloseIsSafe(t *testing.T) {
 		t.Errorf("second close: %v", err)
 	}
 }
+
+// The model in use must be priced explicitly, not by falling through.
+//
+// gemini-3.5-flash-lite was absent from the table for as long as it has been the
+// default model, so every cost figure this project has ever reported came from
+// defaultRate. Those numbers happened to be identical to the real published
+// rates, so the totals were correct — by luck. A model whose real price differs
+// from the default would have been reported wrong indefinitely, with the error
+// invisible in exactly the way a wrong number is: it looks like a number.
+func TestTheDefaultModelIsPricedExplicitly(t *testing.T) {
+	const model = "gemini-3.5-flash-lite"
+
+	// By key, not by value. The published rates for this model are identical to
+	// defaultRate, so comparing the two proves nothing — which is how a review of
+	// this file briefly concluded the model was unlisted and every cost figure
+	// wrong. It is listed, and they were right.
+	if _, listed := rates[model]; !listed {
+		t.Errorf("%s is not in the rate table, so its cost comes from defaultRate. "+
+			"A fallback that happens to be right today is a wrong number waiting for a "+
+			"price change.", model)
+	}
+	r := rateFor(model)
+	// Published rates, so a table edit that drifts from reality fails here.
+	if r.input != 0.30 || r.output != 2.50 || r.cached != 0.03 {
+		t.Errorf("%s priced at in=%.2f out=%.2f cached=%.3f, published is 0.30 / 2.50 / 0.03",
+			model, r.input, r.output, r.cached)
+	}
+	// And the discount that the whole memory architecture is built around.
+	if r.cached/r.input > 0.15 {
+		t.Errorf("cached is %.0f%% of input; the tier ordering exists because it is ~10%%",
+			r.cached/r.input*100)
+	}
+}
