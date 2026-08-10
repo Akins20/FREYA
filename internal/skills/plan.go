@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -141,6 +142,12 @@ func (p *Plan) Set(items []string) int {
 }
 
 // Mark moves one step, one-based. dir is where relative filenames resolve.
+//
+// Marking a step into the state it already holds is allowed and changes nothing
+// but the note. Models re-confirm their own bookkeeping constantly and an error
+// there would spend a round teaching them not to; the transitions that cost
+// rounds are handled by letting one call carry several, which is what stepMoves
+// is for.
 func (p *Plan) Mark(n int, state StepState, note, dir string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -327,10 +334,13 @@ func RegisterPlan(r *Registry) {
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "plan_step",
-			Description: "Move one step of the plan: starting it, finishing it, or " +
-				"dropping it.\n\n" +
+			Description: "Move the plan on: starting a step, finishing one, or dropping " +
+				"one.\n\n" +
 				"Mark it the moment it happens rather than all at the end — a list updated " +
 				"afterwards is a list that was not used.\n\n" +
+				"Finishing one step and starting the next is one call, not two: pass " +
+				"'2:done, 3:doing' as steps. Use it whenever more than one thing moved, " +
+				"which is most of the time.\n\n" +
 				"Only one step is in progress at a time. Mark done only when it is FULLY " +
 				"done: not when the file is written but unchecked, not when three of four " +
 				"pages exist, not when it works but you have not looked at it. If a step " +
@@ -340,7 +350,9 @@ func RegisterPlan(r *Registry) {
 				"step":  {Type: "number", Description: "Which step, counting from 1."},
 				"state": {Type: "string", Description: "doing, done, dropped, or todo to reopen it."},
 				"note":  {Type: "string", Description: "Optional. What happened, or why it was dropped."},
-			}, "step", "state"),
+				"steps": {Type: "string", Description: "Several at once, instead of step and " +
+					"state: '2:done, 3:doing'. Ordered, so the last one wins where they conflict."},
+			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			scope := ScopeFrom(ctx)
@@ -348,16 +360,94 @@ func RegisterPlan(r *Registry) {
 			if plan == nil {
 				return "", fmt.Errorf("no plan is being kept for this piece of work")
 			}
-			state := StepState(strings.ToLower(strings.TrimSpace(argString(args, "state"))))
-			switch state {
-			case StepTodo, StepDoing, StepDone, StepDropped:
-			default:
-				return "", fmt.Errorf("state is one of doing, done, dropped, todo — got %q", state)
-			}
-			if err := plan.Mark(argInt(args, "step", 0), state, argString(args, "note"), scope.Dir()); err != nil {
+
+			moves, err := stepMoves(args)
+			if err != nil {
 				return "", err
+			}
+			for _, m := range moves {
+				if err := plan.Mark(m.step, m.state, m.note, scope.Dir()); err != nil {
+					return "", err
+				}
 			}
 			return plan.Render(), nil
 		},
 	})
+}
+
+// stepMove is one transition asked for in a plan_step call.
+type stepMove struct {
+	step  int
+	state StepState
+	note  string
+}
+
+// reStepMove reads one "2:done" pair out of the batched form. Tolerant of the
+// spellings a model reaches for: an equals sign, an arrow, spaces around either.
+var reStepMove = regexp.MustCompile(`^\s*(?:step\s*)?(\d+)\s*(?::|=|->|=>)\s*([a-zA-Z]+)\s*$`)
+
+// stepMoves reads either form of the call.
+//
+// Both are accepted rather than replacing one with the other, because the single
+// form is right when one thing moved and a schema that forces a list for that is
+// the same overhead in a different place. The batched form exists because
+// finishing one step and starting the next is one event, and it was costing two
+// calls: measured across five builds, plan_step was between a third and a half
+// of every tool call made, and the pairs were consecutive.
+func stepMoves(args map[string]any) ([]stepMove, error) {
+	batch := strings.TrimSpace(argString(args, "steps"))
+	if batch == "" {
+		state, err := stepState(argString(args, "state"))
+		if err != nil {
+			return nil, err
+		}
+		n := argInt(args, "step", 0)
+		if n == 0 {
+			return nil, fmt.Errorf("say which step, counting from 1 — or pass steps like '2:done, 3:doing'")
+		}
+		return []stepMove{{step: n, state: state, note: argString(args, "note")}}, nil
+	}
+
+	// The note belongs to the batch as a whole. Attaching it to every step would
+	// stamp one sentence across several unrelated ones, which reads as a record
+	// of something that did not happen.
+	note := argString(args, "note")
+	var out []stepMove
+	for _, part := range strings.Split(strings.ReplaceAll(batch, ";", ","), ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		m := reStepMove.FindStringSubmatch(part)
+		if m == nil {
+			return nil, fmt.Errorf("could not read %q as a step move — they look like "+
+				"'2:done, 3:doing'", strings.TrimSpace(part))
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return nil, fmt.Errorf("could not read %q as a step number", m[1])
+		}
+		state, err := stepState(m[2])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stepMove{step: n, state: state})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("steps was given but held no moves — they look like '2:done, 3:doing'")
+	}
+	if note != "" {
+		out[len(out)-1].note = note
+	}
+	return out, nil
+}
+
+// stepState reads a state name, refusing anything else by name so a typo comes
+// back as a typo rather than as a silently ignored call.
+func stepState(s string) (StepState, error) {
+	switch state := StepState(strings.ToLower(strings.TrimSpace(s))); state {
+	case StepTodo, StepDoing, StepDone, StepDropped:
+		return state, nil
+	default:
+		return "", fmt.Errorf("state is one of doing, done, dropped, todo — got %q", s)
+	}
 }
