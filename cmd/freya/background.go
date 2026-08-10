@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/akins/jarvis/internal/agent"
-	"github.com/akins/jarvis/internal/config"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/skills"
-	"github.com/akins/jarvis/internal/work"
+	"github.com/Akins20/FREYA/internal/agent"
+	"github.com/Akins20/FREYA/internal/config"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/skills"
+	"github.com/Akins20/FREYA/internal/work"
 )
 
 // Wiring a background job to an actual conversation.

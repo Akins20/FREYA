@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Not saying it worked when it did not.

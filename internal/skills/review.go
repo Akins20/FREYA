@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/akins/jarvis/internal/browser"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // A second pair of eyes that has never met her.
@@ -23,7 +23,9 @@ import (
 // explicit status claim. The part that matters for the design is what it says
 // about the obvious fix. LLM judges reach AUROC 0.65 and 0.54 — close enough to
 // chance to be worthless — because they key on confident closing language and on
-// how much the agent did. Detectors that look at STATE reach 0.83 to 0.95.
+// how much the agent did. Lightweight classifiers over the TRAJECTORY reach 0.83
+// to 0.95, so the signal is in the record of what happened, and asking a model
+// for a verdict on it is what loses it.
 //
 // So a reviewer that reads her account of the work is measurably useless, and
 // worse than useless here, because her account is fluent and confident and that

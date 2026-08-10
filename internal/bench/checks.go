@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/akins/jarvis/internal/docs"
+	"github.com/Akins20/FREYA/internal/docs"
 )
 
 // Check helpers.

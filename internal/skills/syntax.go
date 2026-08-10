@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Finding out whether the code she just wrote is code.

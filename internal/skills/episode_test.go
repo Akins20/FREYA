@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 // An episode summary is a door or a dead end, and it was a dead end.

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Handler executes a skill and returns text for the model to read. Returning an

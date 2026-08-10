@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/claude"
-	"github.com/akins/jarvis/internal/playbook"
+	"github.com/Akins20/FREYA/internal/claude"
+	"github.com/Akins20/FREYA/internal/playbook"
 )
 
 // Letting Claude tidy up what she has taught herself.

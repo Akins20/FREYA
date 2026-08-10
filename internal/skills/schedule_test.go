@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/schedule"
+	"github.com/Akins20/FREYA/internal/schedule"
 )
 
 func TestParseWhen(t *testing.T) {

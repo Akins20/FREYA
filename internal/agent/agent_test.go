@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // scriptedProvider replays a fixed list of responses so the loop can be tested

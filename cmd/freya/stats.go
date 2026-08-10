@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/config"
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/config"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // The usage report.

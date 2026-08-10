@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/voice"
-	"github.com/akins/jarvis/internal/work"
+	"github.com/Akins20/FREYA/internal/voice"
+	"github.com/Akins20/FREYA/internal/work"
 )
 
 // Being able to stop her.

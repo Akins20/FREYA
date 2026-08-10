@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/docs"
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/wiring"
+	"github.com/Akins20/FREYA/internal/docs"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/wiring"
 )
 
 // File and folder operations.

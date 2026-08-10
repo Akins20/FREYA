@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/browser"
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Browser control.

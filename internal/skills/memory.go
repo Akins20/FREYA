@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/sentinel"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/sentinel"
 )
 
 // RegisterMemory exposes Freya's long-term memory to the model itself.

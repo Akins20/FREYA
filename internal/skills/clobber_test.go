@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 func writeSkills(t *testing.T) *Registry {

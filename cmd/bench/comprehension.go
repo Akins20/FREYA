@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/bench"
+	"github.com/Akins20/FREYA/internal/bench"
 )
 
 // Asking her what she would do, rather than watching her do it.

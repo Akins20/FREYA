@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // The harness is the instrument every reliability claim rests on, so its own

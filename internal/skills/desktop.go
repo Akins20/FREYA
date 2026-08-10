@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Desktop control for X11, built on xdotool and wmctrl.

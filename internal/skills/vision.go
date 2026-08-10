@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/vision"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/vision"
 )
 
 // maxImagesPerCall bounds a single request. Beyond a handful the upload cost

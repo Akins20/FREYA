@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 // confirmPrompt asks the user to approve an action.

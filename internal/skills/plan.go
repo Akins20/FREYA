@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // The list of what this piece of work actually consists of, written before the

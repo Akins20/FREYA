@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/wiring"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/wiring"
 )
 
 // Whether the thing she built is actually joined up.

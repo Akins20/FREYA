@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/browser"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Skills that read where the user has been.

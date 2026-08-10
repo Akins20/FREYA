@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // scopedCtx gives a test its own ledger.

@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/akins/jarvis/internal/glow"
+	"github.com/Akins20/FREYA/internal/glow"
 )
 
 // The screen-top status light.

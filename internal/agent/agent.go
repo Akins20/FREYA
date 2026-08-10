@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/reflect"
-	"github.com/akins/jarvis/internal/skills"
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/reflect"
+	"github.com/Akins20/FREYA/internal/skills"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // maxToolRounds bounds one exchange. Genuine work — resolve a folder, read

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // The measured failure, end to end: fourteen tool calls, every one failed, and

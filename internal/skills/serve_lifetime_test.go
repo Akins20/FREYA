@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/term"
+	"github.com/Akins20/FREYA/internal/term"
 )
 
 // A server outlives the exchange that started it, and dies with her.

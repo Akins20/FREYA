@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/work"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/work"
 )
 
 // Putting something in the background, and knowing what happened to it.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akins/jarvis/internal/defect"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/defect"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Saying that the software got in the way.

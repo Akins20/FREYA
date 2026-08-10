@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // The gate reads the file, not the tool's opinion of the file.

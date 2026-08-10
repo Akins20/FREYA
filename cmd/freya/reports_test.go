@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/work"
+	"github.com/Akins20/FREYA/internal/work"
 )
 
 func freshReports(t *testing.T) *reportQueue {

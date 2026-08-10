@@ -7,11 +7,11 @@ import (
 
 	"time"
 
-	"github.com/akins/jarvis/internal/config"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/reflect"
-	"github.com/akins/jarvis/internal/sentinel"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/config"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/reflect"
+	"github.com/Akins20/FREYA/internal/sentinel"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // setupSentinel builds the proactivity engine and its watchers.

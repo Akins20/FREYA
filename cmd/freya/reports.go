@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/work"
+	"github.com/Akins20/FREYA/internal/work"
 )
 
 // Telling you about work that finished while you were talking.

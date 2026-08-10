@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 // The silent one. run_command execs directly, so a redirection is not an

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/schedule"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/schedule"
 )
 
 // RegisterSchedule gives Freya a way to set a task for her FUTURE self — one the

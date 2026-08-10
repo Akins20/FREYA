@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/reflect"
+	"github.com/Akins20/FREYA/internal/reflect"
 )
 
 // countingLens records that it was asked to look.

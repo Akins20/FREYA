@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // blindEyes is a provider that can see, so review registers, but is never

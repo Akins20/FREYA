@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // A plan left open in one conversation must not block the answer to the next.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // twoClickTools reproduces the pair she ping-ponged between: one takes the label

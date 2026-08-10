@@ -12,12 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/akins/jarvis/internal/agent"
-	"github.com/akins/jarvis/internal/config"
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/schedule"
-	"github.com/akins/jarvis/internal/voice"
+	"github.com/Akins20/FREYA/internal/agent"
+	"github.com/Akins20/FREYA/internal/config"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/schedule"
+	"github.com/Akins20/FREYA/internal/voice"
 )
 
 // voiceState holds the spoken-mode machinery for a REPL session.

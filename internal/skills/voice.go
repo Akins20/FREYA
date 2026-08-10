@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/reflect"
-	"github.com/akins/jarvis/internal/sentinel"
-	"github.com/akins/jarvis/internal/voice"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/reflect"
+	"github.com/Akins20/FREYA/internal/sentinel"
+	"github.com/Akins20/FREYA/internal/voice"
 )
 
 // ObservationSource is the sentinel, narrowed to what the skill needs.

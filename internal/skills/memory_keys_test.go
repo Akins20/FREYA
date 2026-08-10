@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 // Reusing a key REPLACES the fact under it, and slugify collapses case and

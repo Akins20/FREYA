@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Knowing a tool exists is a different thing from knowing how to call it.

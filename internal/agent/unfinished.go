@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/akins/jarvis/internal/skills"
-	"github.com/akins/jarvis/internal/wiring"
+	"github.com/Akins20/FREYA/internal/skills"
+	"github.com/Akins20/FREYA/internal/wiring"
 )
 
 // Refusing to call it finished while something measurable is still broken.

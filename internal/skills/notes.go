@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Note is a captured thought or a reminder. Reminders are notes with a due time.

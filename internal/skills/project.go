@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/playbook"
-	"github.com/akins/jarvis/internal/term"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/playbook"
+	"github.com/Akins20/FREYA/internal/term"
 )
 
 // Where work goes, and how it gets cleaned up after.

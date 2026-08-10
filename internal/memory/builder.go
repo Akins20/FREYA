@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/sentinel"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/sentinel"
 )
 
 // ContextBuilder assembles the tiered prompt sent to the model.

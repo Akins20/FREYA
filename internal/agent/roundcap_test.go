@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // The measured failure: two quizzes submitted, a third underway, and the reply

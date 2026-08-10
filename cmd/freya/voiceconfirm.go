@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/voice"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/voice"
 )
 
 // Confirming a risky action out loud.

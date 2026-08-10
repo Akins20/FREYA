@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/sentinel"
+	"github.com/Akins20/FREYA/internal/sentinel"
 )
 
 // SocketName is the control socket's base name.

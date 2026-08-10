@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 // A capability that cannot run where she runs is not a capability.

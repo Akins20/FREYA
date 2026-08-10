@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/agent"
-	"github.com/akins/jarvis/internal/claude"
-	"github.com/akins/jarvis/internal/defect"
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/agent"
+	"github.com/Akins20/FREYA/internal/claude"
+	"github.com/Akins20/FREYA/internal/defect"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // Turning what she could not do into a change to her.
@@ -105,7 +105,7 @@ func findSource(sourceDir, projectsDir string) string {
 			continue
 		}
 		mod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(mod), "github.com/akins/jarvis") {
+		if err == nil && strings.Contains(string(mod), "github.com/Akins20/FREYA") {
 			return dir
 		}
 	}

@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/akins/jarvis/internal/bench"
+	"github.com/Akins20/FREYA/internal/bench"
 )
 
 func main() {

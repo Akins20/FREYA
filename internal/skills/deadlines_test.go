@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 // The gap goal-aware watching closes: a reminder the user set with a due time

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // When the value is right and the label is wrong.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // The rule the whole package turns on: a report quotes web pages, so anything

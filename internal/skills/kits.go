@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // Showing her the tools this piece of work needs, rather than all of them.

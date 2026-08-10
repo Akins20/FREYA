@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // maxReadBytes caps how much of a file is returned to the model in one call.

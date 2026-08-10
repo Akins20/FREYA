@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 func newStore(t *testing.T) *memory.Store {

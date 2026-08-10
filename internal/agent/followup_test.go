@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 // cannedProvider returns a fixed reply, so Followup's decision logic can be

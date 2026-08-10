@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/browser"
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 // The tool must exist, be reachable from any request, and describe itself as a

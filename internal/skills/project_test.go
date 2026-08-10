@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/term"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/term"
 )
 
 func projectSkills(t *testing.T) (*Registry, string) {

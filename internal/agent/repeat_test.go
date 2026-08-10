@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/skills"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/skills"
 )
 
 // The loop breaker is the general form of a lesson learned the expensive way:

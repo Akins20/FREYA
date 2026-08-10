@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/playbook"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/playbook"
 )
 
 // The skill tool: how she reaches her own know-how.

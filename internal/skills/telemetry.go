@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/llm"
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // Letting Freya read her own instrumentation.

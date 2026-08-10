@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akins/jarvis/internal/config"
+	"github.com/Akins20/FREYA/internal/config"
 )
 
 // The failure this whole file exists for: she went down a wrong path, and the

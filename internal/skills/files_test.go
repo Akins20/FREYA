@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/guard"
+	"github.com/Akins20/FREYA/internal/guard"
 )
 
 // approveAll is a guard that says yes, so these tests exercise the file

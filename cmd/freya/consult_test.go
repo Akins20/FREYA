@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/agent"
-	"github.com/akins/jarvis/internal/defect"
+	"github.com/Akins20/FREYA/internal/agent"
+	"github.com/Akins20/FREYA/internal/defect"
 )
 
 // The consult hands page text to something with edit access to her source. If
@@ -87,7 +87,7 @@ func TestTheSourceIsFoundByItsModuleNotItsName(t *testing.T) {
 		t.Errorf("a directory named JARVIS that is not hers was accepted: %q", got)
 	}
 
-	os.WriteFile(filepath.Join(decoy, "go.mod"), []byte("module github.com/akins/jarvis\n"), 0o644)
+	os.WriteFile(filepath.Join(decoy, "go.mod"), []byte("module github.com/Akins20/FREYA\n"), 0o644)
 	if got := findSource("", root); got != decoy {
 		t.Errorf("her own repository was not found: %q", got)
 	}

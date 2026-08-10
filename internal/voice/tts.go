@@ -11,7 +11,7 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/akins/jarvis/internal/llm"
+	"github.com/Akins20/FREYA/internal/llm"
 )
 
 // EspeakTTS speaks using espeak or espeak-ng.

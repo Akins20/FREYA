@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akins/jarvis/internal/defect"
-	"github.com/akins/jarvis/internal/guard"
-	"github.com/akins/jarvis/internal/memory"
-	"github.com/akins/jarvis/internal/playbook"
-	"github.com/akins/jarvis/internal/schedule"
-	"github.com/akins/jarvis/internal/term"
+	"github.com/Akins20/FREYA/internal/defect"
+	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/memory"
+	"github.com/Akins20/FREYA/internal/playbook"
+	"github.com/Akins20/FREYA/internal/schedule"
+	"github.com/Akins20/FREYA/internal/term"
 )
 
 // everything registers the families a real session has, so a name in the core

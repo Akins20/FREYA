@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akins/jarvis/internal/memory"
+	"github.com/Akins20/FREYA/internal/memory"
 )
 
 // Insight is something a lens noticed that the main conversational pass did not.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/akins/jarvis/internal/telemetry"
+	"github.com/Akins20/FREYA/internal/telemetry"
 )
 
 // Noticing without being asked.
