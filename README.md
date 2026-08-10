@@ -297,7 +297,7 @@ make install        # to ~/.local/bin
 go test ./... -race
 ```
 
-`go test ./...` runs 628 tests. On a bare machine 606 pass, 22 skip and none
+`go test ./...` runs 650 tests. On a bare machine 628 pass, 22 skip and none
 fail; the skips are the ones that need Chrome running, or the LibreOffice-produced
 documents that `FREYA_PROBE_DOCS` points at. The race detector is clean.
 
