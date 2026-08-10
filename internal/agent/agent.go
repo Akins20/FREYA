@@ -499,7 +499,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 						"Repeating it cannot tell you anything new. Look at what is actually "+
 						"there — read the page, list the directory, inspect the controls — and "+
 						"then do something different.", call.Name)
-					if opts := a.Skills.AffordancesFor(ctx, call.Name); len(opts) > 0 {
+					if opts := a.Skills.AffordancesFor(ctx, call.Name, call.Args); len(opts) > 0 {
 						refusal += "\n\nWhat is actually available here:\n- " + strings.Join(opts, "\n- ")
 					}
 					a.trace("error", call.Name, "refused: same call already failed twice")

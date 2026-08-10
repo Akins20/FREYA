@@ -625,7 +625,7 @@ func TestEveryPathToolCarriesAffordances(t *testing.T) {
 		"folder_list", "folder_create", "file_copy", "file_move", "file_delete",
 		"archive_create", "archive_extract",
 	} {
-		if r.AffordancesFor(context.Background(), name) == nil {
+		if r.AffordancesFor(context.Background(), name, map[string]any{}) == nil {
 			t.Errorf("%s has no affordances, so a miss hands back nothing to act on", name)
 		}
 	}
@@ -639,8 +639,78 @@ func TestAnEmptyFolderSaysSo(t *testing.T) {
 	RegisterFiles(r, approveAll(), nil)
 	ctx := WithScope(context.Background(), NewScope(NewWorkspace(dir), "", ""))
 
-	got := r.AffordancesFor(ctx, "file_read")
+	got := r.AffordancesFor(ctx, "file_read", map[string]any{})
 	if len(got) != 1 || !strings.Contains(got[0], "empty") {
 		t.Errorf("an empty working folder reported %q", got)
+	}
+}
+
+// Two readers, two roots, and nothing said which was which.
+//
+// Measured. file_read is anchored to the working directory and dev_read to the
+// projects directory. Asked to read sales.csv she got "no such file or
+// directory", then tried place_list, then dev_find, then dev_read, and got it on
+// the fourth attempt. Three rounds establishing which reader owned the root the
+// file was under.
+func TestAMissSaysWhichOtherReaderHasIt(t *testing.T) {
+	work := t.TempDir()
+	projects := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projects, "ledger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "ledger", "sales.csv"), []byte("a,b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	RegisterDev(r, projects)
+	ctx := WithScope(context.Background(), NewScope(NewWorkspace(work), "", ""))
+
+	_, err := r.Execute(ctx, "file_read", map[string]any{"path": "sales.csv"})
+	if err == nil {
+		t.Fatal("reading a file that is not in the working folder returned success")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "dev_read") {
+		t.Errorf("the failure does not name the reader that can reach it:\n%s", msg)
+	}
+	if !strings.Contains(msg, projects) {
+		t.Errorf("the failure does not name the other root:\n%s", msg)
+	}
+}
+
+// A file directly under the other root counts too, not only one a level down.
+func TestAMissFindsItAtTheOtherRootItself(t *testing.T) {
+	work, projects := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(projects, "notes.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	RegisterDev(r, projects)
+	ctx := WithScope(context.Background(), NewScope(NewWorkspace(work), "", ""))
+
+	_, err := r.Execute(ctx, "file_read", map[string]any{"path": "notes.md"})
+	if err == nil || !strings.Contains(err.Error(), "dev_read") {
+		t.Errorf("a file at the other root was not pointed at: %v", err)
+	}
+}
+
+// And it must stay quiet when the name is nowhere else, rather than inventing a
+// place to look. A hint that is wrong is a round spent following it.
+func TestAMissSaysNothingWhenTheNameIsNowhereElse(t *testing.T) {
+	work, projects := t.TempDir(), t.TempDir()
+	r := New()
+	RegisterFiles(r, approveAll(), nil)
+	RegisterDev(r, projects)
+	ctx := WithScope(context.Background(), NewScope(NewWorkspace(work), "", ""))
+
+	_, err := r.Execute(ctx, "file_read", map[string]any{"path": "absent.csv"})
+	if err == nil {
+		t.Fatal("reading an absent file returned success")
+	}
+	if strings.Contains(err.Error(), "dev_read") {
+		t.Errorf("a file that exists nowhere was said to be somewhere:\n%s", err)
 	}
 }

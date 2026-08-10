@@ -78,7 +78,7 @@ func RegisterWork(r *Registry, m *work.Manager) {
 			}
 			return strings.TrimRight(sb.String(), "\n"), nil
 		},
-		Affordances: func(_ context.Context) []string { return jobIDs(m) },
+		Affordances: func(context.Context, map[string]any) []string { return jobIDs(m) },
 	})
 
 	r.Register(Skill{
@@ -107,7 +107,7 @@ func RegisterWork(r *Registry, m *work.Manager) {
 			}
 			return fmt.Sprintf("Stopped %s.", id), nil
 		},
-		Affordances: func(_ context.Context) []string { return jobIDs(m) },
+		Affordances: func(context.Context, map[string]any) []string { return jobIDs(m) },
 	})
 }
 

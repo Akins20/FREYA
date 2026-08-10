@@ -806,7 +806,7 @@ func (t *Tabs) observe(ctx context.Context, args map[string]any) string {
 // any browser failure. This is the generalisation of the ad-hoc click hint: a
 // miss should hand back the page's real options rather than leave her to invent
 // another selector.
-func (t *Tabs) affordances(ctx context.Context) []string {
+func (t *Tabs) affordances(ctx context.Context, _ map[string]any) []string {
 	tab, ok := t.get("")
 	if !ok {
 		return nil

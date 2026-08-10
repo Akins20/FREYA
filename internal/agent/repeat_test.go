@@ -30,7 +30,7 @@ func failingRegistry(t *testing.T, calls *int) *skills.Registry {
 			*calls++
 			return "", errStuck
 		},
-		Affordances: func(context.Context) []string { return []string{"Start Quiz", "Back to list"} },
+		Affordances: func(context.Context, map[string]any) []string { return []string{"Start Quiz", "Back to list"} },
 	})
 	return r
 }

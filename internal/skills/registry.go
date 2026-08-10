@@ -52,7 +52,7 @@ type Skill struct {
 	// things on this page, the open terminal sessions, the files in this
 	// directory. Attached automatically when the skill fails, so a miss hands back
 	// the state needed to succeed instead of an invitation to guess again.
-	Affordances func(ctx context.Context) []string
+	Affordances func(ctx context.Context, args map[string]any) []string
 	// Precheck refuses the call outright before anything runs.
 	//
 	// For rules that must hold across a whole family of tools rather than at one
@@ -204,7 +204,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	args, argNote, err := r.checkArgs(s, args)
 	if err != nil {
 		if s.Affordances != nil {
-			return "", withOptions(err, s.Affordances(ctx))
+			return "", withOptions(err, s.Affordances(ctx, args))
 		}
 		return "", err
 	}
@@ -239,7 +239,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 			return "", withOptions(err, out.Options)
 		}
 		if s.Affordances != nil {
-			return "", withOptions(err, s.Affordances(ctx))
+			return "", withOptions(err, s.Affordances(ctx, args))
 		}
 		return "", err
 	}
@@ -269,14 +269,18 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 
 // AffordancesFor reports what a named skill says is available right now, or nil.
 // The agent uses it when refusing a call, so a refusal still points somewhere.
-func (r *Registry) AffordancesFor(ctx context.Context, name string) []string {
+//
+// The arguments come too, for the same reason Observe takes them: what is
+// available depends on what was asked for. A file tool that missed can only say
+// the name was nearly right if it knows the name.
+func (r *Registry) AffordancesFor(ctx context.Context, name string, args map[string]any) []string {
 	r.mu.RLock()
 	s, ok := r.skills[name]
 	r.mu.RUnlock()
 	if !ok || s.Affordances == nil {
 		return nil
 	}
-	return s.Affordances(ctx)
+	return s.Affordances(ctx, args)
 }
 
 // --- argument helpers -------------------------------------------------------

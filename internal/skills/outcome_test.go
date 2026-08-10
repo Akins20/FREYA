@@ -41,7 +41,7 @@ func TestExecuteAttachesAffordancesOnFailure(t *testing.T) {
 	r.Register(Skill{
 		Tool:    llm.Tool{Name: "pick", Description: "d", Params: llm.ObjectSchema(nil)},
 		Handler: func(context.Context, map[string]any) (string, error) { return "", errors.New("no such option") },
-		Affordances: func(context.Context) []string {
+		Affordances: func(context.Context, map[string]any) []string {
 			return []string{"Basic Accounting", "Macroeconomics"}
 		},
 	})

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Akins20/FREYA/internal/docs"
@@ -263,7 +264,7 @@ const maxAffordanceEntries = 40
 // resolves against the scope anyway — which is the case that goes wrong. An
 // absolute path into somewhere else still gets the listing, and it is still
 // worth having, because it says where she actually is.
-func (f *fileSkills) affordances(ctx context.Context) []string {
+func (f *fileSkills) affordances(ctx context.Context, args map[string]any) []string {
 	dir := ScopeFrom(ctx).Dir()
 	if dir == "" {
 		return nil
@@ -272,23 +273,85 @@ func (f *fileSkills) affordances(ctx context.Context) []string {
 	if err != nil {
 		return []string{fmt.Sprintf("you are in %s, and it could not be listed: %v", dir, err)}
 	}
+	var out []string
 	if len(entries) == 0 {
-		return []string{fmt.Sprintf("you are in %s and it is empty", dir)}
+		out = []string{fmt.Sprintf("you are in %s and it is empty", dir)}
+	} else {
+		out = []string{fmt.Sprintf("you are in %s, which holds:", dir)}
+		for i, e := range entries {
+			if i == maxAffordanceEntries {
+				out = append(out, fmt.Sprintf("... and %d more", len(entries)-maxAffordanceEntries))
+				break
+			}
+			if e.IsDir() {
+				out = append(out, e.Name()+"/")
+				continue
+			}
+			out = append(out, e.Name())
+		}
 	}
-
-	out := []string{fmt.Sprintf("you are in %s, which holds:", dir)}
-	for i, e := range entries {
-		if i == maxAffordanceEntries {
-			out = append(out, fmt.Sprintf("... and %d more", len(entries)-maxAffordanceEntries))
-			break
-		}
-		if e.IsDir() {
-			out = append(out, e.Name()+"/")
-			continue
-		}
-		out = append(out, e.Name())
+	// An empty folder is the case that most needs this, so it is appended after
+	// both branches rather than only after the listing.
+	if note := elsewhere(args); note != "" {
+		out = append(out, note)
 	}
 	return out
+}
+
+// readableRoot is a second place a reader can reach, and the tool that reaches
+// it. Registered rather than hard-coded so the two stay in step: a reader added
+// later announces itself here instead of needing a line somewhere else.
+//
+// Package-level because the file skills and the dev skills are registered
+// separately, from different arguments, and neither is handed the other's root.
+// LoadServed already keeps process state the same way.
+var readableRoots sync.Map // tool name -> root directory
+
+// noteReadableRoot records that a tool can read files under root.
+func noteReadableRoot(tool, root string) {
+	if root = strings.TrimSpace(root); root != "" {
+		readableRoots.Store(tool, root)
+	}
+}
+
+// elsewhere reports that the file she asked for is not here but is somewhere a
+// different tool can reach.
+//
+// # The measurement
+//
+// file_read is anchored to the working directory and dev_read to the projects
+// directory, and nothing said so. Asked to read sales.csv she got "no such file
+// or directory", tried place_list, then dev_find, then dev_read, and got it on
+// the fourth attempt. Three rounds establishing which of two readers owned the
+// root the file was under.
+//
+// Only the base name is matched, and only one level down, because this is a
+// hint attached to a failure and not a search. A hint that goes hunting is a
+// second whole-disk walk wearing a different hat.
+func elsewhere(args map[string]any) string {
+	name := filepath.Base(strings.TrimSpace(argString(args, "path")))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = filepath.Base(strings.TrimSpace(argString(args, "source")))
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+
+	var note string
+	readableRoots.Range(func(k, v any) bool {
+		tool, root := k.(string), v.(string)
+		matches, err := filepath.Glob(filepath.Join(root, "*", name))
+		if err != nil || len(matches) == 0 {
+			if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+				return true
+			}
+			matches = []string{filepath.Join(root, name)}
+		}
+		note = fmt.Sprintf("%s is not here, but %s reads %s and there is one at %s",
+			name, tool, root, matches[0])
+		return false
+	})
+	return note
 }
 
 func (f *fileSkills) read(ctx context.Context, args map[string]any) (string, error) {

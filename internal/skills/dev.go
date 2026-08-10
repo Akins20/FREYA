@@ -20,6 +20,10 @@ const maxReadBytes = 200 << 10
 // Every path argument is resolved and checked against root, so the model cannot
 // be talked into reading outside the projects tree.
 func RegisterDev(r *Registry, root string) {
+	// So a file tool that missed can say which reader owns the root the file is
+	// actually under. See elsewhere() in files.go for the three rounds this cost.
+	noteReadableRoot("dev_read", root)
+
 	d := &devSkills{root: root}
 
 	r.Register(Skill{
