@@ -101,15 +101,23 @@ func commandText(action guard.Action) string {
 	return s
 }
 
-// autoDenyConfirm refuses everything needing approval. Used when input is not
-// a terminal — a piped or scripted session must never silently approve.
-func autoDenyConfirm() guard.ConfirmFunc {
-	return func(_ context.Context, action guard.Action, a guard.Assessment) bool {
-		fmt.Fprintf(os.Stderr,
-			"%s  refused (no interactive terminal to confirm): %s%s\n",
-			cYellow, commandText(action), cReset)
-		return false
+// attend tells the guard whether anyone can actually answer a confirmation.
+//
+// This used to be a ConfirmFunc that printed "refused (no interactive terminal
+// to confirm)" to stderr and returned false. Returning false is how a user says
+// no, so the guard reported ErrDenied — "declined by user" — and that is what
+// reached the model, the reply and the defect report, for an action no user had
+// been shown. The explanation went to stderr, which is neither in the loop nor
+// in front of the user. Asked to write hello.html in a session with no terminal,
+// she stopped after one tool call and said she had been refused.
+//
+// So the fact is declared instead of being faked: unattended, and the guard
+// says so in its own words.
+func attend(g *guard.Guard, interactive bool) {
+	if interactive {
+		return
 	}
+	g.Attended = func() bool { return false }
 }
 
 // isTerminal reports whether stdin is an interactive terminal.

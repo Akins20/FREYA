@@ -128,6 +128,24 @@ type Guard struct {
 	// every action that requires one, which is the safe default: a guard with
 	// no way to ask must not assume yes.
 	Confirm ConfirmFunc
+	// Attended reports whether there is a human who can actually answer a
+	// confirmation right now. Nil means yes, which is what a REPL with somebody
+	// sitting at it gets.
+	//
+	// It exists because "no" and "nobody was asked" are different facts and were
+	// being reported as the same one. A headless session installed a Confirm that
+	// printed to stderr and returned false, so the guard took the ordinary
+	// declined path and handed back ErrDenied — "declined by user" — for an
+	// action no user ever saw. She then told the user they had refused something
+	// they were never shown, and stopped, because a refusal is a decision and
+	// there is nothing to adapt to. The honest branch below existed all along and
+	// was simply unreachable, because the thing standing in for the prompt was
+	// not nil.
+	//
+	// Separate from Confirm rather than folded into it: a ConfirmFunc returns one
+	// bool and has no room to carry why, and every caller and test that supplies
+	// a plain yes/no keeps working untouched.
+	Attended func() bool
 	// Audit records every decision. Optional but strongly recommended.
 	Audit *Log
 	// DryRun assesses and reports without executing anything.
@@ -205,8 +223,18 @@ func (e *ErrForbidden) Error() string {
 	return fmt.Sprintf("refused: %s (%s)", e.Detail, e.Rule)
 }
 
-// ErrDenied is returned when the user declines an action.
+// ErrDenied is returned when the user declines an action. A person saw it and
+// said no.
 var ErrDenied = fmt.Errorf("declined by user")
+
+// ErrUnattended is returned when an action needed approval and there was nobody
+// to ask. Deliberately not wrapping ErrDenied: anything matching on the text
+// would then still read "declined by user", which is the false statement this
+// exists to stop being made.
+var ErrUnattended = fmt.Errorf("nobody could be asked")
+
+// unattended reports that no human can answer a confirmation right now.
+func (g *Guard) unattended() bool { return g.Confirm == nil || (g.Attended != nil && !g.Attended()) }
 
 // Run assesses an action and, if permitted, executes it via exec.
 //
@@ -235,11 +263,20 @@ func (g *Guard) Run(ctx context.Context, action Action, exec func(context.Contex
 	}
 
 	if assessment.Confirm {
-		if g.Confirm == nil {
-			// No means of asking is not a licence to proceed.
+		if g.unattended() {
+			// No means of asking is not a licence to proceed — but it is also not
+			// a refusal, and the difference has to survive all the way back to
+			// the model, because it is the difference between "the user said no"
+			// and "the user was never shown this". The first ends the task; the
+			// second is something she can say out loud and offer a way round.
 			record.Outcome = "denied-no-prompt"
 			g.record(record)
-			return "", fmt.Errorf("%w: this action needs confirmation but no prompt is available", ErrDenied)
+			return "", fmt.Errorf("%w: this needs confirmation (%s risk: %s) and this session has no way to "+
+				"reach anyone — no prompt was shown, so nobody saw it and nobody refused it. Nothing was done. "+
+				"Do not report this as the user declining. Say that it needs their approval and you had no way "+
+				"to ask, and offer the alternatives: they can approve it themselves, or you can do it somewhere "+
+				"that needs no approval",
+				ErrUnattended, assessment.Risk, firstReason(assessment))
 		}
 		g.confirmMu.Lock()
 		approved := g.Confirm(ctx, action, assessment)
@@ -268,6 +305,18 @@ func (g *Guard) Run(ctx context.Context, action Action, exec func(context.Contex
 	}
 	g.record(record)
 	return out, err
+}
+
+// firstReason names what made the action need asking about, so the refusal says
+// which rule fired rather than only that one did.
+func firstReason(a Assessment) string {
+	if len(a.Reasons) > 0 {
+		return a.Reasons[0]
+	}
+	if a.Rule != "" {
+		return a.Rule
+	}
+	return "unstated"
 }
 
 func (g *Guard) record(r Record) {

@@ -169,12 +169,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	defer auditLog.Close()
 
-	confirm := confirmPrompt(stdin)
-	if !isTerminal() {
-		// A piped session has nobody to ask, so it must refuse rather than assume.
-		confirm = autoDenyConfirm()
-	}
-	g := guard.New(confirm, auditLog)
+	g := guard.New(confirmPrompt(stdin), auditLog)
+	// A piped or headless session has nobody to ask. It must still refuse — but
+	// as "nobody could be asked", not as a refusal somebody made.
+	attend(g, isTerminal())
 	g.DryRun = cfg.DryRun
 	g.ProtectedPaths = []string{cfg.DataDir}
 	// The directory she was given as her own. A write confined to it is low risk;
@@ -476,7 +474,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			// about it aloud and acts on the spoken answer. Routine work never
 			// reaches here (auto-approved); only RiskHigh does.
 			if voiceErr == nil {
+				// There is a channel to a human after all — she asks aloud and
+				// listens. Attendance is about whether anyone can be reached, not
+				// about stdin, so it is cleared along with the prompt.
 				g.Confirm = voiceConfirm(vs)
+				g.Attended = nil
 			}
 			d.Speak = func(text string) {
 				go func() { _ = vs.session.Speak(context.Background(), text) }()
