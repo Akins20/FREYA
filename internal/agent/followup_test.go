@@ -114,3 +114,29 @@ func TestFollowupSilentWithNoHistory(t *testing.T) {
 		t.Fatalf("no conversation should mean no follow-up, got %q", line)
 	}
 }
+
+// She is only ever heard from when she wants something, unless told otherwise.
+//
+// Followup chases loose ends: a deadline, something she said she would do, an
+// obvious next step. That is useful, and it is also why she never simply says
+// hello. Somebody who only speaks to hand you a job is not company, and the
+// point of her running all day is that she is around.
+func TestCompanyIsOnlyOfferedWhenAskedFor(t *testing.T) {
+	quiet := &Agent{Persona: DefaultPersona()}
+	if strings.Contains(quiet.followupSystem(), "You may also just talk") {
+		t.Error("she was given permission to chat without companion chattiness")
+	}
+
+	sociable := &Agent{Persona: DefaultPersona(), Sociable: true}
+	block := sociable.followupSystem()
+	if !strings.Contains(block, "You may also just talk") {
+		t.Fatal("companion chattiness did not unlock a non-task check-in")
+	}
+	// The bar has to travel with the permission, or this becomes filler on a
+	// timer, which is worse than silence and gets noticed within a day.
+	for _, want := range []string{"PASS", "stepped away", "concentration"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the permission to talk dropped the guard rail %q", want)
+		}
+	}
+}

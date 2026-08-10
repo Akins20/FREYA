@@ -72,6 +72,20 @@ type Agent struct {
 	// the summary. Empty means nothing pending.
 	StateSummary func() string
 
+	// Sociable lets the quiet-moment follow-up open a conversation that is not
+	// about a task.
+	//
+	// Off, Followup only ever chases a loose end: a deadline, something she said
+	// she would do, an obvious next step. That is useful and it is also the reason
+	// she never simply says hello. Somebody who only ever speaks to hand you a job
+	// is not company, and the whole point of her running all day is that she is
+	// around.
+	//
+	// Set from chattiness, so it is the dial the user already has rather than a
+	// second one. Only ChattyCompanion turns it on, because this is the setting
+	// where being spoken to unprompted is the thing being asked for.
+	Sociable bool
+
 	// UserActivity, when set, returns a one-line read of what the user appears to
 	// be doing right now — the focused window, or that they seem to be away — so a
 	// follow-up can be tailored to it (nudge the quiz page they're already on, keep
@@ -670,37 +684,7 @@ func (a *Agent) Followup(ctx context.Context) (string, error) {
 		sb.WriteString("\n")
 	}
 
-	system := a.Persona.Prompt(nil) + `
-
-# A quiet moment — re-engage if it would genuinely help
-The conversation has gone quiet for a few minutes. You are the kind of assistant
-who stays a step ahead, so look back over it and the lists below and ask: is
-there something that would genuinely help THIS person, with whatever THEY were
-doing, if I spoke up now? Their life is not one topic — work, errands, code, a
-purchase, a message they meant to send, a file downloading, anything. Judge from
-what is actually in front of you, and never fixate on one recurring subject just
-because it came up before. Lean toward engaging when there is a real hook, and
-say it warmly, briefly, in your own voice:
-- ANYTHING TIME-SENSITIVE ON THEIR PLATE. If the "on their plate" list shows a
-  deadline soon or a task you scheduled, raise THAT specific thing — whatever it
-  is — even if the conversation never mentioned it, especially if they're wrapping
-  up or stepping away. Don't let something they may be about to miss pass in
-  silence. (A generic shape: "before you go — that thing X is due in 20 minutes,
-  want to handle it first?")
-- something you said you'd do, or were both waiting on, that you can move forward
-- a question left open, or an obvious next step they'd probably want
-Use what they're doing right now as context, and follow THEIR thread, not one of
-your own. If they're focused on the very thing in question, meet them there. A
-focused window means they are present and can hear you, even if they're relaxing —
-a break is not the same as being away — so a genuinely time-sensitive item is
-worth a gentle heads-up even then. Only when there is NO focused window at all —
-they've stepped away from the machine — does a spoken nudge risk an empty room;
-prefer PASS then unless it is truly urgent.
-Do not just restate that you're standing by — that is waiting, not engaging.
-Offer a concrete next move. Reply with exactly PASS when there is honestly nothing
-worth raising — and PASS is entirely correct when they are simply doing something
-unrelated and nothing is pending; do not manufacture a reason to bring up an old
-topic.`
+	system := a.followupSystem()
 
 	// Weave in the rest of her plate — scheduled tasks and approaching deadlines —
 	// so a single re-engagement can tie the conversation to what is actually
@@ -906,4 +890,66 @@ func (a *Agent) kitsFor(input string) []skills.Kit {
 		return nil
 	}
 	return skills.Route(input)
+}
+
+// followupSystem builds the brief for a quiet moment. Split out from Followup so
+// the permissions it grants can be read without standing up a provider.
+func (a *Agent) followupSystem() string {
+	system := a.Persona.Prompt(nil) + `
+
+# A quiet moment — re-engage if it would genuinely help
+The conversation has gone quiet for a few minutes. You are the kind of assistant
+who stays a step ahead, so look back over it and the lists below and ask: is
+there something that would genuinely help THIS person, with whatever THEY were
+doing, if I spoke up now? Their life is not one topic — work, errands, code, a
+purchase, a message they meant to send, a file downloading, anything. Judge from
+what is actually in front of you, and never fixate on one recurring subject just
+because it came up before. Lean toward engaging when there is a real hook, and
+say it warmly, briefly, in your own voice:
+- ANYTHING TIME-SENSITIVE ON THEIR PLATE. If the "on their plate" list shows a
+  deadline soon or a task you scheduled, raise THAT specific thing — whatever it
+  is — even if the conversation never mentioned it, especially if they're wrapping
+  up or stepping away. Don't let something they may be about to miss pass in
+  silence. (A generic shape: "before you go — that thing X is due in 20 minutes,
+  want to handle it first?")
+- something you said you'd do, or were both waiting on, that you can move forward
+- a question left open, or an obvious next step they'd probably want
+Use what they're doing right now as context, and follow THEIR thread, not one of
+your own. If they're focused on the very thing in question, meet them there. A
+focused window means they are present and can hear you, even if they're relaxing —
+a break is not the same as being away — so a genuinely time-sensitive item is
+worth a gentle heads-up even then. Only when there is NO focused window at all —
+they've stepped away from the machine — does a spoken nudge risk an empty room;
+prefer PASS then unless it is truly urgent.
+Do not just restate that you're standing by — that is waiting, not engaging.
+Offer a concrete next move. Reply with exactly PASS when there is honestly nothing
+worth raising — and PASS is entirely correct when they are simply doing something
+unrelated and nothing is pending; do not manufacture a reason to bring up an old
+topic.`
+
+	// Permission to simply talk, when the user has asked for company rather than
+	// only for help. Without this the answer to "nothing is pending" is always
+	// PASS, so she is only ever heard from when she wants something from them.
+	if a.Sociable {
+		system += `
+
+# You may also just talk
+If there is no task worth raising, you are still allowed to say something —
+because they have asked for company, not only for help. This is the one case
+where PASS is not the only honest answer to an empty plate.
+
+Say it the way a person in the same room would. React to what they are actually
+doing, pick up a thread from earlier that you are genuinely curious about, tell
+them something you noticed, or ask them something you would like to know. One or
+two sentences. No preamble, no "just checking in", no offering help you have not
+been asked for, and never a list.
+
+The bar is that it would be welcome. If they are heads-down in something that
+takes concentration, leave them alone. If there is no focused window at all, they
+have stepped away, so PASS. If you have nothing you actually want to say, PASS —
+filling silence on a schedule is worse than silence, and they will notice the
+difference within a day.`
+	}
+
+	return system
 }

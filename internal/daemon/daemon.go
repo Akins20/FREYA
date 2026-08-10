@@ -92,19 +92,20 @@ type Reply struct {
 
 // Status describes a running daemon.
 type Status struct {
-	PID        int       `json:"pid"`
-	Started    time.Time `json:"started"`
-	Watchers   []string  `json:"watchers"`
-	Chatty     string    `json:"chattiness"`
-	Notified   int       `json:"notified"`
-	Suppressed int       `json:"suppressed"`
+	PID         int       `json:"pid"`
+	Started     time.Time `json:"started"`
+	Watchers    []string  `json:"watchers"`
+	Chatty      string    `json:"chattiness"`
+	Notified    int       `json:"notified"`
+	Undelivered int       `json:"undelivered,omitempty"`
+	Suppressed  int       `json:"suppressed"`
 }
 
 // Daemon runs the watchers and delivers what they find.
 type Daemon struct {
 	DataDir  string
 	Sentinel *sentinel.Sentinel
-	// Speak, when set, reads critical notifications aloud.
+	// Speak, when set, reads critical observations aloud.
 	Speak func(string)
 	// Quiet suppresses desktop notifications, for debugging.
 	Quiet bool
@@ -123,11 +124,15 @@ type Daemon struct {
 	// sessions opening in succession do not resume the daemon between them.
 	yielded int
 
-	mu         sync.Mutex
-	started    time.Time
-	notified   int
-	suppressed int
-	listener   net.Listener
+	mu       sync.Mutex
+	started  time.Time
+	notified int
+	// undelivered counts observations that reached no channel at all: no desktop
+	// notifier, nothing to speak with. It is reported rather than hidden, because
+	// a silent proactivity engine looks exactly like a calm one.
+	undelivered int
+	suppressed  int
+	listener    net.Listener
 }
 
 // New builds a daemon around an existing sentinel.
@@ -186,26 +191,75 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// deliver sends an observation to the desktop, and aloud when it is urgent.
+// deliver puts an observation in front of the user, by whatever channels exist,
+// and records what actually happened to it.
+//
+// # The counter used to lie
+//
+// It incremented here, before anything was attempted, and notify() returns
+// silently when notify-send is not installed. Measured on a box without
+// libnotify: three observations raised, none delivered anywhere, and the status
+// line said "3 notifications sent". A raised observation left no trace in the
+// journal either, so there was nothing to check the count against.
+//
+// That is the same shape as a tool reporting success for work it did not do:
+// every layer above reads green. So the count is of deliveries that happened,
+// the journal records the observation either way, and a delivery that reached
+// nobody says so.
 func (d *Daemon) deliver(o sentinel.Observation) {
-	d.mu.Lock()
-	d.notified++
-	d.mu.Unlock()
-
+	desktop := false
 	if !d.Quiet {
-		notify(o)
+		desktop = notify(o)
 	}
-	// Only genuinely urgent things interrupt audibly. A spoken sentence is far
-	// more intrusive than a notification that waits to be noticed.
+
+	// Aloud only when it is worth interrupting for. A spoken sentence is far more
+	// intrusive than a notification that waits to be noticed, and the deliberate
+	// design is that observations arrive as toasts. Her talking unprompted is a
+	// separate path (Agent.Followup), which is about the conversation rather than
+	// about the machine.
+	spoken := false
 	if d.Speak != nil && o.Urgency >= sentinel.UrgencyCritical {
 		d.Speak(o.Summary)
+		spoken = true
 	}
+
+	d.mu.Lock()
+	if desktop || spoken {
+		d.notified++
+	} else {
+		d.undelivered++
+	}
+	d.mu.Unlock()
+
+	d.journal(o, desktop, spoken)
 }
 
-// notify posts a desktop notification.
-func notify(o sentinel.Observation) {
+// journal writes the observation and its fate to the daemon's stdout.
+//
+// Scheduled self-tasks already print when they fire and when they finish, and
+// watchers printed nothing at all — which is backwards, because the watcher path
+// is the one nobody is watching. A missed toast now leaves a line behind.
+func (d *Daemon) journal(o sentinel.Observation, desktop, spoken bool) {
+	var how string
+	switch {
+	case desktop && spoken:
+		how = "notified, spoken"
+	case desktop:
+		how = "notified"
+	case spoken:
+		how = "spoken"
+	default:
+		how = "NOT DELIVERED: no desktop notifier and nothing to speak with"
+	}
+	fmt.Printf("  👁 [%s] %s (%s)\n", o.Urgency, o.Summary, how)
+}
+
+// notify posts a desktop notification, and reports whether one was actually
+// posted. A missing notify-send is not an error worth stopping for, but it must
+// not be mistaken for a delivery.
+func notify(o sentinel.Observation) bool {
 	if _, err := exec.LookPath("notify-send"); err != nil {
-		return
+		return false
 	}
 
 	urgency := "normal"
@@ -223,7 +277,7 @@ func notify(o sentinel.Observation) {
 	cmd := exec.Command("notify-send",
 		"--app-name=Freya", "--urgency="+urgency, "--icon=dialog-information",
 		"Freya", body)
-	_ = cmd.Run()
+	return cmd.Run() == nil
 }
 
 // serve handles one control connection.
@@ -253,7 +307,7 @@ func (d *Daemon) serve(conn net.Conn) {
 			PID: os.Getpid(), Started: d.started,
 			Watchers: d.Sentinel.Watchers(),
 			Chatty:   d.Sentinel.Chattiness.String(),
-			Notified: d.notified, Suppressed: d.suppressed,
+			Notified: d.notified, Undelivered: d.undelivered, Suppressed: d.suppressed,
 		}
 		d.mu.Unlock()
 		writeReply(conn, Reply{OK: true, Status: status})
@@ -370,8 +424,17 @@ func Ask(dataDir, command string) (*Reply, error) {
 }
 
 // Describe renders a status for display.
+//
+// The undelivered count is only shown when it is non-zero, and it is worth
+// showing loudly when it is: it means she noticed things and had no way to tell
+// anyone, which from the outside is indistinguishable from noticing nothing.
 func (s *Status) Describe() string {
-	return fmt.Sprintf("pid %d, up %s, %d watchers (%s), chattiness %s, %d notifications sent",
+	out := fmt.Sprintf("pid %d, up %s, %d watchers (%s), chattiness %s, %d delivered",
 		s.PID, time.Since(s.Started).Round(time.Second),
 		len(s.Watchers), strings.Join(s.Watchers, ", "), s.Chatty, s.Notified)
+	if s.Undelivered > 0 {
+		out += fmt.Sprintf(", %d NOT DELIVERED (no desktop notifier and no voice — "+
+			"install notify-send, or she notices things and cannot tell you)", s.Undelivered)
+	}
+	return out
 }

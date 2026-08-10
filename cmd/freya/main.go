@@ -284,6 +284,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// tasks she scheduled for herself and deadlines coming up within a few days.
 	// Composed here so the agent stays decoupled from how either is stored.
 	deadlineFeed := skills.Deadlines(store, cfg.DataDir)
+	// Company, not just help: at companion chattiness the quiet-moment follow-up
+	// may open a conversation that is not about a task. See Agent.Sociable.
+	a.Sociable = sentinel.ParseChattiness(cfg.Chattiness) == sentinel.ChattyCompanion
+
 	a.StateSummary = func() string {
 		var parts []string
 		if selfTasks != nil {
