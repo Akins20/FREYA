@@ -166,3 +166,35 @@ func TestAMoveWithNoStepIsRefused(t *testing.T) {
 		t.Error("a call naming no step was accepted")
 	}
 }
+
+// A batch that is refused must leave the plan exactly as it was.
+//
+// The first version applied moves in a loop and returned on the first refusal,
+// so "1:done, 2:done" with a missing file for step 2 left step 1 marked done and
+// handed back an error. A model that gets an error concludes nothing happened,
+// and from the next turn on her plan and her belief about it disagree.
+func TestARefusedBatchChangesNothing(t *testing.T) {
+	r, ctx, plan := planFixture(t, "one", "write index.html")
+
+	before := []StepState{plan.at(0).State, plan.at(1).State}
+	if _, err := r.Execute(ctx, "plan_step", map[string]any{"steps": "1:done, 2:done"}); err == nil {
+		t.Fatal("a batch naming an unwritten file was accepted")
+	}
+	if got := plan.at(0).State; got != before[0] {
+		t.Errorf("step 1 moved to %q despite the batch being refused", got)
+	}
+	if got := plan.at(1).State; got != before[1] {
+		t.Errorf("step 2 moved to %q despite the batch being refused", got)
+	}
+}
+
+// The same for a step number that does not exist, which is the other refusal.
+func TestABatchWithABadStepNumberChangesNothing(t *testing.T) {
+	r, ctx, plan := planFixture(t, "one", "two")
+	if _, err := r.Execute(ctx, "plan_step", map[string]any{"steps": "1:done, 9:doing"}); err == nil {
+		t.Fatal("a batch naming step 9 of a two-step plan was accepted")
+	}
+	if got := plan.at(0).State; got != StepTodo {
+		t.Errorf("step 1 is %q after a refused batch, want todo", got)
+	}
+}

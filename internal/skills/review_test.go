@@ -95,3 +95,26 @@ func TestReviewIsAbsentWithoutVision(t *testing.T) {
 		t.Error("review registered against a provider with no vision")
 	}
 }
+
+// A partial review is unmistakable, and keeps what it saw.
+//
+// The handler used to return the error and discard every verdict it already
+// had, so a transient failure on page three cost pages one and two as well and
+// the retry paid for them again. Both failure kinds now land in the same list:
+// a page that would not render, and a page the reviewer could not look at.
+func TestAPartialReviewNamesWhatNobodySaw(t *testing.T) {
+	note := unseenNote([]string{"b.html (the reviewer could not look at it: rate limited)"}, 3)
+	for _, want := range []string{"1 of 3", "NOT looked at", "b.html", "Nothing above speaks to them"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note is missing %q: %s", want, note)
+		}
+	}
+}
+
+// A complete review says nothing about pages nobody missed, or every result
+// grows a caveat and the caveat stops being read.
+func TestACompleteReviewCarriesNoCaveat(t *testing.T) {
+	if got := unseenNote(nil, 4); got != "" {
+		t.Errorf("a review that saw everything still warned: %q", got)
+	}
+}

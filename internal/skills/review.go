@@ -152,8 +152,14 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 				}
 				verdict, err := eyes.AnalyzeImage(ctx, reviewBrief, [][]byte{shot}, []string{"image/png"})
 				if err != nil {
-					return "", fmt.Errorf("the reviewer could not look at %s: %w",
-						filepath.Base(page), err)
+					// Kept alongside the render failures rather than thrown, because
+					// discarding the pages that DID come back means paying for them
+					// again on the retry and losing whatever they said in the
+					// meantime. A page nobody looked at is named either way, so the
+					// partial cannot be mistaken for the whole.
+					blind = append(blind, fmt.Sprintf("%s (the reviewer could not look at it: %v)",
+						filepath.Base(page), err))
+					continue
 				}
 				seen++
 				fmt.Fprintf(&sb, "## %s\n\n%s\n\n", filepath.Base(page), strings.TrimSpace(verdict))
@@ -163,21 +169,12 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 			// Returning an error is what puts it in the trail as failed, which is
 			// what keeps the gate unsatisfied.
 			if seen == 0 {
-				return "", fmt.Errorf("nothing could be rendered, so nobody looked at this: %s. "+
-					"The reviewer needs a browser it can start; the page is unreviewed and "+
+				return "", fmt.Errorf("nobody looked at this: %s. The page is unreviewed, and "+
 					"saying otherwise would be a claim nobody checked",
 					strings.Join(blind, "; "))
 			}
 
-			// A partial review says which pages went unseen, in the same breath as
-			// the verdicts, so acting on it cannot be mistaken for acting on all of
-			// them.
-			unseen := ""
-			if len(blind) > 0 {
-				unseen = fmt.Sprintf("\n\n[%d of %d pages could not be rendered and were NOT "+
-					"looked at: %s. Nothing below speaks to them.]",
-					len(blind), len(blind)+seen, strings.Join(blind, "; "))
-			}
+			unseen := unseenNote(blind, len(blind)+seen)
 
 			return strings.TrimSpace(sb.String()) + capped + unseen +
 				"\n\n[This is someone seeing the page cold, with no idea what you were " +
@@ -228,4 +225,20 @@ func renderShot(ctx context.Context, page string) ([]byte, error) {
 		return nil, err
 	}
 	return base64.StdEncoding.DecodeString(shot)
+}
+
+// unseenNote names the pages nobody looked at, alongside the verdicts for the
+// ones somebody did.
+//
+// A partial review has to be unmistakable. The pages that came back are kept,
+// because throwing them away means paying for them again on the retry, and the
+// pages that did not are named in the same breath, so acting on the partial
+// cannot be mistaken for acting on all of it. Both failure kinds arrive here:
+// a page that would not render, and a page the reviewer could not look at.
+func unseenNote(blind []string, total int) string {
+	if len(blind) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n\n[%d of %d pages were NOT looked at: %s. Nothing above speaks to them.]",
+		len(blind), total, strings.Join(blind, "; "))
 }

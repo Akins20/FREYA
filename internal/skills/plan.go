@@ -153,9 +153,69 @@ func (p *Plan) Mark(n int, state StepState, note, dir string) error {
 	defer p.mu.Unlock()
 	p.touched = true
 
+	if err := p.refuse(n, state, dir); err != nil {
+		return err
+	}
+	p.apply(n, state, note)
+	return nil
+}
+
+// MarkAll moves several steps at once, and refuses the whole set if any one of
+// them would be refused.
+//
+// All-or-nothing because half of a batch is worse than none of it. The first
+// version applied moves in a loop and returned on the first refusal, so
+// "1:done, 2:done" with a missing file for step 2 left step 1 marked done and
+// handed back an error — and a model that gets an error reasonably concludes
+// nothing happened. From the next turn on, her plan and her belief about it
+// disagree, silently, which is the failure this whole file exists to prevent.
+//
+// Validation before application is sound here because applying a move never
+// changes whether another one is allowed: the only conditional check is whether
+// a file exists on disk, and marking steps does not write files.
+func (p *Plan) MarkAll(moves []stepMove, dir string) error {
+	if len(moves) == 0 {
+		return fmt.Errorf("no steps to move")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, m := range moves {
+		if err := p.refuse(m.step, m.state, dir); err != nil {
+			return err
+		}
+	}
+	p.touched = true
+	for _, m := range moves {
+		p.apply(m.step, m.state, m.note)
+	}
+	return nil
+}
+
+// refuse reports why a move may not be made, without making it. The lock must
+// be held.
+func (p *Plan) refuse(n int, state StepState, dir string) error {
 	if n < 1 || n > len(p.steps) {
 		return fmt.Errorf("there is no step %d — the plan has %d", n, len(p.steps))
 	}
+	step := &p.steps[n-1]
+	if state == StepDone && step.Produces != "" {
+		path := step.Produces
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("step %d says it produces %s and that file is not there. "+
+				"Either it was never written, or it went somewhere else — check before "+
+				"marking this done, because the only thing they will have is the file",
+				n, step.Produces)
+		}
+	}
+	return nil
+}
+
+// apply makes a move that refuse has already allowed. The lock must be held.
+func (p *Plan) apply(n int, state StepState, note string) {
 	step := &p.steps[n-1]
 
 	if state == StepDoing {
@@ -169,24 +229,10 @@ func (p *Plan) Mark(n int, state StepState, note, dir string) error {
 		}
 	}
 
-	if state == StepDone && step.Produces != "" {
-		path := step.Produces
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(dir, path)
-		}
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("step %d says it produces %s and that file is not there. "+
-				"Either it was never written, or it went somewhere else — check before "+
-				"marking this done, because the only thing they will have is the file",
-				n, step.Produces)
-		}
-	}
-
 	step.State = state
 	if note = strings.TrimSpace(note); note != "" {
 		step.Note = note
 	}
-	return nil
 }
 
 // Outstanding returns the steps not yet settled, rendered for reading.
@@ -365,10 +411,8 @@ func RegisterPlan(r *Registry) {
 			if err != nil {
 				return "", err
 			}
-			for _, m := range moves {
-				if err := plan.Mark(m.step, m.state, m.note, scope.Dir()); err != nil {
-					return "", err
-				}
+			if err := plan.MarkAll(moves, scope.Dir()); err != nil {
+				return "", err
 			}
 			return plan.Render(), nil
 		},
