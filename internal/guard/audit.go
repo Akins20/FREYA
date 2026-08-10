@@ -32,6 +32,19 @@ type Log struct {
 	mu   sync.Mutex
 	file *os.File
 	path string
+	// dropped counts records that could not be written.
+	//
+	// Append's error was discarded at the one call site, so a full disk or a
+	// revoked permission made the audit log stop growing without anything saying
+	// so. That is the worst possible failure for this particular file: it is the
+	// only place the user can see what she did, and an incomplete one looks
+	// exactly like a quiet day. This machine's drive sits near capacity, so it is
+	// not a hypothetical.
+	//
+	// A failed write must never fail the action — refusing to act because the
+	// diary is full would be absurd. So it is counted, and whoever reads the log
+	// is told the count.
+	dropped int
 }
 
 const auditFile = "audit.jsonl"
@@ -52,6 +65,16 @@ func OpenLog(dir string) (*Log, error) {
 // Append writes one record. Failures here must not break the caller — an
 // unwritable log is a problem to report, not a reason to abandon the action
 // the user already approved.
+// Dropped reports how many records could not be written.
+func (l *Log) Dropped() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.dropped
+}
+
 func (l *Log) Append(r Record) error {
 	if l == nil {
 		return nil
@@ -64,9 +87,12 @@ func (l *Log) Append(r Record) error {
 
 	line, err := json.Marshal(r)
 	if err != nil {
+		l.dropped++
 		return err
 	}
-	_, err = l.file.Write(append(line, '\n'))
+	if _, err = l.file.Write(append(line, '\n')); err != nil {
+		l.dropped++
+	}
 	return err
 }
 

@@ -130,15 +130,23 @@ func RegisterShell(r *Registry, g *guard.Guard) {
 			if err != nil {
 				return "", err
 			}
+			// A log that could not be written looks exactly like a quiet day, so
+			// say when it is incomplete rather than letting an empty answer imply
+			// nothing happened.
+			gap := ""
+			if n := g.Audit.Dropped(); n > 0 {
+				gap = fmt.Sprintf("\n\n[%d action(s) could not be written to the audit log "+
+					"this session — it is incomplete. Usually a full disk.]", n)
+			}
 			if len(records) == 0 {
-				return "Nothing recorded yet.", nil
+				return "Nothing recorded yet." + gap, nil
 			}
 			var sb strings.Builder
 			for _, rec := range records {
 				sb.WriteString(rec.Summary())
 				sb.WriteString("\n")
 			}
-			return strings.TrimSpace(sb.String()), nil
+			return strings.TrimSpace(sb.String()) + gap, nil
 		},
 	})
 }
