@@ -366,7 +366,7 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 		// Surface her reasoning before anything she does with it — this is the
 		// visible thinking between steps. Emitted every round, so across a
 		// multi-tool task you watch the plan form and adjust, not just the actions.
-		if thought := strings.TrimSpace(resp.Reasoning); thought != "" && a.OnThought != nil {
+		if thought := trimThoughtPreamble(resp.Reasoning); thought != "" && a.OnThought != nil {
 			a.OnThought(thought)
 		}
 
@@ -837,7 +837,7 @@ func (a *Agent) reportProgress(ctx context.Context, system string, msgs []llm.Me
 	if err != nil || resp == nil {
 		return ""
 	}
-	if thought := strings.TrimSpace(resp.Reasoning); thought != "" && a.OnThought != nil {
+	if thought := trimThoughtPreamble(resp.Reasoning); thought != "" && a.OnThought != nil {
 		a.OnThought(thought)
 	}
 	return strings.TrimSpace(resp.Text)
