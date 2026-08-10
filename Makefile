@@ -8,7 +8,7 @@ BIN_DIR := bin
 
 build: ## Compile the binary
 	@mkdir -p $(BIN_DIR)
-	go build -trimpath -o $(BIN_DIR)/$(BINARY) $(PKG)
+	CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$(BINARY) $(PKG)
 	@echo "built $(BIN_DIR)/$(BINARY)"
 
 run: build ## Build and start the REPL

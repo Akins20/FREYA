@@ -23,8 +23,14 @@ import (
 //
 // Tool declarations lead the request, so the set IS the start of the cached
 // prefix. A set that changes per task is a prefix that changes per task, and we
-// would be trading a measured ~91% cache hit rate for a speculative improvement
-// in attention. That is a bad trade made confidently, which is the worst kind.
+// would be trading a high cache hit rate for a speculative improvement in
+// attention. That is a bad trade made confidently, which is the worst kind.
+//
+// The rate this was weighed against was ~91%, sampled over the sessions running
+// at the time. The lifetime figure quoted in the README is 79% over 196M input
+// tokens, which is the same metric over a much longer and messier window. Both
+// are off my own telemetry rather than anything in this repo; the argument only
+// needs the order of magnitude, and either number makes it.
 //
 // So kits are chosen ONCE per exchange, before the loop, and held for its whole
 // length. Within an exchange the prefix is stable. Across exchanges there are a

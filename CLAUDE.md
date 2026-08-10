@@ -9,7 +9,8 @@ in Go with a terminal REPL and an optional spoken mode (`/voice on`).
 
 **Zero external dependencies — pure standard library.** This is deliberate: builds are
 instant and offline on modest hardware, there is no supply-chain surface, and the binary
-is fully static. Do not add a dependency without a concrete reason that outweighs this.
+is fully static when built with `CGO_ENABLED=0`, which the Makefile sets. Do not add a
+dependency without a concrete reason that outweighs this.
 
 ## Commands
 
@@ -52,7 +53,7 @@ variables always win.
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
-| `FREYA_TOOL_ROUTING` | Narrows the tools she is **shown** to those a request calls for. The 96-down-to-27-53 figure was measured at 96 registered tools; there are now 148, so the range is stale and the ratio is the point. `off` disables it. Everything stays **executable** either way: a tool she names that was not offered still runs and the miss is counted (`/tools`). See `internal/skills/kits.go` — narrowing is the one change here that fails silently, so the valve and the counter are the design, not extras. |
+| `FREYA_TOOL_ROUTING` | Narrows the tools she is **shown** to those a request calls for. The 96-down-to-27-53 figure was measured at 96 registered tools; there are now 136, so the range is stale and the ratio is the point. `off` disables it. Everything stays **executable** either way: a tool she names that was not offered still runs and the miss is counted (`/tools`). See `internal/skills/kits.go` — narrowing is the one change here that fails silently, so the valve and the counter are the design, not extras. |
 | `FREYA_DOWNLOAD_DIR` | Where browser downloads land. Set explicitly on every tab so the OS "Save as" window never opens — that window is not page content, so nothing can drive it and she cannot even tell it is there. Defaults to `~/Downloads`. |
 | `FREYA_WAKE` | Always-on wake-word listening. **Off unless you set it** — `on` enables it, a duration like `2h` enables it with a timeout. There is no local wake-word model, so while it is on, speech near the mic is recorded and sent for transcription whether or not it was meant for her; that is opt-in only. It had no off switch at first, and was quiet only because starting the listener happened to fail — then the switch landed with the default still on, because an empty string fell through to `forever`, and the mic came on for a user who had set nothing. Push-to-talk needs none of this and is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
@@ -191,7 +192,9 @@ arrive as JSON, so numbers are `float64` and any field may be absent — always 
 
 Shell-outs go through `run()`, which invokes binaries directly with a timeout — never
 through a shell, so arguments cannot inject commands. Use `have()` to degrade with a
-useful message when a binary is missing.
+useful message when a binary is missing. The single exception is the `run_shell` skill,
+which exists for pipes and redirection and hands `bash -c` a string; it is deliberate,
+and the guard prices it accordingly. Do not add a second one.
 
 Dev skills are confined to `FREYA_PROJECTS_DIR` by `devSkills.resolve`, which clamps
 traversal and absolute paths back into root. Tests assert this.
@@ -232,8 +235,10 @@ the nearest impostor scored 0.022 below the owner — no threshold separates the
 Default policy is `warn`; never change the default to `enforce`. Two fixes
 already landed and matter: cepstral coefficient c0 is excluded (it encodes
 loudness, not identity, and dominates the vector) and embeddings are centred
-before normalising (turning cosine into correlation). Together those widened the
-synthetic margin from 0.016 to 0.480. Do not reintroduce c0.
+before normalising (turning cosine into correlation). Together those took the
+synthetic margin from 0.016 to well clear of the 0.15 floor the suite asserts;
+`TestEnrollmentAndVerification` logs the live figure every run, so read it there
+rather than quoting a number that ages. Do not reintroduce c0.
 
 ## Platform notes
 

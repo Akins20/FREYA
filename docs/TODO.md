@@ -399,15 +399,18 @@ Asked whether she was being limited, the honest answer was yes, in four ways.
       as silence. It is now surfaced immediately and spoken in voice mode.
 - [x] Persona permits exactly one short interstitial line before slow work —
       the only preamble allowed, and only because silence reads as a hang.
-- [ ] **Round cap** is still a flat 12; a genuinely long job hits the ceiling
+- [x] **Round cap** raised from 12 to 40 (`maxToolRounds`), after real builds ran
+      past thirty rounds. On the cap she makes one final call with no tools
+      offered, so the work is answered from rather than discarded.
 - [ ] **No background work** — nothing can run while the conversation continues
 
 ## Backups ✅
 
 First snapshot completed: **23.9 GiB, 17G on disk** after deduplication.
-Repository at `/run/media/akins/Akins Drive1/restic-repo`, password at
-`~/.config/freya/restic-password` (mode 600) — **that password must be copied
-somewhere else; without it the snapshots are unrecoverable.**
+Restic repository and its password file live off this repo; the paths are kept
+locally rather than written down here, because where a password file sits is not
+something a public checkout needs to know. **That password must be copied
+somewhere off the machine; without it the snapshots are unrecoverable.**
 
 Still the same physical disk as the data it protects. Guards against deletion
 and bad commands, not against drive failure.

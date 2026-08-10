@@ -2,9 +2,13 @@
 
 **An AI assistant that refuses to say it's finished when it isn't.**
 
-Written in Go, with zero external dependencies. One static binary, builds in seconds.
-It runs offline on a 2014 laptop with no GPU. 47,000 lines of standard library,
-613 tests.
+Written in Go, with zero external dependencies. One binary, builds in seconds.
+47,000 lines of standard library, 17,000 lines of tests. Developed on a 2014
+laptop with no GPU and meant to be comfortable there.
+
+The reasoning runs on a hosted model (Gemini or Anthropic). There is an offline
+mode, but the stand-in it uses is a keyword matcher for exercising the loop, not
+a local LLM.
 
 The project is JARVIS; the assistant is **Freya**.
 
@@ -46,11 +50,13 @@ always-there version with a push-to-talk key.
 
 ## What she does
 
-**Drives a real browser.** 43 of her 148 tools are Chrome, over the DevTools
+**Drives a real browser.** 42 of her 136 tools are Chrome, over the DevTools
 Protocol: click, type, drag, right-click, upload, download, switch tabs, read
 pages that lazy-load, work pagination, save a page as PDF. Clicks go through the
 browser's own input pipeline rather than `element.click()`, because the pages
-where that distinction matters are the pages worth automating.
+where that distinction matters are the pages worth automating. It is a real
+browser on a real display and not a headless one, for the same reason: a window
+you can watch, on the machine you are sitting at.
 
 **Finishes what she starts.** Writes files, checks the syntax, checks that every
 link goes somewhere, serves it, and puts it on your screen. When she tries to end
@@ -81,8 +87,9 @@ work](https://arxiv.org/abs/2606.09863) measures agents asserting completion
 against an environment that says otherwise in **75.8%** of self-assessing coding
 trajectories, and measures LLM judges detecting it at AUROC 0.65 and 0.54,
 close enough to chance to be useless, because judges key on confident closing
-language and on how much the agent did. Detectors that look at state reach 0.83
-to 0.95.
+language and on how much the agent did. Lightweight detectors over the
+trajectory reach 0.83 to 0.95, so the signal is there and asking a model for a
+verdict is what loses it.
 
 So nothing here asks her whether she is done. It looks:
 
@@ -99,6 +106,11 @@ So nothing here asks her whether she is done. It looks:
 
 Every rule in her design playbook was written after measuring her own output.
 Some rules worked and some did nothing, and the pattern took a while to see.
+
+These are counts off my own builds, kept as I went. They are not in the repo and
+nobody can re-run them, so weigh them as a log rather than as a result. What is
+in the repo is the mechanism they produced, in `wiring.HouseStyle`, and you can
+watch it fire on the first page you ask her to write.
 
 | tell | before | named | later builds | counted |
 |---|---|---|---|---|
@@ -148,8 +160,13 @@ most-stable-first, because the prompt cache rewards a stable prefix:
 
 Eviction is chunked rather than sliding, so the cached prefix survives many turns
 instead of being invalidated every request. Budgets cascade: unspent allowance
-falls through to the tier below, so short conversations send short prompts. The
-measured cache hit rate is **79%** across 196M input tokens.
+falls through to the tier below, so short conversations send short prompts.
+
+On my own telemetry the hit rate has run around 79% over 196M input tokens. That
+comes from a data directory that is not in this repo, so take it as my number
+rather than one you can reproduce by cloning. `usage_report` computes the same
+figure from whatever you accumulate, out of the provider's own accounting rather
+than an estimate.
 
 The archive is append-only and never destroys anything. Turns degrade verbatim →
 summarised episode → still searchable by BM25.
@@ -169,8 +186,14 @@ gives every thread its own cacheable prefix and none can reuse another's.
 
 Every action is classified and either allowed, confirmed with a concrete preview,
 or refused. Deleting data, touching system paths and escalating to root are
-refused outright when there is nobody to ask. Shell-outs invoke binaries directly
-with a timeout, never through a shell, so arguments cannot inject commands.
+refused outright when there is nobody to ask.
+
+Skills that shell out invoke the binary directly with a timeout and never through
+a shell, so arguments cannot inject commands. `run_shell` is the one deliberate
+exception, for the cases that genuinely need pipes or redirection, and the guard
+classifies it as higher risk for exactly that reason: a bare shell string is
+medium, and any chaining metacharacter in a string that can modify state raises
+it to high.
 
 Credential fields report their length and never their contents. `browser_inspect`
 once labelled an input with its own value, which put a real password into the
@@ -189,11 +212,16 @@ takes 1.8s, same transcript.
 
 **Speaker verification is implemented and unvalidated, and says so.** On real
 audio the nearest impostor scored 0.022 below the owner, so no threshold
-separates them. The default policy warns and never enforces. Two fixes that
-mattered are recorded in the code: cepstral coefficient c0 is excluded because it
-encodes loudness rather than identity, and embeddings are centred before
-normalising, which turns cosine into correlation. Together they widened the
-synthetic margin from 0.016 to 0.480.
+separates them. That measurement is written up in `internal/voice/verify.go` with
+the four voices it was taken on; it has no fixtures in the repo, so it is my
+number and not a reproducible one. The default policy warns and never enforces.
+
+Two fixes that mattered are in the code: cepstral coefficient c0 is excluded
+because it encodes loudness rather than identity, and embeddings are centred
+before normalising, which turns cosine into correlation. On synthetic tones the
+test suite measures the owner/impostor gap every run, and it currently sits at
+about 0.72 against a floor of 0.15. Synthetic tones are an easy case and that
+number says nothing about real voices.
 
 ## Layout
 
@@ -236,11 +264,26 @@ The full table, including the reasoning window and the self-repair loop, is in
 ## Build
 
 ```bash
-make check          # fmt, vet, 613 tests, build
+make check          # fmt, vet, test, build
 make test
 make install        # to ~/.local/bin
 go test ./... -race
 ```
+
+`go test ./...` runs 623 tests. On a bare machine 601 pass, 22 skip and none
+fail; the skips are the ones that need Chrome running or probe documents that are
+not in the repo. The race detector is clean.
+
+## What it needs
+
+Linux, and it has only ever been built and run there. Nothing in it is knowingly
+platform-specific beyond the terminal and process handling, but macOS and Windows
+are untested and `internal/term` will not compile on Windows as it stands.
+
+The browser tools drive a real Chrome window on a real display, which is the
+design rather than an omission: clicks go through the browser's own input
+pipeline and the window is one you can watch. On a headless server they will not
+start. Everything else works without a display.
 
 Developed on Linux Lite 8, i7-4600U, no GPU. It is meant to be comfortable there.
 
