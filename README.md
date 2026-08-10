@@ -270,7 +270,7 @@ make install        # to ~/.local/bin
 go test ./... -race
 ```
 
-`go test ./...` runs 623 tests. On a bare machine 601 pass, 22 skip and none
+`go test ./...` runs 626 tests. On a bare machine 604 pass, 22 skip and none
 fail; the skips are the ones that need Chrome running or probe documents that are
 not in the repo. The race detector is clean.
 
