@@ -110,10 +110,16 @@ func shortPath(p string) string {
 	return strings.Join(parts[len(parts)-2:], "/")
 }
 
-// finishBrief is the push. Written as a tool result rather than as the user
-// speaking, because it is the machine reporting the state of the work — and
-// putting words in the user's mouth is how a turn ends up archived as a request
-// they never made.
+// finishBrief is the push. It is worded as the machine reporting the state of
+// the work rather than as the user speaking, because putting words in their
+// mouth is how a turn ends up archived as a request they never made.
+//
+// It goes on the wire as a user-role message, which is the only role a provider
+// will accept here — a tool result has to answer a tool call by id, and there is
+// no call to answer. What keeps it out of the archive is that it is appended to
+// the in-flight message list and never to the store; only her final reply is
+// archived. This comment used to say it was sent as a tool result, which it
+// never was.
 func finishBrief(ends []string) string {
 	var sb strings.Builder
 	sb.WriteString("HOLD ON — you are about to call this finished and it is not.\n\n")

@@ -129,12 +129,23 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 				pages = pages[:most]
 			}
 
+			// Counted, because a review that looked at nothing must not return
+			// success. Every page failing to render used to leave the failures in
+			// the text, append the closing line about someone seeing the page cold,
+			// and hand all of it back with a nil error — so the trail recorded a
+			// successful review, the completion gate that exists to force this call
+			// was satisfied by it, and the turn ended with nobody having looked.
+			// Measured: two builds where the renderer could not start, both reported
+			// "review skipped due to renderer environment" in her own plan notes and
+			// finished anyway. That is the silent capability loss this codebase
+			// spends most of its checks trying to make impossible.
 			var sb strings.Builder
+			seen := 0
+			var blind []string
 			for _, page := range pages {
 				shot, err := renderShot(ctx, page)
 				if err != nil {
-					fmt.Fprintf(&sb, "## %s\n\ncould not be rendered to look at: %v\n\n",
-						filepath.Base(page), err)
+					blind = append(blind, fmt.Sprintf("%s (%v)", filepath.Base(page), err))
 					continue
 				}
 				verdict, err := eyes.AnalyzeImage(ctx, reviewBrief, [][]byte{shot}, []string{"image/png"})
@@ -142,10 +153,31 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 					return "", fmt.Errorf("the reviewer could not look at %s: %w",
 						filepath.Base(page), err)
 				}
+				seen++
 				fmt.Fprintf(&sb, "## %s\n\n%s\n\n", filepath.Base(page), strings.TrimSpace(verdict))
 			}
 
-			return strings.TrimSpace(sb.String()) + capped +
+			// Nothing was looked at, so this is a failed call and not a thin one.
+			// Returning an error is what puts it in the trail as failed, which is
+			// what keeps the gate unsatisfied.
+			if seen == 0 {
+				return "", fmt.Errorf("nothing could be rendered, so nobody looked at this: %s. "+
+					"The reviewer needs a browser it can start; the page is unreviewed and "+
+					"saying otherwise would be a claim nobody checked",
+					strings.Join(blind, "; "))
+			}
+
+			// A partial review says which pages went unseen, in the same breath as
+			// the verdicts, so acting on it cannot be mistaken for acting on all of
+			// them.
+			unseen := ""
+			if len(blind) > 0 {
+				unseen = fmt.Sprintf("\n\n[%d of %d pages could not be rendered and were NOT "+
+					"looked at: %s. Nothing below speaks to them.]",
+					len(blind), len(blind)+seen, strings.Join(blind, "; "))
+			}
+
+			return strings.TrimSpace(sb.String()) + capped + unseen +
 				"\n\n[This is someone seeing the page cold, with no idea what you were " +
 				"aiming for. Where they misread something, the page is what misled them.]", nil
 		},
