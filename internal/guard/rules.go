@@ -567,14 +567,33 @@ var readSubcommands = map[string]map[string]bool{
 // segmentSeparators split a shell string into independently-run commands.
 var segmentSeparators = regexp.MustCompile(`\|\||&&|;|\||\n`)
 
+// discardRedirect matches the redirections that write nowhere: anything sent to
+// /dev/null, and a file descriptor pointed at another one.
+//
+// Measured, and it was firing constantly. `find / -name "sales.csv" 2>/dev/null`
+// was classified destructive, on the grounds that it contains ">" and so at least
+// one segment can modify state. It cannot. Silencing stderr is the most common
+// idiom in shell, it appears in almost every search a model writes, and every one
+// of them was stopping to ask — which in the daemon, where there is nobody to
+// ask, means refused outright.
+//
+// A checker that is wrong does not get ignored, it gets obeyed, and the way a
+// model obeys this one is by dropping the 2>/dev/null and drowning its own output
+// in permission-denied noise. So the narrow carve-out: only /dev/null, only a
+// word-boundary match so /dev/nullfile is still a write, and the plain ">" test
+// still runs on whatever is left.
+var discardRedirect = regexp.MustCompile(`(?:[0-9]*|&)>>?\s*/dev/null\b|[0-9]*>&[0-9]+`)
+
 // isReadOnlySegment reports whether one pipeline segment only observes state.
 func isReadOnlySegment(seg string) bool {
 	seg = strings.TrimSpace(seg)
 	if seg == "" {
 		return true
 	}
-	// Redirection writes to a file, whatever the command is.
-	if strings.Contains(seg, ">") {
+	// Redirection writes to a file, whatever the command is — except the ones
+	// that write to nothing. Those are removed first so the test below still
+	// catches every redirection that lands somewhere.
+	if strings.Contains(discardRedirect.ReplaceAllString(seg, " "), ">") {
 		return false
 	}
 	// Command substitution hides an arbitrary command inside.

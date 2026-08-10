@@ -28,7 +28,8 @@ a local LLM.
 thing looked at.
 ```
 
-That is a real run, not a mock-up. The trace is what `-v` prints.
+Those are the calls from a real run, in the order they happened, with the
+reasoning between them cut for length. `-v` prints all of it.
 
 The em dash is the whole idea in one line. A rule in her playbook told her not to
 use them, twice, in increasingly emphatic language, and the count went **up**.

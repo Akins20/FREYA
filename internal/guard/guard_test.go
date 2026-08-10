@@ -584,3 +584,56 @@ func TestNoteRecordsWithoutGating(t *testing.T) {
 		t.Errorf("a failed action was recorded as %q with error %q", last.Outcome, last.Error)
 	}
 }
+
+// Silencing stderr is not a write, and treating it as one stopped almost every
+// search she tried to run.
+//
+// `find / -name "sales.csv" 2>/dev/null` came back destructive, on the reasoning
+// that the string contains ">" so a segment can modify state. Measured on a real
+// task: she was asked to read a CSV, went looking for it, and the search needed a
+// confirmation nobody was there to give, so it was cancelled and she spent three
+// more rounds getting to a file that was sitting in front of her.
+//
+// The carve-out has to stay narrow, which is what the second half of this test is
+// for. Anything that lands somewhere real is still a write.
+func TestDiscardingOutputIsNotAWrite(t *testing.T) {
+	readOnly := []string{
+		`find / -name "sales.csv" 2>/dev/null`,
+		"ls -la 2>/dev/null",
+		"grep -r pattern . 2>/dev/null",
+		"cat file 2> /dev/null",
+		"which chromium >/dev/null 2>&1",
+		"find . -name '*.go' &>/dev/null",
+		"ps aux 2>&1",
+	}
+	for _, s := range readOnly {
+		if !pipelineIsReadOnly(s) {
+			t.Errorf("%q was treated as modifying state; it writes nowhere", s)
+		}
+	}
+
+	writes := []string{
+		"ls > listing.txt",
+		"ls >> listing.txt",
+		"cat a 2>/dev/null > b",
+		"echo hi > /dev/nullfile",
+		"find / -name x 2>/dev/null > found.txt",
+		"grep -r x . > /tmp/out 2>/dev/null",
+	}
+	for _, s := range writes {
+		if pipelineIsReadOnly(s) {
+			t.Errorf("%q writes to a file and was treated as read-only", s)
+		}
+	}
+}
+
+// And the whole assessment, not just the helper: a silenced search must not ask
+// for a confirmation there is nobody to give.
+func TestASilencedSearchDoesNotStopToAsk(t *testing.T) {
+	g := New(func(context.Context, Action, Assessment) bool { return true }, nil)
+	a := g.Assess(Action{Kind: KindExec, Shell: `find . -name "*.csv" 2>/dev/null`})
+	if a.Risk >= RiskHigh {
+		t.Errorf("a silenced search in the current folder scored %v (rule %q): %v",
+			a.Risk, a.Rule, a.Reasons)
+	}
+}
