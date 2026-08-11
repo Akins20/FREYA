@@ -49,6 +49,10 @@ type Task struct {
 type Store struct {
 	mu   sync.Mutex
 	path string
+	// lost records that the task list could not be read and was set aside, so
+	// callers can say so rather than reporting an empty schedule. Empty when
+	// nothing has been lost.
+	lost string
 	// now is injected so tests are not at the mercy of the clock. Nil means
 	// time.Now.
 	now func() time.Time
@@ -80,11 +84,33 @@ func (s *Store) load() ([]Task, error) {
 	}
 	var tasks []Task
 	if err := json.Unmarshal(b, &tasks); err != nil {
-		// A corrupt file must not wedge scheduling forever; start fresh rather
-		// than failing every poll.
+		// A corrupt file must not wedge scheduling forever, so this starts fresh
+		// rather than failing every poll. What it must not do is start fresh
+		// SILENTLY: everything she had promised to come back and do is in that
+		// file, and an empty schedule is indistinguishable from a schedule that
+		// was quietly thrown away. The symptom is her saying she will follow up
+		// and then never following up, which is the exact failure the daemon
+		// exists to prevent.
+		//
+		// So the bad file is moved aside rather than overwritten, and the path is
+		// remembered so Pending and the tools can report it.
+		aside := s.path + ".unreadable"
+		if err := os.Rename(s.path, aside); err != nil {
+			aside = s.path
+		}
+		s.lost = aside
 		return nil, nil
 	}
 	return tasks, nil
+}
+
+// Lost reports where an unreadable task list was set aside, or empty if none
+// was. Anything scheduled before that point is gone, and saying so is the whole
+// point of keeping it.
+func (s *Store) Lost() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lost
 }
 
 // save writes the task list atomically. Caller holds the lock.

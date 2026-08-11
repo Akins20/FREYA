@@ -1,6 +1,8 @@
 package schedule
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -89,5 +91,68 @@ func TestSurvivesRestart(t *testing.T) {
 	s2.now = func() time.Time { return now }
 	if due, _ := s2.DueNow(); len(due) != 1 {
 		t.Fatalf("task did not survive restart: got %d due", len(due))
+	}
+}
+
+// An unreadable task list must not vanish quietly.
+//
+// A corrupt file cannot be allowed to wedge every poll, so load starts fresh.
+// What it must not do is start fresh in silence: everything she has promised to
+// come back and do lives in that file, and an empty schedule is indistinguishable
+// from one that was thrown away. The symptom is her saying she will follow up and
+// then never following up, which is the failure the daemon exists to prevent.
+func TestAnUnreadableTaskListIsKeptAndReported(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add("write the report", time.Now().Add(time.Hour), "a real task"); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.Pending(); err != nil || len(p) != 1 {
+		t.Fatalf("the task did not land: %v %v", p, err)
+	}
+
+	// Something corrupts it between runs.
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := fresh.Pending()
+	if err != nil {
+		t.Fatalf("a corrupt list wedged the poll: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("unreadable tasks were returned anyway: %v", pending)
+	}
+	lost := fresh.Lost()
+	if lost == "" {
+		t.Fatal("the schedule was thrown away and nothing recorded it")
+	}
+	if _, err := os.Stat(lost); err != nil {
+		t.Errorf("the unreadable list was destroyed rather than set aside: %v", err)
+	}
+	// And scheduling still works afterwards, or the cure is worse.
+	if _, err := fresh.Add("carry on", time.Now().Add(time.Hour), ""); err != nil {
+		t.Errorf("scheduling stayed broken after the bad file was set aside: %v", err)
+	}
+}
+
+// A healthy store reports no loss, or the warning becomes noise nobody reads.
+func TestAHealthyScheduleReportsNoLoss(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pending(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Lost(); got != "" {
+		t.Errorf("a healthy store claimed a loss at %q", got)
 	}
 }

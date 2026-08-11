@@ -68,8 +68,17 @@ func RegisterSchedule(r *Registry, store *schedule.Store) {
 			if err != nil {
 				return "", err
 			}
+			// "Nothing scheduled" and "the schedule was thrown away" look identical
+			// from here, and only one of them means she has quietly dropped work
+			// she promised to come back to.
+			lost := ""
+			if p := store.Lost(); p != "" {
+				lost = fmt.Sprintf("\n\n[The task list could not be read and was set aside "+
+					"at %s. Anything scheduled before now is gone — say so rather than "+
+					"letting it look like there was never anything there.]", p)
+			}
 			if len(pending) == 0 {
-				return "Nothing scheduled.", nil
+				return strings.TrimSpace("Nothing scheduled." + lost), nil
 			}
 			var sb strings.Builder
 			for _, t := range pending {
@@ -77,7 +86,7 @@ func RegisterSchedule(r *Registry, store *schedule.Store) {
 					t.ID, t.Due.Format("Mon 15:04"),
 					time.Until(t.Due).Round(time.Second), t.Prompt)
 			}
-			return strings.TrimSpace(sb.String()), nil
+			return strings.TrimSpace(sb.String()) + lost, nil
 		},
 	})
 
