@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -174,5 +175,53 @@ func TestCurrentCachesAndProbeDoesNot(t *testing.T) {
 	}
 	if Probe().Display == first.Display {
 		t.Error("Probe returned the cached answer instead of re-examining")
+	}
+}
+
+// The accessibility answer must come from the bus, not from a binary existing.
+//
+// The first version reported "AT-SPI is reachable here through busctl" whenever
+// busctl was installed. Those are two independent facts glued together: systemd
+// ships busctl on machines with no accessibility registry running at all, and
+// at-spi2-core ships a registry on machines with neither busctl nor gdbus.
+// Measured both ways in a container, which is the only reason the difference was
+// visible at all.
+func TestAccessibilityIsAnsweredByTheBusNotByABinary(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("AT-SPI is the Linux answer")
+	}
+	t.Setenv("DISPLAY", ":0")
+	t.Setenv("WAYLAND_DISPLAY", "")
+
+	c := Probe().Accessibility
+	if c.Available {
+		t.Fatal("something claims to read an accessibility tree and nothing implements one yet")
+	}
+	// Whatever the reason, it must not be the bare presence or absence of a
+	// binary standing in for whether the registry answered.
+	switch {
+	case strings.Contains(c.Why, "not installed"):
+		if _, err := exec.LookPath("gdbus"); err == nil {
+			t.Errorf("gdbus is installed and the reason says it is not: %q", c.Why)
+		}
+	case strings.Contains(c.Why, "no accessibility registry answered"):
+		if _, err := exec.LookPath("gdbus"); err != nil {
+			t.Errorf("gdbus is absent and the reason blames the registry: %q", c.Why)
+		}
+	case strings.Contains(c.Why, "up and answering"):
+		if a11yBusAddress() == "" {
+			t.Errorf("the reason claims the bus answered and it does not: %q", c.Why)
+		}
+	default:
+		t.Errorf("the reason does not distinguish the three cases: %q", c.Why)
+	}
+}
+
+// And the address parser has to survive the shape gdbus actually returns, which
+// is a D-Bus tuple rather than a bare string.
+func TestTheA11yAddressIsEmptyWhenNothingAnswers(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no gdbus anywhere
+	if got := a11yBusAddress(); got != "" {
+		t.Errorf("an address came back with no gdbus on PATH: %q", got)
 	}
 }

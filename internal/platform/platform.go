@@ -333,15 +333,28 @@ func probeAccessibility(os_ OS, d Display) Capability {
 	}
 	switch os_ {
 	case Linux:
-		// busctl and gdbus both ship widely and either can reach AT-SPI. No
-		// hand-written D-Bus client: she already shells out to twenty-odd
+		// Asked of the bus rather than inferred from a binary being installed.
+		//
+		// The first version of this said "AT-SPI is reachable here through busctl"
+		// whenever busctl existed, which is two independent facts glued together:
+		// systemd ships busctl on machines with no accessibility registry running
+		// at all, and at-spi2-core ships a registry on machines with neither
+		// busctl nor gdbus. Measured in a container with the registry up and both
+		// binaries absent, and again with both present, which is the only reason
+		// the difference is visible.
+		//
+		// No hand-written D-Bus client. She already shells out to twenty-odd
 		// binaries, so one more is consistent, and the protocol is binary.
-		if bin := firstAvailable("busctl", "gdbus"); bin != "" {
-			return Capability{Why: fmt.Sprintf("AT-SPI is reachable here through %s "+
-				"and nothing reads it yet", bin)}
+		if !have("gdbus") {
+			return Capability{Why: "reading an application's element tree needs AT-SPI, " +
+				"reached through gdbus, which is in libglib2.0-bin and is not installed"}
 		}
-		return Capability{Why: "reading an application's element tree needs AT-SPI, " +
-			"which needs busctl or gdbus on PATH, and nothing reads it yet"}
+		if addr := a11yBusAddress(); addr == "" {
+			return Capability{Why: "gdbus is here but no accessibility registry answered on " +
+				"the session bus — install at-spi2-core, and on a bare session start it with " +
+				"/usr/libexec/at-spi-bus-launcher --launch-immediately"}
+		}
+		return Capability{Why: "AT-SPI is up and answering, and nothing reads it yet"}
 	case MacOS:
 		return Capability{Why: "the macOS Accessibility API needs a permission granted " +
 			"per application in System Settings, and nothing reads it yet"}
@@ -373,4 +386,31 @@ func (i Info) Describe() string {
 		fmt.Fprintf(&b, "  %-14s %s\n", row.name, row.c)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// a11yBusAddress asks the session bus where the accessibility bus lives, and
+// returns empty when nothing answers.
+//
+// Two hops, which is the part that is easy to get wrong: the accessibility tree
+// is not on the session bus. The session bus only knows the address of a second,
+// private bus, and everything interesting is over there. A probe that stops after
+// finding gdbus has established nothing at all.
+func a11yBusAddress() string {
+	out, err := exec.Command("gdbus", "call", "--session",
+		"--dest", "org.a11y.Bus",
+		"--object-path", "/org/a11y/bus",
+		"--method", "org.a11y.Bus.GetAddress").Output()
+	if err != nil {
+		return ""
+	}
+	// gdbus wraps a reply in a tuple: ('unix:path=/run/user/1000/at-spi/bus',)
+	s := strings.TrimSpace(string(out))
+	s = strings.TrimPrefix(s, "(")
+	s = strings.TrimSuffix(s, ")")
+	s = strings.TrimSuffix(strings.TrimSpace(s), ",")
+	s = strings.Trim(strings.TrimSpace(s), "'")
+	if !strings.HasPrefix(s, "unix:") {
+		return ""
+	}
+	return s
 }
