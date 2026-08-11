@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -52,4 +53,43 @@ func TestSideEffectsIsSafeWithoutATab(t *testing.T) {
 	if got := sideEffects(&openTab{}, time.Now()); got != "" {
 		t.Errorf("a tab with no client produced %q", got)
 	}
+}
+
+// Every browser tool that takes a target the model composed hands back the
+// page's real options when it misses.
+//
+// The rule that produced Protect applies here too: a guard installed at one call
+// site is a guard the next tool does not inherit. Affordances went onto the click
+// and interact family and stopped there, leaving the three tools that fail on a
+// selector or a phrase with nothing to offer. browser_upload's own error text
+// already told her to go and inspect the page for input[type=file], which is the
+// listing this hands back for free.
+func TestEveryBrowserToolWithATargetOffersThePageBack(t *testing.T) {
+	r := New()
+	RegisterBrowser(r, approveAll(), NewTabs())
+	for _, name := range []string{
+		"browser_click", "browser_click_text", "browser_fill", "browser_element",
+		"browser_wait", "browser_upload",
+	} {
+		if !r.Has(name) {
+			t.Errorf("%s is not registered", name)
+			continue
+		}
+		// AffordancesFor returns nil when the skill has no hook at all. With no
+		// browser running the hook itself also returns nil, so this asserts the
+		// wiring through the registry rather than the content of the listing.
+		if r.AffordancesFor(context.Background(), name, map[string]any{}) == nil &&
+			!hasAffordances(r, name) {
+			t.Errorf("%s can miss on a target and hands back nothing to act on", name)
+		}
+	}
+}
+
+// hasAffordances reports whether a skill declares the hook, regardless of what
+// it returns right now.
+func hasAffordances(r *Registry, name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	s, ok := r.skills[name]
+	return ok && s.Affordances != nil
 }

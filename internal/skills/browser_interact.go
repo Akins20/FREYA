@@ -266,6 +266,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"seconds":  {Type: "integer", Description: "How long to wait (default 15)."},
 			}),
 		},
+		Affordances: tabs.affordances,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {
@@ -334,6 +335,7 @@ func RegisterBrowserInteract(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"selector": {Type: "string", Description: "CSS selector."},
 			}, "selector"),
 		},
+		Affordances: tabs.affordances,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			tab, err := tabFor(args)
 			if err != nil {

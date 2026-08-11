@@ -216,7 +216,7 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"files":    {Type: "string", Description: "Path to upload. Separate several with a comma."},
 			}, "selector", "files"),
 		},
-		Mutates: true, Observe: tabs.observe,
+		Mutates: true, Observe: tabs.observe, Affordances: tabs.affordances,
 		Act: func(ctx context.Context, args map[string]any) (Outcome, error) {
 			tab, tabNote, err := tabNoted(tabs, args)
 			if err != nil {
