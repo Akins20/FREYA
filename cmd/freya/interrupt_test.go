@@ -213,3 +213,34 @@ func TestWakeListeningIsOffUnlessAskedFor(t *testing.T) {
 		}
 	}
 }
+
+// The microphone stays off for anyone who has set nothing.
+//
+// This is the one default in the project with a recorded history of being wrong
+// in the dangerous direction. There was no off switch at first, and it was quiet
+// only because starting the listener happened to fail; the switch then landed
+// with the default still on, because an empty string fell through to "forever"
+// and the microphone came on for a user who had configured nothing.
+//
+// There is no local wake-word model, so while this is on, speech near the mic is
+// recorded and sent away whether or not it was meant for her. An unset variable
+// must never mean yes.
+func TestAnUnsetWakeSettingLeavesTheMicrophoneOff(t *testing.T) {
+	// Nothing set at all: the case that went wrong.
+	if !wakeDisabled(&config.Config{}) {
+		t.Error("a config with nothing set left wake listening enabled")
+	}
+	// And the spellings of no, including the ones a person types rather than the
+	// one the code was written around.
+	for _, off := range []string{"", " ", "off", "OFF", " Off ", "no", "false", "0", "deaf"} {
+		if !wakeDisabled(&config.Config{Wake: off}) {
+			t.Errorf("%q did not turn wake listening off", off)
+		}
+	}
+	// Only a deliberate yes turns it on.
+	for _, on := range []string{"on", "ON", "2h", "30m", "yes", "true"} {
+		if wakeDisabled(&config.Config{Wake: on}) {
+			t.Errorf("%q was meant to enable wake listening and did not", on)
+		}
+	}
+}
