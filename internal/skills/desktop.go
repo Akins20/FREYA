@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Akins20/FREYA/internal/a11y"
 	"github.com/Akins20/FREYA/internal/guard"
 	"github.com/Akins20/FREYA/internal/llm"
 	"github.com/Akins20/FREYA/internal/platform"
@@ -28,6 +29,9 @@ import (
 
 // RegisterDesktop adds window, screenshot and input skills.
 func RegisterDesktop(r *Registry, g *guard.Guard) {
+	// The native counterpart to browser_inspect. See registerDesktopInspect.
+	registerDesktopInspect(r)
+
 	if g == nil {
 		return
 	}
@@ -283,4 +287,139 @@ func (d *desktop) sendKeys(ctx context.Context, args map[string]any) (string, er
 		}
 		return fmt.Sprintf("Sent %s to %s.", keys, target), nil
 	})
+}
+
+// onScreenTitles lists the window titles the window manager knows about.
+//
+// Separate from listWindows because the interesting question here is not what to
+// show the user, it is whether a particular title exists at all — which is what
+// distinguishes a window that publishes nothing from a window that is not there.
+func onScreenTitles(ctx context.Context) ([]string, error) {
+	if !have("wmctrl") {
+		return nil, fmt.Errorf("wmctrl is not installed, so what is on screen is unknown")
+	}
+	out, err := run(ctx, 10*time.Second, "wmctrl", "-l")
+	if err != nil {
+		// A failure here is not an empty desktop. Measured: with no EWMH window
+		// manager running, wmctrl exits non-zero with "Cannot get client list
+		// properties", and treating that as an empty list produced the message
+		// "no window matching XtermTarget is open, and nothing else is either"
+		// while the xterm was on screen the whole time. Reporting a tool's failure
+		// as a fact about the world is the mistake this file's own comments are
+		// about.
+		return nil, fmt.Errorf("the window manager could not be asked what is open: %w", err)
+	}
+	var titles []string
+	for _, line := range strings.Split(out, "\n") {
+		// wmctrl -l: <id> <desktop> <host> <title...>
+		if parts := strings.SplitN(strings.TrimSpace(line), " ", 4); len(parts) == 4 {
+			if t := strings.TrimSpace(parts[3]); t != "" {
+				titles = append(titles, t)
+			}
+		}
+	}
+	return titles, nil
+}
+
+// registerDesktopInspect adds the native-window counterpart to browser_inspect.
+//
+// # Three answers, not two
+//
+// The tree exists, or the window is on screen and publishes nothing, or no such
+// window is open. Collapsing the middle case into "no elements" is the failure
+// this whole package keeps producing: a Tk window, an xterm and anything under
+// Wine are all on screen, focusable and typeable, and completely invisible here.
+// Reported as an empty result, she would describe an empty window.
+//
+// And the middle case has two causes that cannot be told apart from outside.
+// Measured across four identical runs, which applications appear on the
+// accessibility bus varied every time: GTK and Qt, then Qt alone, then GTK alone
+// twice. An application that started before the accessibility service can miss
+// its chance to register and never retry. So the message names both causes
+// rather than asserting the one that sounds more likely.
+func registerDesktopInspect(r *Registry) {
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "desktop_inspect",
+			Description: "Read the elements of a native application window: its buttons, " +
+				"fields, labels and what they are called. This is browser_inspect for " +
+				"things outside the browser.\n\n" +
+				"Use it before typing or pressing keys at a native app, so you are aiming " +
+				"at something you have actually seen rather than guessing from a " +
+				"screenshot. Not every application publishes this — when one does not, " +
+				"say so and fall back to desktop_screenshot with keystrokes.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"window": {Type: "string", Description: "Part of the window title, as shown " +
+					"by desktop_windows. Omit to read the first window that publishes anything."},
+			}),
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if c := platform.Current().Accessibility; !c.Available && !strings.Contains(c.Why, "answering") {
+				return "", fmt.Errorf("%s", c.Why)
+			}
+			reader, err := a11y.Open(ctx)
+			if err != nil {
+				return "", fmt.Errorf("%w — start it with at-spi-bus-launcher, or fall back "+
+					"to desktop_screenshot and keystrokes", err)
+			}
+
+			title := argString(args, "window")
+			node, err := reader.Window(ctx, title)
+			if err == nil {
+				body := a11y.Describe(node)
+				if strings.TrimSpace(body) == "" {
+					body = "(the window is on the bus and reports no elements inside it)"
+				}
+				return body, nil
+			}
+
+			// Not on the bus. Whether that window exists at all decides which of
+			// two very different things to say — and whether that question could be
+			// answered at all is a third thing, which must not be reported as a no.
+			on, screenErr := onScreenTitles(ctx)
+			if screenErr != nil {
+				return "", fmt.Errorf("%s is not on the accessibility bus, and %s — so I "+
+					"cannot tell you whether it is on screen at all. desktop_screenshot "+
+					"will show you what is actually there",
+					quoteOrAny(title), screenErr)
+			}
+			if matchesTitle(on, title) {
+				return "", fmt.Errorf("that window is on screen but its application is not on " +
+					"the accessibility bus, so there is nothing to read. Two things cause " +
+					"this and they cannot be told apart from here: the toolkit may publish " +
+					"nothing at all (Tk, xterm, Wine and some Java apps never do), or the " +
+					"application may have started before the accessibility service and " +
+					"missed its chance to register. Either way, desktop_screenshot with " +
+					"keystrokes still works on it")
+			}
+			if len(on) == 0 {
+				return "", fmt.Errorf("no window matching %q is open, and nothing else is "+
+					"either", title)
+			}
+			return "", fmt.Errorf("no window matching %q is open. On screen right now: %s",
+				title, strings.Join(on, ", "))
+		},
+	})
+}
+
+// matchesTitle reports whether any on-screen title contains the fragment. An
+// empty fragment matches anything that exists, which is what omitting the
+// argument means.
+func matchesTitle(titles []string, fragment string) bool {
+	want := strings.ToLower(strings.TrimSpace(fragment))
+	for _, t := range titles {
+		if want == "" || strings.Contains(strings.ToLower(t), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// quoteOrAny renders a window fragment for a message, or says "any window" when
+// none was given.
+func quoteOrAny(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "no window"
+	}
+	return fmt.Sprintf("%q", title)
 }
