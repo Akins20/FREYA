@@ -10,6 +10,7 @@ import (
 
 	"github.com/Akins20/FREYA/internal/guard"
 	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/platform"
 )
 
 // Desktop control for X11, built on xdotool and wmctrl.
@@ -99,12 +100,13 @@ type desktop struct{ guard *guard.Guard }
 // requireX11 gives a precise reason when the display is unavailable, rather
 // than letting xdotool fail with something cryptic.
 func requireX11() error {
-	if os.Getenv("DISPLAY") == "" {
-		return fmt.Errorf("no X display available (DISPLAY unset) — desktop control " +
-			"needs a graphical session")
-	}
-	if os.Getenv("WAYLAND_DISPLAY") != "" && os.Getenv("XDG_SESSION_TYPE") == "wayland" {
-		return fmt.Errorf("this is a Wayland session; xdotool only works under X11")
+	// Asked of internal/platform rather than of the environment directly, so
+	// there is one answer to "can a window be driven here" and one place that
+	// knows what to tell someone when it cannot. The reasons it hands back name
+	// the fix, which a bare DISPLAY check cannot: a Wayland session is the system
+	// working as designed and no amount of installing xdotool will change it.
+	if in := platform.Current().Input; !in.Available {
+		return fmt.Errorf("%s", in.Why)
 	}
 	return nil
 }

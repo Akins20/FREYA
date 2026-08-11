@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Akins20/FREYA/internal/llm"
+	"github.com/Akins20/FREYA/internal/platform"
 )
 
 // RegisterSystem adds desktop and machine-control skills.
@@ -22,6 +23,24 @@ func RegisterSystem(r *Registry) {
 			Params:      llm.ObjectSchema(nil),
 		},
 		Handler: systemStatus,
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "what_can_i_do_here",
+			Description: "Report what this machine actually lets you do: whether you can " +
+				"drive windows, send keystrokes, take a screenshot, notify, record, speak " +
+				"and reach a browser — and, where you cannot, exactly why and what would " +
+				"fix it.\n\n" +
+				"Reach for this before telling the user something is impossible, and when a " +
+				"desktop or voice tool refuses for a reason you do not understand. Saying " +
+				"'I cannot do that' when the real answer is 'xdotool is not installed' " +
+				"wastes their time and is not true.",
+			Params: llm.ObjectSchema(nil),
+		},
+		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+			return platform.Current().Describe(), nil
+		},
 	})
 
 	r.Register(Skill{
