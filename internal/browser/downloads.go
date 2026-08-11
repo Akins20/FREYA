@@ -168,9 +168,7 @@ func (d *downloads) progress(guid, state string, received, total float64) {
 	case "completed":
 		rec.State = Complete
 		rec.Ended = time.Now()
-		if rec.Filename != "" {
-			rec.Path = filepath.Join(DownloadDir(), rec.Filename)
-		}
+		rec.Path = settle(rec.GUID, rec.Filename)
 	case "canceled":
 		rec.State = Cancelled
 		rec.Ended = time.Now()
@@ -306,4 +304,75 @@ func (c *Client) downloadEvent(method string, params json.RawMessage) {
 		_ = json.Unmarshal(params, &p)
 		c.downloads.progress(p.GUID, p.State, p.ReceivedBytes, p.TotalBytes)
 	}
+}
+
+// settle gives a finished download its real name, and returns the path that
+// actually exists.
+//
+// # Two things were wrong
+//
+// Chrome, driven through setDownloadBehavior, writes the file under its download
+// GUID and never under the name the page suggested. So a file the user asked for
+// as report.txt arrived in their Downloads folder as
+// 5b7c2769-9fdf-42a2-aece-967ba2824d3a, which is not a file anybody can find
+// later.
+//
+// Worse, completion set Path to DownloadDir()/Filename regardless — a path that
+// had never existed. browser_downloads then reported "saved to
+// /home/user/Downloads/report.txt" for a file on disk under a GUID. Measured:
+// she read that, went to open it, and only got there by listing the folder and
+// finding the GUID herself. A tool that reports a path it did not check is the
+// same failure as one that reports success it did not earn.
+//
+// # Why it never overwrites
+//
+// A download that silently replaces an existing file destroys something nobody
+// agreed to lose, and this is the one place where the name comes from the page
+// rather than from the user. A collision gets a suffix, the way every browser
+// does it. If the rename cannot happen at all, the GUID path is returned,
+// because a name that is ugly and true beats one that is tidy and absent.
+func settle(guid, filename string) string {
+	dir := DownloadDir()
+	actual := filepath.Join(dir, guid)
+	if _, err := os.Stat(actual); err != nil {
+		// Nothing under the GUID: either Chrome kept the real name already, or
+		// the file is somewhere this cannot see. Report only what is there.
+		if filename != "" {
+			named := filepath.Join(dir, filename)
+			if _, err := os.Stat(named); err == nil {
+				return named
+			}
+		}
+		return ""
+	}
+	if filename == "" {
+		return actual
+	}
+
+	target := filepath.Join(dir, filepath.Base(filename))
+	if free, ok := freeName(target); ok {
+		if err := os.Rename(actual, free); err == nil {
+			return free
+		}
+	}
+	return actual
+}
+
+// freeName finds a path near target that nothing occupies, the way a browser
+// does it: report.txt, then report (1).txt, and so on. Bounded, because a
+// hundred collisions is a different problem and silently inventing a
+// hundred-and-first name does not solve it.
+func freeName(target string) (string, bool) {
+	if _, err := os.Stat(target); err != nil {
+		return target, true
+	}
+	ext := filepath.Ext(target)
+	stem := strings.TrimSuffix(target, ext)
+	for i := 1; i <= 99; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		if _, err := os.Stat(candidate); err != nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }
