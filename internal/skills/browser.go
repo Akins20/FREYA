@@ -356,13 +356,16 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			if !ok {
 				return "", fmt.Errorf("no tab named %q", argString(args, "name"))
 			}
+			// The event log was built for this call and was only ever read by the
+			// gestures. See sideEffects.
+			started := time.Now()
 			sel := argString(args, "selector")
 			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
 				Reason: fmt.Sprintf("click %q in tab %q (%s context)", sel, tab.name, tab.ctx)}
 			if err := selectorBudget(ctx, tab); err != nil {
 				return "", err
 			}
-			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+			out, rerr := g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.ClickReal(ctx, sel); err != nil {
 					tab.missed()
 					return "", clickHint(ctx, tab, err)
@@ -373,6 +376,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				title, _ := tab.client.Title(ctx)
 				return fmt.Sprintf("Clicked. Now on %q\n%s", title, url), nil
 			})
+			if rerr != nil {
+				return "", rerr
+			}
+			return out + sideEffects(tab, started), nil
 		},
 	})
 
@@ -398,6 +405,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			if terr != nil {
 				return Outcome{}, terr
 			}
+			started := time.Now()
 			text := argString(args, "text")
 			if strings.TrimSpace(text) == "" {
 				return Outcome{}, fmt.Errorf("text is required")
@@ -430,7 +438,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return Outcome{}, err
 			}
 
-			o := Outcome{Text: out + tabNote}
+			o := Outcome{Text: out + tabNote + sideEffects(tab, started)}
 			// Say what was actually hit when it differs from what was asked for.
 			// The match is fuzzy — exact wins, else the shortest containing label —
 			// so "Submit" can land on "Submit and add another", and echoing back the
@@ -860,4 +868,24 @@ func coverage(total, shown int) string {
 		"again with a higher limit (up to 100000) before you treat this as the "+
 		"complete picture. browser_find is cheaper when you only need one phrase.]",
 		pct, shown, total, 100-pct)
+}
+
+// sideEffects reports what a click caused outside the page.
+//
+// The event channel exists for one failure, recorded in the browser package
+// doc: "a click that started a download looked exactly like a click that did
+// nothing, which is how four clicks and four dialogs happen". It was then read
+// only by the gestures in browser_gestures.go, right-click and double-click and
+// drag, and not by browser_click or browser_click_text, which are the tools that
+// do the actual clicking and the ones that story is about.
+//
+// The before-and-after fingerprint does not cover it. A download leaves the page
+// identical, and a dialog is auto-answered before the second sample is taken, so
+// Observe sees no change and the result reads as nothing having happened, which
+// is the exact sentence the event log was added to stop.
+func sideEffects(tab *openTab, since time.Time) string {
+	if tab == nil || tab.client == nil {
+		return ""
+	}
+	return browser.Describe(tab.client.Since(since))
 }
