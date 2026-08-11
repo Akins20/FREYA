@@ -235,3 +235,33 @@ func TestSystemStatusReportsSomething(t *testing.T) {
 		t.Errorf("status reported neither disk nor memory:\n%s", out)
 	}
 }
+
+// A missing key is permanent, and the message has to say so.
+//
+// Measured across two live runs: web_fetch failed for a missing SERPER_API_KEY
+// and she called it five more times with different URLs. Different arguments, so
+// the repeat limit never saw them as the same failure, and nothing in the text
+// said the condition would not change. It also said "web search is unavailable"
+// when what she had asked for was a named page, and never mentioned that a
+// browser tab was sitting right there.
+func TestAMissingSearchKeySaysItIsPermanentAndOffersTheBrowser(t *testing.T) {
+	r := New()
+	RegisterWeb(r, "")
+
+	for _, tool := range []string{"web_search", "web_fetch", "web_news"} {
+		_, err := r.Execute(context.Background(), tool, map[string]any{
+			"query": "anything", "url": "https://example.com",
+		})
+		if err == nil {
+			t.Errorf("%s succeeded with no API key", tool)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "whole session") {
+			t.Errorf("%s does not say the failure is permanent: %s", tool, msg)
+		}
+		if !strings.Contains(msg, "browser_open") {
+			t.Errorf("%s does not point at the browser: %s", tool, msg)
+		}
+	}
+}

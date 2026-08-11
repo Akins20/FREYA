@@ -90,7 +90,20 @@ func RegisterWeb(r *Registry, serperKey string) {
 // post sends a JSON body to a Serper endpoint and decodes the reply.
 func (c *webClient) post(ctx context.Context, url string, body any, out any) error {
 	if c.apiKey == "" {
-		return fmt.Errorf("web search is unavailable: no SERPER_API_KEY configured")
+		// Named as permanent, and pointed somewhere else, because it is neither
+		// transient nor retryable and she treats it as both. Measured: two runs
+		// where web_fetch failed for a missing key and she called it five more
+		// times with different URLs — different arguments, so the repeat limit
+		// never saw them as the same failure.
+		//
+		// "web search" was also wrong for two of the three callers. This is the
+		// only path Serper has, so a fetch of a named page reported a search
+		// problem, and the obvious alternative was a browser tab she already
+		// knew how to open.
+		return fmt.Errorf("SERPER_API_KEY is not set, so search, news and page scraping " +
+			"are all unavailable for this whole session — retrying with another URL will " +
+			"fail the same way. To read a specific page, open it with browser_open and " +
+			"read it with browser_read instead")
 	}
 
 	raw, err := json.Marshal(body)
