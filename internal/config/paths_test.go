@@ -17,9 +17,23 @@ import (
 // refuses (rightly) to resolve anything itself. So every write in her own
 // workspace assessed as a medium-risk write somewhere else, and needed approval
 // that could not be obtained.
+// fakeHome points the home directory somewhere a test controls.
+//
+// Both variables, because os.UserHomeDir reads HOME on Unix and USERPROFILE on
+// Windows, and setting only the first left ~ expanding to the real home there.
+// Two tests then compared a temporary directory against the developer's actual
+// home and failed, on a platform this is not developed on but is regularly
+// built and run from — which is enough to make the suite look broken for a
+// reason that has nothing to do with what it tests.
+func fakeHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 func TestATildeWorkDirStillCountsAsHerOwnWorkspace(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	fakeHome(t, home)
 	t.Setenv("FREYA_DATA_DIR", filepath.Join(home, "data"))
 	t.Setenv("FREYA_WORK_DIR", "~/freya-workspace")
 
@@ -53,7 +67,7 @@ func TestEveryDirectorySettingArrivesAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	fakeHome(t, home)
 	t.Setenv("FREYA_DATA_DIR", "$HOME/data")
 	t.Setenv("FREYA_WORK_DIR", "workspace")
 	t.Setenv("FREYA_PROJECTS_DIR", "~/code")
@@ -80,7 +94,7 @@ func TestEveryDirectorySettingArrivesAbsolute(t *testing.T) {
 // process directory would silently invent both.
 func TestUnsetDirectoriesStayUnset(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	fakeHome(t, home)
 	t.Setenv("FREYA_DATA_DIR", filepath.Join(home, "data"))
 	t.Setenv("FREYA_WORK_DIR", "")
 	t.Setenv("FREYA_SOURCE_DIR", "")

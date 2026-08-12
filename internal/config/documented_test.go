@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -59,13 +58,41 @@ func TestEverySettingTheCodeReadsIsDocumented(t *testing.T) {
 	}
 }
 
+// repoRoot walks up from the working directory to the module root.
+//
+// # Why not runtime.Caller
+//
+// It was runtime.Caller, which is the obvious way and bakes in the path of the
+// machine that compiled the test. A binary cross-compiled on Windows and run on
+// Linux carries a path that does not exist there, so the walk below found no
+// files, the setting count came back zero, and this failed with "this test has
+// stopped looking" — which is exactly what that guard is supposed to mean, and
+// was not what had happened. It was the only package failing in every
+// cross-compiled run for a day, and the reason had nothing to do with
+// configuration.
+//
+// The working directory is the package directory under `go test`, wherever the
+// binary was built, so the module root is a walk up from there.
+//
+// Source that is genuinely absent is a skip with a reason. It is not a pass:
+// t.Skip leaves a line in the output saying the check did not run, where
+// returning quietly would leave nothing at all.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate this file")
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot tell where this is running from, so the source cannot be read: %v", err)
 	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skip("no go.mod above the working directory, so the source is not here to read")
+		}
+		dir = parent
+	}
 }
 
 func walk(t *testing.T, dir string, fn func(path, src string)) {
