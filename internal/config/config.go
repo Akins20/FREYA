@@ -158,6 +158,15 @@ func Load() (*Config, error) {
 		cfg.ProjectsDir = defaultProjectsDir(home)
 	}
 
+	// Every directory setting is resolved to a real absolute path here, once,
+	// rather than wherever it happens to be used. See expandPath: a settings file
+	// is not a shell, so ~ and $HOME arrive as literal characters, and a path that
+	// is not absolute cannot be compared against another path by anyone.
+	cfg.DataDir = expandPath(cfg.DataDir, home)
+	cfg.WorkDir = expandPath(cfg.WorkDir, home)
+	cfg.ProjectsDir = expandPath(cfg.ProjectsDir, home)
+	cfg.SourceDir = expandPath(cfg.SourceDir, home)
+
 	// With no explicit choice, prefer whichever key is present, else offline.
 	if cfg.Provider == "" {
 		switch {
@@ -174,6 +183,52 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: create data dir: %w", err)
 	}
 	return cfg, nil
+}
+
+// expandPath turns a configured directory into an absolute one: ~ becomes the
+// home directory, $VARs are substituted, and anything still relative is anchored
+// to where the process started.
+//
+// # Why this is not cosmetic
+//
+// FREYA_WORK_DIR is not only where she works — it is the directory the guard
+// treats as her own, the one place a write needs no confirmation she has no way
+// to obtain in the daemon. That carve-out compares the file's path against the
+// workspace root and, quite deliberately, refuses to resolve either itself: a
+// guard that expanded paths would be guessing about a directory some other
+// process chose. So it demands both be absolute, and answers "not in the
+// workspace" for anything else.
+//
+// Nothing expanded them. A settings file is not a shell: .env stores the bytes
+// between = and the newline, so FREYA_WORK_DIR=~/freya-workspace — the form this
+// project's own .env.example uses for FREYA_DATA_DIR — reaches the guard as a
+// string starting with a tilde, matches no path on the machine, and every single
+// write she makes in her own workspace is assessed as a medium-risk write
+// somewhere else. In the daemon that means asking a confirmation nobody can
+// answer, once per file, and the task dies on file one. The guard is right, the
+// wiring is right, and the carve-out silently never fires.
+//
+// It also made the working directory itself a fiction: os.MkdirAll of that same
+// string creates a folder literally named "~" next to wherever she was launched,
+// and she then works there — findable by nobody, including her.
+//
+// Empty stays empty. It is a meaningful value everywhere it is read: no fixed
+// working directory, no self-repair checkout.
+func expandPath(p, home string) string {
+	p = os.ExpandEnv(strings.TrimSpace(p))
+	if p == "" {
+		return ""
+	}
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		p = filepath.Join(home, p[2:])
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return filepath.Clean(p)
 }
 
 // defaultProjectsDir walks up from the working directory to find the folder
