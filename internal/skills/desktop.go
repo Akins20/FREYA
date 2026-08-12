@@ -34,6 +34,9 @@ func RegisterDesktop(r *Registry, g *guard.Guard) {
 	// And the other half: reading a control she cannot press stops short of
 	// useful. See registerDesktopClick.
 	registerDesktopClick(r, g)
+	// And filling one in. See registerDesktopTypeInto: keystrokes at whatever has
+	// focus cannot say afterwards whether they landed where they were aimed.
+	registerDesktopTypeInto(r, g)
 
 	if g == nil {
 		return

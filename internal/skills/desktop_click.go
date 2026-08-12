@@ -115,18 +115,50 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 					quoteOrAny(window.Name), name, clip(a11y.Describe(window), 1200))
 			}
 
+			// The widget's own action first, and a pointer only when there is none.
+			//
+			// DoAction runs the handler the application registered, which is what a
+			// screen reader uses. It needs no position, so it removes both of the
+			// refusals below: a toolkit that publishes no extents can still be
+			// actioned, and a control scrolled out of view is actioned correctly
+			// rather than refused — or worse, clicked at coordinates that are real
+			// and point at something else.
+			//
+			// It also does not need the window raised or focused, so acting on a
+			// background window stops disturbing what the user is looking at.
+			if acts := reader.Actions(ctx, node); len(acts) > 0 {
+				before := a11y.Fingerprint(window)
+				act := guard.Action{
+					Kind:    guard.KindInput,
+					Command: "accessibility action",
+					Args:    []string{acts[0], node.Name},
+					Reason: fmt.Sprintf("perform %q on the %s reading %q in %s",
+						acts[0], node.Role, node.Name, quoteOrAny(window.Name)),
+				}
+				return g.Run(ctx, act, func(ctx context.Context) (string, error) {
+					if err := reader.Do(ctx, node, 0); err != nil {
+						return "", err
+					}
+					// Applications redraw after the handler returns, not during it.
+					time.Sleep(400 * time.Millisecond)
+					return fmt.Sprintf("Performed %q on %q (%s), through the application's "+
+						"own handler rather than the pointer.%s",
+						acts[0], node.Name, node.Role, treeChange(ctx, title, before)), nil
+				})
+			}
+
 			where, ok := reader.Extents(ctx, node)
 			if !ok {
-				return "", fmt.Errorf("%q is in the tree but its toolkit does not say where "+
-					"it is, so there is no point to click. This is normal for some widgets "+
-					"and whole toolkits — use desktop_screenshot to see it and desktop_key "+
-					"to reach it", node.Name)
+				return "", fmt.Errorf("%q publishes no action to perform and its toolkit "+
+					"does not say where it is, so there is neither a handler to call nor a "+
+					"point to click. This is normal for some widgets and whole toolkits — "+
+					"use desktop_screenshot to see it and desktop_key to reach it", node.Name)
 			}
 			if where.Offscreen() {
-				return "", fmt.Errorf("%q is at %d,%d and %dx%d — off-screen or collapsed, "+
-					"so clicking its middle would land on whatever else is there. Scroll it "+
-					"into view or raise the window first", node.Name, where.X, where.Y,
-					where.W, where.H)
+				return "", fmt.Errorf("%q publishes no action, and it is at %d,%d and %dx%d "+
+					"— off-screen or collapsed, so clicking its middle would land on whatever "+
+					"else is there. Scroll it into view or raise the window first",
+					node.Name, where.X, where.Y, where.W, where.H)
 			}
 			x, y := where.Centre()
 

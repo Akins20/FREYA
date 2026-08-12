@@ -1,6 +1,10 @@
 package a11y
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 // gdbus wraps every reply in a tuple, and some in a variant as well. The address
 // is the one that matters most: it contains a comma before guid=, and a parser
@@ -224,5 +228,82 @@ func TestFingerprintMovesOnlyWhenTheTreeDoes(t *testing.T) {
 	}}
 	if Fingerprint(before) == Fingerprint(nested) {
 		t.Error("moving a button into a panel did not change the fingerprint")
+	}
+}
+
+// A node with no Action interface must report no actions rather than erroring
+// or inventing one. Most nodes are in this position: a window, a panel and a
+// label are not actionable, and asking them errors with "No such interface",
+// which is the correct answer.
+func TestANodeWithoutActionsSaysSo(t *testing.T) {
+	r := &Reader{addr: "unix:path=/nonexistent-so-every-call-fails"}
+	if got := r.Actions(context.Background(), &Node{Bus: "x", Path: "/y"}); got != nil {
+		t.Errorf("a node on a dead bus reported actions: %v", got)
+	}
+	if got := r.Actions(context.Background(), nil); got != nil {
+		t.Errorf("a nil node reported actions: %v", got)
+	}
+}
+
+// And Do refuses in terms that say why, rather than failing silently or
+// pretending the press happened.
+func TestDoRefusesWhatCannotBeActioned(t *testing.T) {
+	r := &Reader{addr: "unix:path=/nonexistent-so-every-call-fails"}
+	err := r.Do(context.Background(), &Node{Name: "Some Label", Role: "label"}, 0)
+	if err == nil {
+		t.Fatal("performing an action on a label with no Action interface succeeded")
+	}
+	for _, want := range []string{"Some Label", "label", "no action"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is missing %q: %v", want, err)
+		}
+	}
+}
+
+// A password field is recognised by its role, because the toolkit knows and a
+// guess from the label does not: a field called "PIN" may be plain and a field
+// called "Key" may be masked.
+func TestAPasswordFieldIsRecognisedByRole(t *testing.T) {
+	for _, role := range []string{"password text", "password_text", "PASSWORD TEXT"} {
+		if !(&Node{Role: role, Name: "PIN"}).Secret() {
+			t.Errorf("role %q was not treated as a credential", role)
+		}
+	}
+	for _, role := range []string{"text", "entry", "label", "button"} {
+		if (&Node{Role: role, Name: "Password"}).Secret() {
+			t.Errorf("role %q was treated as a credential because of its name", role)
+		}
+	}
+}
+
+// gdbus parses its arguments as GVariant text, so a bare string needs quoting
+// and a quote inside it needs escaping. Without this, typing an apostrophe
+// silently sends a different string or fails to parse.
+func TestTextIsQuotedForTheWire(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"hello", "'hello'"},
+		{"it's", `'it\'s'`},
+		{`back\slash`, `'back\slash'`},
+		{"", "''"},
+	} {
+		if got := quoteArg(c.in); got != c.want {
+			t.Errorf("quoteArg(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Text and SetText must distinguish "cannot be asked" from "is empty". The Text
+// interface is optional, and a node that does not implement it is unreadable
+// rather than blank.
+func TestUnreadableIsNotEmpty(t *testing.T) {
+	r := &Reader{addr: "unix:path=/nonexistent-so-every-call-fails"}
+	if _, ok := r.Text(context.Background(), &Node{Bus: "x", Path: "/y"}); ok {
+		t.Error("a node on a dead bus reported readable text")
+	}
+	if _, ok := r.Text(context.Background(), nil); ok {
+		t.Error("a nil node reported readable text")
+	}
+	if _, err := r.SetText(context.Background(), nil, "x"); err == nil {
+		t.Error("typing into nothing succeeded")
 	}
 }
