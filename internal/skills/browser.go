@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -359,6 +360,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			// The event log was built for this call and was only ever read by the
 			// gestures. See sideEffects.
 			started := time.Now()
+			// Sampled before the guard runs, not after: the baseline has to predate
+			// the click, or the tab the click opens is already in it.
+			before := pageIDs(tab.ctx)
 			sel := argString(args, "selector")
 			action := guard.Action{Kind: guard.KindBrowser, Command: "click " + sel,
 				Reason: fmt.Sprintf("click %q in tab %q (%s context)", sel, tab.name, tab.ctx)}
@@ -379,7 +383,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			if rerr != nil {
 				return "", rerr
 			}
-			return out + sideEffects(tab, started), nil
+			return out + sideEffects(tab, started, before), nil
 		},
 	})
 
@@ -406,6 +410,9 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return Outcome{}, terr
 			}
 			started := time.Now()
+			// Sampled before the guard runs, not after: the baseline has to predate
+			// the click, or the tab the click opens is already in it.
+			before := pageIDs(tab.ctx)
 			text := argString(args, "text")
 			if strings.TrimSpace(text) == "" {
 				return Outcome{}, fmt.Errorf("text is required")
@@ -438,7 +445,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				return Outcome{}, err
 			}
 
-			o := Outcome{Text: out + tabNote + sideEffects(tab, started)}
+			o := Outcome{Text: out + tabNote + sideEffects(tab, started, before)}
 			// Say what was actually hit when it differs from what was asked for.
 			// The match is fuzzy — exact wins, else the shortest containing label —
 			// so "Submit" can land on "Submit and add another", and echoing back the
@@ -807,7 +814,113 @@ func (t *Tabs) observe(ctx context.Context, args map[string]any) string {
 	if !ok || tab == nil {
 		return ""
 	}
-	return tab.client.Signature(ctx)
+	// The page's own fingerprint, plus the set of pages the BROWSER has open.
+	//
+	// The second half is the fix for a click that opens a new tab. The page she is
+	// driving is untouched by such a click — same URL, same title, same DOM — so
+	// the fingerprint matched and the result said "Nothing observably changed —
+	// that usually means the action did not take effect". It had taken effect; the
+	// effect was one target across, in a tab she was not attached to. She clicked
+	// "Apply with Indeed" three times against that sentence, re-read, re-navigated,
+	// and only found the tab thirteen rounds later with browser_tabs.
+	//
+	// Page.windowOpen was supposed to catch this and did not fire, which is the
+	// deeper lesson: one CDP event is a single oracle, and a click can produce a
+	// tab through half a dozen paths that event does not cover (target=_blank in a
+	// cross-origin frame, a noopener popup, a redirect chain). The target list is
+	// the browser's own answer to "what pages exist", so it is true regardless of
+	// how the tab came to be.
+	return tab.client.Signature(ctx) + "\n" + pageIDs(tab.ctx).component()
+}
+
+// tabSet is which pages a context had open at a moment, and whether that
+// question could be answered at all.
+//
+// The bool is the whole point of the type. "No pages were open" and "I could not
+// ask" both arrive as an empty list, and treating the second as the first makes
+// every open tab look newly created — so a failed reading would announce that
+// the click opened six tabs it had nothing to do with. That is the Indeed bug
+// inverted: instead of missing a real side effect it invents one, in the same
+// tool, and points her at browser_attach for a tab she never opened.
+//
+// Nil-versus-empty would technically carry this today and is exactly the kind of
+// distinction that survives until someone writes `return []string{}` in an error
+// path. Made explicit so it cannot be lost by accident.
+type tabSet struct {
+	ids []string
+	ok  bool
+}
+
+// pageIDs is the sorted set of page targets a browser context has open.
+//
+// Sorted because /json/list orders by recency of activation, so an unsorted
+// reading changes whenever focus moves and would report a change that is only
+// the browser reshuffling its own list.
+func pageIDs(c browser.Context) tabSet {
+	targets, err := browser.Targets(c)
+	if err != nil {
+		return tabSet{}
+	}
+	ids := make([]string, 0, len(targets))
+	for _, t := range targets {
+		ids = append(ids, t.ID)
+	}
+	sort.Strings(ids)
+	return tabSet{ids: ids, ok: true}
+}
+
+// tabComponent is how a tab reading joins the page fingerprint.
+//
+// A failed reading gets a sentinel rather than an empty list. Observe samples
+// this before and after an action and compares the two strings for equality, so
+// there is no way to answer "unknown" through that interface — the reading is
+// either part of the fingerprint or it is not, and one-sided failure shows up as
+// a change either way.
+//
+// The sentinel makes a two-sided failure compare equal, which is the common case
+// when the endpoint is briefly unreachable. A one-sided failure still reads as a
+// change, and that is the direction to fail in: this whole mechanism exists
+// because a false "nothing changed" cost four real job applications, while a
+// false "something changed" costs one wrong sentence.
+func (t tabSet) component() string {
+	if !t.ok {
+		return "tabs:unreadable"
+	}
+	return strings.Join(t.ids, ",")
+}
+
+// openedTabs names the pages that appeared while an action ran.
+//
+// Knowing something changed is not enough on its own: a new tab is not attached,
+// so nothing she does next reaches it until she says so. The note therefore
+// carries the name of the tool that closes the gap.
+func openedTabs(c browser.Context, before tabSet) string {
+	// No baseline, no claim. Everything open would otherwise read as new.
+	if !before.ok {
+		return ""
+	}
+	was := make(map[string]bool, len(before.ids))
+	for _, id := range before.ids {
+		was[id] = true
+	}
+	targets, err := browser.Targets(c)
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, t := range targets {
+		if was[t.ID] {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  · that opened a NEW TAB: %q (%s). You are not "+
+			"driving it — the tab you are attached to is unchanged, which is why this page "+
+			"looks the same. Use browser_attach to take it over before acting again",
+			clipText(t.Title, 120), clipText(t.URL, 160)))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\nAlso, outside the page:\n" + strings.Join(lines, "\n")
 }
 
 // affordances lists what is genuinely clickable on the active tab, attached to
@@ -883,9 +996,17 @@ func coverage(total, shown int) string {
 // identical, and a dialog is auto-answered before the second sample is taken, so
 // Observe sees no change and the result reads as nothing having happened, which
 // is the exact sentence the event log was added to stop.
-func sideEffects(tab *openTab, since time.Time) string {
+// before is the target set sampled just before the action; a page that is in the
+// list afterwards and was not in it before is a tab the click opened.
+//
+// It cannot tell HER new tab from one the user opened by hand in the same few
+// seconds, and does not pretend to. A person browsing in the same Chrome while
+// she works would be attributed to the click, which is a confusing sentence and
+// not a wrong action — the tool it names, browser_attach, is read-only until she
+// acts on what she finds there.
+func sideEffects(tab *openTab, since time.Time, before tabSet) string {
 	if tab == nil || tab.client == nil {
 		return ""
 	}
-	return browser.Describe(tab.client.Since(since))
+	return browser.Describe(tab.client.Since(since)) + openedTabs(tab.ctx, before)
 }

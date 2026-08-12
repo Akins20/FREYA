@@ -51,6 +51,10 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 				firstNonBlank(text, sel), tab.name, tab.ctx)}
 
 		started := time.Now()
+		// The baseline, for the same reason browser_click takes one. Ctrl-click is
+		// literally "open in a new tab", so a gesture is the LAST place that should
+		// have to notice a tab appearing by itself.
+		before := pageIDs(tab.ctx)
 		out, rerr := g.Run(ctx, action, func(ctx context.Context) (string, error) {
 			var landed string
 			var gerr error
@@ -82,7 +86,7 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 		// The whole point of the event log: a gesture that started a download or
 		// opened a dialog says so, instead of looking identical to one that did
 		// nothing at all.
-		return Outcome{Text: out + tabNote + browser.Describe(tab.client.Since(started))}, nil
+		return Outcome{Text: out + tabNote + sideEffects(tab, started, before)}, nil
 	}
 
 	r.Register(Skill{
@@ -183,6 +187,7 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 				Reason:  fmt.Sprintf("drag %q onto %q in tab %q", from, to, tab.name)}
 
 			started := time.Now()
+			before := pageIDs(tab.ctx)
 			out, rerr := g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				if err := tab.client.Drag(ctx, from, to); err != nil {
 					tab.missed()
@@ -196,7 +201,7 @@ func RegisterBrowserGestures(r *Registry, g *guard.Guard, tabs *Tabs) {
 			if rerr != nil {
 				return Outcome{}, rerr
 			}
-			return Outcome{Text: out + tabNote + browser.Describe(tab.client.Since(started))}, nil
+			return Outcome{Text: out + tabNote + sideEffects(tab, started, before)}, nil
 		},
 	})
 

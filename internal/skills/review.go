@@ -145,7 +145,7 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 			seen := 0
 			var blind []string
 			for _, page := range pages {
-				shot, err := renderShot(ctx, page)
+				shot, err := renderPage(ctx, page)
 				if err != nil {
 					blind = append(blind, fmt.Sprintf("%s (%v)", filepath.Base(page), err))
 					continue
@@ -182,6 +182,21 @@ func RegisterReview(r *Registry, provider llm.Provider) {
 		},
 	})
 }
+
+// renderPage is how review draws a page, as a variable so a test can decide the
+// answer instead of the machine deciding it.
+//
+// The test for the most important behaviour here — that a review which saw
+// nothing must fail rather than succeed quietly — worked by assuming no browser
+// was installed. Its own comment said so: "never reached in these tests because
+// nothing renders without a browser". On a machine with Chrome, which is every
+// machine this actually runs on, the page rendered, the stub reviewer answered,
+// the review succeeded and the test failed.
+//
+// So it asserted the right thing and could only observe it on a machine where
+// the feature could not work at all. A seam costs one indirection and makes both
+// halves — nothing rendered, and some rendered — testable anywhere.
+var renderPage = renderShot
 
 // renderShot draws one page and captures the whole of it.
 //
