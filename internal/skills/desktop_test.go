@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/Akins20/FREYA/internal/a11y"
 )
 
 // The three answers must stay three. Collapsing "on screen but publishing
@@ -95,5 +97,30 @@ func TestAWindowTitleIsEverythingAfterTheThirdColumn(t *testing.T) {
 		if got := wmctrlTitle(c.line); got != c.want {
 			t.Errorf("wmctrlTitle(%q) = %q, want %q", c.line, got, c.want)
 		}
+	}
+}
+
+// A window with nothing named in it is explained, and the explanation names
+// Chromium when the actions say so.
+//
+// The test that matters is the first assertion. A Chromium window started
+// without --force-renderer-accessibility does have children: it answers
+// GetChildren with placeholder nodes whose role and name both fail to read. So
+// a check for "has children" called it populated and stayed silent on exactly
+// the case the note exists for, which is most of a modern desktop.
+func TestAWindowWithNothingNamedInItIsExplained(t *testing.T) {
+	// Placeholders, as Chromium hands them over: present, and empty.
+	withheld := &a11y.Node{Role: "frame", Name: "ControlTarget", Children: []*a11y.Node{{}, {}}}
+	if a11y.Named(withheld) {
+		t.Fatal("nameless placeholder children counted as something to aim at")
+	}
+
+	// And a window with a real control in it must stay silent, or every answer
+	// grows a paragraph.
+	real := &a11y.Node{Role: "frame", Name: "ControlTarget", Children: []*a11y.Node{
+		{Role: "push button", Name: "Submit"},
+	}}
+	if !a11y.Named(real) {
+		t.Error("a window with a button in it was called nameless")
 	}
 }

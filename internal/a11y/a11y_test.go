@@ -626,3 +626,54 @@ func TestShowingIsReadFromTheStateBitmap(t *testing.T) {
 		t.Errorf("expected the tag on the first word only, matched %d", len(m))
 	}
 }
+
+// Chromium is a third vocabulary, and it disagrees with itself inside one tree.
+//
+// Measured on Electron 31: the menu bar entry answers doDefault, the button
+// press, the text field activate, a clickable div click, and the text node
+// inside that div clickAncestor — which is the useful one, because the ancestor
+// carries the handler. showContextMenu is on every node and must never count as
+// a click: performing it opens a context menu and reports a press.
+func TestChromiumsActionNamesAreRecognised(t *testing.T) {
+	for _, c := range []struct {
+		what  string
+		acts  []string
+		want  string
+		found bool
+	}{
+		{"a Chromium menu bar entry", []string{"doDefault", "showContextMenu"}, "doDefault", true},
+		{"a Chromium button", []string{"press", "showContextMenu"}, "press", true},
+		{"a Chromium text field", []string{"activate", "showContextMenu"}, "activate", true},
+		{"a clickable div", []string{"click", "showContextMenu"}, "click", true},
+		{"text inside a clickable div", []string{"clickAncestor", "showContextMenu"}, "clickAncestor", true},
+		// The right button is not a click, and it is on every single node.
+		{"a node offering only the context menu", []string{"showContextMenu"}, "", false},
+	} {
+		i, ok := PreferredAction(c.acts)
+		if ok != c.found {
+			t.Errorf("%s: found=%v, want %v (from %v)", c.what, ok, c.found, c.acts)
+			continue
+		}
+		if ok && c.acts[i] != c.want {
+			t.Errorf("%s: chose %q, want %q", c.what, c.acts[i], c.want)
+		}
+	}
+}
+
+// A window whose contents are withheld has to be told apart from an empty one,
+// and the signature is the action vocabulary.
+//
+// Chromium publishes showContextMenu on every node; GTK and Qt publish it
+// nowhere. It is only ever used to decide what to say, never what to do, so
+// being wrong costs a sentence of advice.
+func TestChromiumIsRecognisedByItsActions(t *testing.T) {
+	if !ChromiumLike([]string{"doDefault", "showContextMenu"}) {
+		t.Error("a Chromium frame was not recognised")
+	}
+	if ChromiumLike([]string{"click"}) || ChromiumLike([]string{"Press", "SetFocus"}) {
+		t.Error("a GTK or Qt node was mistaken for Chromium")
+	}
+	if ChromiumLike(nil) {
+		t.Error("a node with no actions was mistaken for Chromium")
+	}
+}

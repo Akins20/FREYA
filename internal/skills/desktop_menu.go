@@ -154,15 +154,32 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 			chosen = true
 			return fmt.Sprintf("Chose %s.", strings.Join(steps, " > ")), nil
 		}
+		// Noted before the menu opens, so a menu that opens somewhere else can
+		// be recognised by being somewhere that was not there a moment ago.
+		windows := reader.WindowPaths(ctx)
 		if err := reader.OpenAndRefresh(ctx, node); err != nil {
 			return "", fmt.Errorf("%q would not open: %w", step, err)
 		}
-		opened = append(opened, node)
+
+		// Three toolkits put the items in three different places. GTK hangs
+		// them off the menu, Qt hides them behind an unnamed popup wrapper
+		// under it, and Chromium opens a whole second top-level window and
+		// leaves the button childless. Only the last one cannot be reached by
+		// looking under the node, so when there is nothing named under it, the
+		// window that just appeared is the menu.
+		level := node
+		if !a11y.Named(level) {
+			if popup := reader.OpenedElsewhere(ctx, windows); popup != nil {
+				level = popup
+			}
+		}
+		opened = append(opened, level)
+
 		// Named rather than non-empty. Qt wraps a menu's items in an unnamed
 		// popup, which exists the instant the menu opens and is empty for a
 		// moment after — so counting children called an opening menu populated
 		// and then found nothing in it.
-		if !a11y.Named(node) {
+		if !a11y.Named(level) {
 			// Three things produce an empty menu and only two of them are about
 			// the menu. The third is a read that came back short, and it must not
 			// be reported as a menu with nothing in it.
@@ -170,7 +187,7 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 				"Either the path is wrong or this application fills that menu only when "+
 				"a person opens it%s", step, steps[i+1], unreadNote(reader.Incomplete()))
 		}
-		here = node
+		here = level
 	}
 	return "", fmt.Errorf("the path ran out before anything was chosen")
 }

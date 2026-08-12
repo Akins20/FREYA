@@ -766,10 +766,34 @@ func Named(n *Node) bool {
 // Unknown names are not activating. A verb nobody here has seen is more likely
 // to be another SetFocus than another Press, and the cost of being wrong the
 // cautious way is a pointer click that works.
+//
+// Chromium adds a third vocabulary and is not even consistent inside one tree:
+// its menu bar entries answer doDefault, its buttons press, its text fields
+// activate, a clickable div click, and a text node inside that div
+// clickAncestor — which does the useful thing, since the ancestor is what
+// carries the handler. showContextMenu is on every node and is deliberately not
+// here: it is the right button, and treating it as a click would open a context
+// menu and call it a press.
 func Activating(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "click", "press", "activate", "invoke", "do", "open", "showmenu", "toggle":
+	case "click", "press", "activate", "invoke", "do", "open", "showmenu", "toggle",
+		"dodefault", "clickancestor":
 		return true
+	}
+	return false
+}
+
+// ChromiumLike reports whether a node's actions look like Blink's.
+//
+// showContextMenu is published by Chromium on every node and by neither GTK nor
+// Qt, which makes it a usable signature. It is only ever used to choose what to
+// say — never to change what is done — so a false positive costs a sentence of
+// advice and nothing else.
+func ChromiumLike(acts []string) bool {
+	for _, a := range acts {
+		if strings.EqualFold(strings.TrimSpace(a), "showContextMenu") {
+			return true
+		}
 	}
 	return false
 }
@@ -873,6 +897,71 @@ func (r *Reader) StillOpen(ctx context.Context, n *Node) bool {
 		}
 	}
 	return false
+}
+
+// GrabFocus asks the toolkit to move focus to a node.
+//
+// The way in when a field has no writable interface: focus it and use the
+// keyboard. Component is implemented far more widely than EditableText, and on
+// Chromium it is implemented where EditableText is not there at all.
+func (r *Reader) GrabFocus(ctx context.Context, n *Node) error {
+	if n == nil {
+		return fmt.Errorf("nothing to focus")
+	}
+	if _, err := r.call(ctx, n.Bus, n.Path, component+".GrabFocus"); err != nil {
+		return fmt.Errorf("%q would not take focus: %w", n.Name, err)
+	}
+	return nil
+}
+
+// WindowPaths is the set of windows currently on the bus, for noticing one that
+// appears.
+func (r *Reader) WindowPaths(ctx context.Context) map[string]bool {
+	seen := map[string]bool{}
+	apps, err := r.Applications(ctx)
+	if err != nil {
+		return seen
+	}
+	for _, a := range apps {
+		for _, w := range a.Children {
+			seen[w.Bus+w.Path] = true
+		}
+	}
+	return seen
+}
+
+// OpenedElsewhere finds a window that appeared since the snapshot was taken,
+// walked and ready to be searched.
+//
+// # Why a menu can be nowhere near the thing that opened it
+//
+// GTK puts a menu's items directly under the menu. Qt puts them behind an
+// unnamed popup wrapper under the menu. Chromium puts them in a second
+// top-level window and leaves the button that opened them childless forever —
+// measured on Electron 31, where pressing File returns true, the button's
+// children stay an empty array, and an unnamed frame appears beside the
+// application's real window holding the entire menu.
+//
+// So following the node that was opened finds nothing, which is exactly what it
+// reported: "File opened and is empty". Three toolkits, three different places
+// to look, and no way to tell which from the node itself.
+func (r *Reader) OpenedElsewhere(ctx context.Context, before map[string]bool) *Node {
+	apps, err := r.Applications(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, a := range apps {
+		for _, w := range a.Children {
+			if before[w.Bus+w.Path] {
+				continue
+			}
+			r.walk(ctx, w, 0)
+			if Named(w) {
+				return w
+			}
+		}
+	}
+	return nil
 }
 
 // listActions renders what a node did offer, for a refusal that says why.

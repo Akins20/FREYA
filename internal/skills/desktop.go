@@ -423,8 +423,12 @@ func registerDesktopInspect(r *Registry) {
 					body = "(the window is on the bus and reports no elements inside it)"
 				}
 				// A partial tree read as a whole one is a false statement about the
-				// window, and it is the tool's job to say which it handed over.
-				return body + unreadNote(reader.Incomplete()), nil
+				// window, and it is the tool's job to say which it handed over. A
+				// window publishing nothing inside itself is the other half of the
+				// same duty: it renders as one line and reads as an empty
+				// application, which it almost never is.
+				return body + emptyWindowNote(ctx, reader, node) +
+					unreadNote(reader.Incomplete()), nil
 			}
 
 			// A window can also be missing because the list of applications was

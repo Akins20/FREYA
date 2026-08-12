@@ -117,7 +117,7 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 				// The failure carries what IS there, which is the rule everywhere else
 				// in this package: a miss she cannot act on costs a whole round.
 				return "", notInTree(reader.Incomplete(), name, quoteOrAny(window.Name),
-					clip(a11y.Describe(window), 1200))
+					clip(a11y.Describe(window), 1200)+emptyWindowNote(ctx, reader, window))
 			}
 
 			// The widget's own action first, and a pointer only when there is none.
@@ -250,6 +250,42 @@ func notInTree(gap, name, where, tree string) error {
 			"it is absent. What did come back:\n%s", name, where, gap, tree)
 	}
 	return fmt.Errorf("nothing in %s is called %q. What is there:\n%s", where, name, tree)
+}
+
+// emptyWindowNote explains a window that is on the bus with nothing inside it.
+//
+// A window publishing one node renders as a one-line tree, which reads as an
+// empty application and is almost never what it means. The commonest cause by
+// far is Chromium: measured on Electron 31, a window started without
+// --force-renderer-accessibility publishes its frame and never anything under
+// it, no matter how long you wait and regardless of ScreenReaderEnabled being
+// true on the accessibility bus. The contents are withheld rather than absent,
+// and nothing in the reply said so.
+//
+// That covers an enormous share of a modern desktop — VS Code, Slack, Discord,
+// Teams and everything else built the same way — so the difference between "I
+// cannot see inside this" and "this is empty" is worth a paragraph.
+// Asked as "is there anything in here with a name" rather than "does it have
+// children", because a Chromium window without the flag does have children: it
+// answers GetChildren with placeholder nodes whose role and name both fail to
+// read. Counting them said the window was populated while there was still
+// nothing anywhere in it to aim at, so the note never appeared on the one case
+// it was written for.
+func emptyWindowNote(ctx context.Context, reader *a11y.Reader, window *a11y.Node) string {
+	if window == nil || a11y.Named(window) {
+		return ""
+	}
+	if a11y.ChromiumLike(reader.Actions(ctx, window)) {
+		return "\n\n[This is a Chromium application — Electron, so VS Code, Slack, Discord, " +
+			"Teams and anything else built that way. Chromium publishes nothing inside its " +
+			"window unless it was started with --force-renderer-accessibility, so what is " +
+			"in there is being withheld rather than missing. Restart it with that flag to " +
+			"read it, or work with desktop_screenshot and desktop_key, which reach it as " +
+			"they are.]"
+	}
+	return "\n\n[Nothing inside this window has a name, so there is nothing in here to aim at. " +
+		"That is not the same as the window being empty. desktop_screenshot with desktop_key " +
+		"still reaches it.]"
 }
 
 // unreadNote marks a tree that is not the whole tree.

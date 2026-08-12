@@ -78,7 +78,7 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 			node := a11y.Find(window, field, "")
 			if node == nil {
 				return "", notInTree(reader.Incomplete(), field, quoteOrAny(window.Name),
-					clip(a11y.Describe(window), 1200))
+					clip(a11y.Describe(window), 1200)+emptyWindowNote(ctx, reader, window))
 			}
 			if node.Secret() {
 				return "", fmt.Errorf("%q is a password field. Nothing here types into one or "+
@@ -96,6 +96,12 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
 				got, err := reader.SetText(ctx, node, text)
 				if err != nil {
+					// No writable interface is not the end of it. See
+					// typeWithKeyboard: Chromium publishes none at all, on every
+					// input in every Electron application.
+					got, err = typeWithKeyboard(ctx, reader, node, text)
+				}
+				if err != nil {
 					return "", err
 				}
 				time.Sleep(200 * time.Millisecond)
@@ -111,4 +117,60 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 			})
 		},
 	})
+}
+
+// typeWithKeyboard fills a field that has no writable accessibility interface.
+//
+// # Why this exists
+//
+// Chromium publishes no EditableText anywhere. Measured on Electron 31, a text
+// field implements Accessible, Action, Collection, Component, Document, Socket
+// and Text, and SetTextContents answers UnknownMethod because the interface is
+// not there — so there is nothing on the node to write to. That is every input
+// in every Electron application, which is VS Code, Slack, Discord, Teams and a
+// large part of a modern desktop, and too much to hand back as unsupported.
+//
+// So the field is focused through the toolkit, selected, typed over with the
+// keyboard, and then read back through Text — which Chromium does implement.
+//
+// # The guarantee is unchanged, and doing more work
+//
+// What comes back is still what the field holds rather than what was sent, and
+// here that matters more than it did before: a direct write either lands or
+// errors, while keystrokes can go to the wrong window and report nothing at
+// all. Focus is asked of the toolkit rather than assumed, and the read-back
+// catches the case where it went somewhere else anyway.
+func typeWithKeyboard(ctx context.Context, reader *a11y.Reader, node *a11y.Node, text string) (string, error) {
+	if err := requireX11(); err != nil {
+		return "", fmt.Errorf("%q publishes no writable interface, and the keyboard is the "+
+			"only way in: %w", node.Name, err)
+	}
+	if !have("xdotool") {
+		return "", fmt.Errorf("%q publishes no writable interface, so this needs the keyboard, "+
+			"and xdotool is not installed", node.Name)
+	}
+	if err := reader.GrabFocus(ctx, node); err != nil {
+		return "", fmt.Errorf("%q publishes no writable interface and would not take focus "+
+			"either, so there is no way into it from here: %w", node.Name, err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	// Select first, because setting a field means replacing what is in it and
+	// typing alone would append to it.
+	if _, err := run(ctx, 5*time.Second, "xdotool", "key", "--clearmodifiers", "ctrl+a"); err != nil {
+		return "", err
+	}
+	if _, err := run(ctx, 20*time.Second, "xdotool", "type", "--clearmodifiers",
+		"--delay", "20", text); err != nil {
+		return "", err
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	got, ok := reader.Text(ctx, node)
+	if !ok {
+		return "", fmt.Errorf("%q has no writable interface, so it was typed into with the "+
+			"keyboard, and it cannot be read back either — whether that landed is unknown. "+
+			"Check with desktop_inspect before relying on it", node.Name)
+	}
+	return got, nil
 }
