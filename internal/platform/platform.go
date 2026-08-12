@@ -33,12 +33,15 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // OS is the operating system family, as far as anything here cares.
@@ -60,6 +63,17 @@ const (
 	// Wayland is a session with no way in: xdotool and wmctrl both refuse, by
 	// design, because synthetic input is exactly what Wayland set out to stop.
 	Wayland Display = "wayland"
+	// XWayland is a Wayland session running an X server beside it, which is what
+	// nearly every Wayland desktop actually is.
+	//
+	// It matters because the refusal above is only true of the native half. An
+	// XWayland client is an ordinary X11 client, and xdotool and wmctrl drive it
+	// exactly as they would on a plain X11 login. Reading WAYLAND_DISPLAY and
+	// stopping meant refusing every window on a machine where most of them were
+	// drivable — found on WSLg, where WAYLAND_DISPLAY and DISPLAY are both set
+	// out of the box and the desktop tools declined to touch an X server that
+	// was answering the whole time.
+	XWayland Display = "xwayland"
 	// Quartz is macOS. Driving it needs the Accessibility permission, which is
 	// granted per application by a human and cannot be asked for from code.
 	Quartz Display = "quartz"
@@ -79,12 +93,24 @@ type Capability struct {
 	// Why explains the absence in terms the user can act on, and names what
 	// would fix it. Empty when available.
 	Why string
+	// Caveat is where something works but not everywhere, and is empty in the
+	// ordinary case.
+	//
+	// Available and Why were the whole vocabulary, and a yes/no vocabulary
+	// forces a partial answer to round to one of them. Both roundings are
+	// wrong: rounding down refuses work that would have succeeded, rounding up
+	// promises work that will fail on half the windows and gives no hint why.
+	Caveat string
 }
 
 // String renders a capability the way a status line wants it.
 func (c Capability) String() string {
 	if c.Available {
-		return "yes (" + c.How + ")"
+		s := "yes (" + c.How + ")"
+		if c.Caveat != "" {
+			s += " — " + c.Caveat
+		}
+		return s
 	}
 	if c.Why == "" {
 		return "no"
@@ -174,7 +200,15 @@ func currentDisplay(os_ OS) Display {
 	case Windows:
 		return DesktopWindows
 	case Linux:
-		if os.Getenv("WAYLAND_DISPLAY") != "" {
+		if os.Getenv("WAYLAND_DISPLAY") != "" || waylandSocket() {
+			// Asked, not assumed. This is the one branch where the environment
+			// is genuinely ambiguous, and it is the branch the package doc is
+			// about: two variables are set, only one of them decides whether a
+			// window can be driven, and the answer is a question for the X
+			// server rather than for os.Getenv.
+			if xAnswers() {
+				return XWayland
+			}
 			return Wayland
 		}
 		if os.Getenv("DISPLAY") != "" {
@@ -190,6 +224,51 @@ func currentDisplay(os_ OS) Display {
 func have(bin string) bool {
 	_, err := exec.LookPath(bin)
 	return err == nil
+}
+
+// waylandSocket looks for a compositor that is running without announcing itself.
+//
+// Unsetting WAYLAND_DISPLAY does not select X11. libwayland falls back to the
+// socket name "wayland-0" in XDG_RUNTIME_DIR when the variable is absent, so a
+// toolkit will still connect to a compositor that is there.
+//
+// Measured: a GTK 3 application started with WAYLAND_DISPLAY unset and DISPLAY
+// pointing at a running X server connected to the compositor anyway and put its
+// window where neither wmctrl nor xdotool could see it. Reading the variable and
+// stopping would have reported that machine as a plain X11 session and offered
+// synthetic input into an X server with no application windows on it — the
+// mirror image of the bug above, and the same mistake.
+func waylandSocket() bool {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, "wayland-0"))
+	return err == nil
+}
+
+// xAnswers is how currentDisplay asks, as a variable so a test can decide the
+// answer instead of the machine deciding it.
+//
+// The same seam as review's renderPage, for the same reason: without it the
+// XWayland branch is only observable on a machine that happens to be running
+// XWayland, and the pure-Wayland branch is only observable on one that is not.
+// Both are real configurations and neither is the machine this is developed on.
+var xAnswers = xServerAnswers
+
+// xServerAnswers asks whether DISPLAY points at an X server that will talk to us.
+//
+// getdisplaygeometry because it needs nothing but a connection: no window has to
+// exist, none has to be focused, and it cannot be confused by an empty desktop.
+// Bounded, because an X server that accepts the socket and then never replies
+// would otherwise hang the one-time probe and every tool waiting behind it.
+func xServerAnswers() bool {
+	if os.Getenv("DISPLAY") == "" || !have("xdotool") {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "xdotool", "getdisplaygeometry").Run() == nil
 }
 
 // firstAvailable returns the first binary of the list that exists.
@@ -273,6 +352,24 @@ func probeDesktop(os_ OS, d Display) (windows, input, screenshot Capability) {
 			"another's windows; log into an X11 session to enable it"
 		return Capability{Why: why}, Capability{Why: why},
 			shotCapability(os_)
+
+	case d == XWayland:
+		// A qualified yes, because the truth is qualified. X11 clients under
+		// XWayland are drivable and native Wayland clients are not, and nothing
+		// here can tell which a given window is without trying it — so the
+		// caveat travels with the yes rather than being resolved by guessing.
+		caveat := "this is a Wayland session with an X server beside it, so X11 " +
+			"windows respond and native Wayland ones do not; a window that ignores " +
+			"input is the likely sign of the second kind"
+		w := Capability{Why: missing("listing and focusing windows", "wmctrl", "xdotool")}
+		if bin := firstAvailable("wmctrl", "xdotool"); bin != "" {
+			w = Capability{Available: true, How: bin, Caveat: caveat}
+		}
+		in := Capability{Why: missing("synthetic keyboard input", "xdotool")}
+		if have("xdotool") {
+			in = Capability{Available: true, How: "xdotool", Caveat: caveat}
+		}
+		return w, in, shotCapability(os_)
 
 	case os_ == Linux:
 		w := Capability{Why: missing("listing and focusing windows", "wmctrl", "xdotool")}
