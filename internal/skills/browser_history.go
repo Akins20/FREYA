@@ -67,8 +67,64 @@ func loadVisits() ([]browser.Visit, error) {
 	return visits, nil
 }
 
+// loadVisitsFrom reads one named profile's history, uncached.
+//
+// Uncached deliberately: the cache above exists because the default read happens
+// on nearly every turn, and keying it by profile would let a search of the work
+// profile answer out of the personal one's cache, which is the confusion this
+// whole facility exists to prevent. A named profile is asked for rarely and can
+// afford the parse.
+//
+// It returns the profile it actually read, so the answer can say whose history
+// this was rather than leaving the caller to assume it got what it asked for.
+func loadVisitsFrom(want string) ([]browser.Visit, browser.Profile, error) {
+	path, p, err := browser.HistoryFileFor(want)
+	if err != nil {
+		return nil, p, err
+	}
+	visits, err := browser.LoadHistory(path)
+	return visits, p, err
+}
+
 // RegisterBrowserHistory adds the history, bookmark and download skills.
 func RegisterBrowserHistory(r *Registry) {
+	// Which of the user's Chrome profiles is which. See internal/browser/profiles.go:
+	// on a machine with several, reading the wrong one answers confidently about
+	// the wrong person.
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "browser_profiles",
+			Description: "List the user's real Chrome profiles by name and signed-in " +
+				"account.\n\n" +
+				"ASK THIS when a request says 'my account' and there is more than one " +
+				"profile, rather than assuming. On a machine with a work profile and a " +
+				"personal one, reading the wrong profile answers confidently about the " +
+				"wrong person: the wrong inbox, the wrong calendar, the wrong saved " +
+				"logins.\n\n" +
+				"Once you know which is theirs, remember it with memory_remember so it is " +
+				"asked once rather than every time. browser_sync_logins takes a profile to " +
+				"copy the right session into the automation browser.",
+			Params: llm.ObjectSchema(nil),
+		},
+		Handler: func(_ context.Context, _ map[string]any) (string, error) {
+			profiles, err := browser.Profiles("")
+			if err != nil {
+				return "", err
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d Chrome profile(s), * = the one Chrome used last:\n%s\n\n",
+				len(profiles), browser.DescribeProfiles(profiles))
+			if len(profiles) == 1 {
+				b.WriteString("[Only one, so there is nothing to disambiguate.]")
+			} else {
+				b.WriteString("[More than one, so do not assume which is theirs. The star is " +
+					"Chrome's own last-used marker: a good guess, still a guess. Ask if it " +
+					"matters, and remember the answer with memory_remember.]")
+			}
+			return b.String(), nil
+		},
+	})
+
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "browser_history",
@@ -80,19 +136,40 @@ func RegisterBrowserHistory(r *Registry) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"query": {Type: "string", Description: "What to look for, e.g. 'school portal' or 'bank'."},
 				"limit": {Type: "integer", Description: "How many results (default 8)."},
+				"profile": {Type: "string", Description: "Which Chrome profile, by name or " +
+					"account. Omit for the one Chrome used last. browser_profiles lists them."},
 			}, "query"),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			visits, err := loadVisits()
+			// Naming a profile changes which history is searched, rather than being
+			// accepted and ignored. A machine with a work profile and a personal one
+			// has two different answers to "my portal", and the wrong one is not a
+			// worse answer, it is an answer about somebody else's day.
+			want := strings.TrimSpace(argString(args, "profile"))
+			var visits []browser.Visit
+			var from browser.Profile
+			var err error
+			if want != "" {
+				visits, from, err = loadVisitsFrom(want)
+			} else {
+				visits, err = loadVisits()
+			}
 			if err != nil {
 				return "", err
+			}
+			whose := ""
+			if from.Dir != "" {
+				whose = fmt.Sprintf(" (the %s profile)", from.Label())
 			}
 			limit := argInt(args, "limit", 8)
 			hits := browser.SearchHistory(visits, argString(args, "query"), limit)
 			if len(hits) == 0 {
-				return fmt.Sprintf("Nothing in %d pages of history matches %q. "+
+				return fmt.Sprintf("Nothing in %d pages of history%s matches %q. "+
 					"Worth asking the user for the address, or searching the web.",
-					len(visits), argString(args, "query")), nil
+					len(visits), whose, argString(args, "query")), nil
+			}
+			if whose != "" {
+				return browser.FormatVisits(hits) + "\n\n[From" + whose + ".]", nil
 			}
 			return browser.FormatVisits(hits), nil
 		},

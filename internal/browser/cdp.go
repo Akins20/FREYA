@@ -438,11 +438,36 @@ func SyncScript() string {
 // not appear here until this runs again. Chrome must be closed, since these are
 // SQLite databases and a live copy is a torn one.
 func SyncAuthProfile(ctx context.Context) (string, error) {
+	return SyncAuthProfileFrom(ctx, Profile{})
+}
+
+// SyncAuthProfileFrom copies one named profile rather than whichever the script
+// happens to prefer.
+//
+// # Why the profile is passed to a script rather than resolved inside it
+//
+// The script lives outside the repo, at ~/.config/freya/sync-chrome-profile.sh,
+// so what it copies cannot be reviewed or versioned here. That was survivable
+// while there was one profile to copy and is not once "my account" is one of
+// five: a script picking Default on a machine where the user lives in Profile 3
+// signs her in as somebody else, silently, and every answer after that is about
+// the wrong inbox.
+//
+// So the choice is made here, where it can be shown in the confirmation, and
+// handed over as FREYA_CHROME_PROFILE. A script that ignores the variable copies
+// what it always copied, which is the old behaviour rather than a new failure.
+func SyncAuthProfileFrom(ctx context.Context, p Profile) (string, error) {
 	script := SyncScript()
 	if _, err := os.Stat(script); err != nil {
 		return "", fmt.Errorf("browser: sync script not found at %s", script)
 	}
-	out, err := exec.CommandContext(ctx, "bash", script).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "bash", script)
+	if p.Dir != "" {
+		cmd.Env = append(os.Environ(),
+			"FREYA_CHROME_PROFILE="+p.Dir,
+			"FREYA_CHROME_PROFILE_LABEL="+p.Label())
+	}
+	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		return text, fmt.Errorf("browser: sync failed: %s", text)

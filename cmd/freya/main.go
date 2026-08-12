@@ -216,7 +216,6 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		// disabling the feature in silence: she keeps working and knows less.
 		fmt.Fprintf(os.Stderr, "  routes: %v\n", routeErr)
 	}
-	skills.RegisterServices(reg, routeStore)
 	places, placesErr := skills.RegisterPlaces(reg, cfg.DataDir)
 	if placesErr != nil {
 		return placesErr
@@ -245,6 +244,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	skills.RegisterClaudeAdvice(reg, g, claudeClient)
 
 	browserTabs := skills.NewTabs()
+	// Registered here rather than above because service_open opens a tab, so it
+	// needs the same Tabs every other browser tool uses.
+	skills.RegisterServices(reg, g, browserTabs, routeStore)
 	defer browserTabs.CloseAll()
 	skills.RegisterBrowser(reg, g, browserTabs)
 	if seer, ok := provider.(llm.VisionAnalyzer); ok {

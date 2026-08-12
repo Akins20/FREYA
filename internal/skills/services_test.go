@@ -106,6 +106,8 @@ func servicesOn(t *testing.T) (*Registry, *routes.Store) {
 		t.Fatal(err)
 	}
 	r := New()
-	RegisterServices(r, store)
+	// nil guard and tabs: these tests are about the memory, and service_open is
+	// only registered when there is a browser to open things in.
+	RegisterServices(r, nil, nil, store)
 	return r, store
 }

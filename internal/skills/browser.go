@@ -219,35 +219,10 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			}
 
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				if err := browser.Launch(ctx, bctx); err != nil {
-					return "", err
-				}
-				if old, ok := tabs.remove(name); ok {
-					_ = old.client.Close()
-					_ = browser.CloseTab(old.ctx, old.target.ID)
-				}
-				target, err := browser.NewTab(bctx, "about:blank")
+				title, current, err := tabs.OpenAt(ctx, name, bctx, url)
 				if err != nil {
 					return "", err
 				}
-				client, err := browser.Connect(bctx, target)
-				if err != nil {
-					return "", err
-				}
-				// Downloads land in a folder instead of opening a chooser nothing can
-				// drive, javascript dialogs get answered instead of blocking the
-				// renderer forever, and both are recorded so a click that caused one
-				// can say so. See internal/browser/events.go.
-				client.Watch(ctx)
-				if err := client.Navigate(ctx, url); err != nil {
-					client.Close()
-					return "", err
-				}
-				title, _ := client.Title(ctx)
-				current, _ := client.URL(ctx)
-
-				tabs.put(&openTab{name: name, ctx: bctx, target: target,
-					client: client, opened: time.Now(), lastURL: current})
 				return fmt.Sprintf("Tab %q open in %s context: %q\n%s%s",
 					name, bctx, title, current, guessNote), nil
 			})
@@ -639,9 +614,14 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				"accounts where Chrome autofills the wrong password. It needs no password " +
 				"at all, which is why it works where filling the form does not. Chrome " +
 				"must be closed first, so ask the user to close it.",
-			Params: llm.ObjectSchema(nil),
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"profile": {Type: "string", Description: "Which Chrome profile to copy, by " +
+					"name or account. Omit for the one Chrome used last. browser_profiles " +
+					"lists them, and on a machine with several this is the difference " +
+					"between their account and somebody else's."},
+			}),
 		},
-		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// KindBrowser, not KindWrite — and the reason still names exactly what
 			// is copied, so the audit log is unchanged.
 			//
@@ -668,12 +648,28 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 			// automation profile, and the script refuses to run at all while Chrome
 			// is open rather than tearing a live database. The confirmation was
 			// protecting files that are hers.
+			// Which profile, resolved before the guard so the confirmation names the
+			// account being copied rather than "the Chrome profile". On a machine
+			// with several, that sentence is the only thing standing between the
+			// user and a browser signed in as the wrong one of them.
+			want := strings.TrimSpace(argString(args, "profile"))
+			chosen, perr := browser.FindProfile("", want)
+			if perr != nil {
+				return "", perr
+			}
+
 			action := guard.Action{Kind: guard.KindBrowser,
 				Command: "sync chrome profile",
-				Reason: "copy the user's cookies and saved logins into the automation " +
-					"profile, so the browser she drives is signed in as they are"}
+				Reason: fmt.Sprintf("copy the cookies and saved logins of the %s profile "+
+					"into the automation profile, so the browser she drives is signed in "+
+					"as that account", chosen.Label())}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				return browser.SyncAuthProfile(ctx)
+				out, err := browser.SyncAuthProfileFrom(ctx, chosen)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("%s\n\n[Copied from the %s profile. Anything signed "+
+					"into a different profile is not here.]", out, chosen.Label()), nil
 			})
 		},
 	})
@@ -806,6 +802,55 @@ func (t *openTab) missCount() int {
 // observe fingerprints the page the active tab is showing, for the framework's
 // before/after comparison. Empty when there is no tab, which switches the
 // verification off rather than inventing a change.
+// OpenAt opens a tab on a URL and registers it, returning the title and the
+// address it actually landed on.
+//
+// # Why this is a method rather than the body of browser_open
+//
+// It was the body of browser_open, and so anything else that knew where it
+// wanted to go had two options: duplicate thirty lines of tab bookkeeping, or
+// hand the address back to the model and ask it to call browser_open next. The
+// second costs a round every time. The first is how the download-behaviour call
+// and the dialog watcher end up set on some tabs and not others, which is the
+// drift internal/browser/gestures.go was consolidated to stop.
+//
+// So the bookkeeping lives here once: launch the context, replace any tab of the
+// same name, connect, start watching for downloads and dialogs, navigate, and
+// register what came back. A skill that knows its destination now gets there in
+// one call, and none of them can forget the watcher.
+func (t *Tabs) OpenAt(ctx context.Context, name string, bctx browser.Context, url string) (title, landed string, err error) {
+	if err := browser.Launch(ctx, bctx); err != nil {
+		return "", "", err
+	}
+	if old, ok := t.remove(name); ok {
+		_ = old.client.Close()
+		_ = browser.CloseTab(old.ctx, old.target.ID)
+	}
+	target, err := browser.NewTab(bctx, "about:blank")
+	if err != nil {
+		return "", "", err
+	}
+	client, err := browser.Connect(bctx, target)
+	if err != nil {
+		return "", "", err
+	}
+	// Downloads land in a folder instead of opening a chooser nothing can drive,
+	// javascript dialogs get answered instead of blocking the renderer forever,
+	// and both are recorded so a click that caused one can say so. See
+	// internal/browser/events.go.
+	client.Watch(ctx)
+	if err := client.Navigate(ctx, url); err != nil {
+		client.Close()
+		return "", "", err
+	}
+	title, _ = client.Title(ctx)
+	landed, _ = client.URL(ctx)
+
+	t.put(&openTab{name: name, ctx: bctx, target: target,
+		client: client, opened: time.Now(), lastURL: landed})
+	return title, landed, nil
+}
+
 func (t *Tabs) observe(ctx context.Context, args map[string]any) string {
 	// The tab the CALL names, not the last one touched. Resolved through the same
 	// helper the handlers use, so before and after describe the page the action

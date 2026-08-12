@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/guard"
 	"github.com/Akins20/FREYA/internal/llm"
 	"github.com/Akins20/FREYA/internal/routes"
 )
@@ -50,7 +51,7 @@ import (
 // A route is an address. Signing in is the browser's auth context, which carries
 // the session the user already has. Nothing here reads, stores or types a
 // password, and there is deliberately no field it could be put in.
-func RegisterServices(r *Registry, store *routes.Store) {
+func RegisterServices(r *Registry, g *guard.Guard, tabs *Tabs, store *routes.Store) {
 	if store == nil {
 		return
 	}
@@ -129,6 +130,12 @@ func RegisterServices(r *Registry, store *routes.Store) {
 				service, url, route.Found, route.Age(time.Now()), note, route.Host), nil
 		},
 	})
+
+	// One call rather than two, and the verdict comes from the page rather than
+	// from her. See the doc on the handler.
+	if g != nil && tabs != nil {
+		registerServiceOpen(r, g, tabs, store)
+	}
 
 	r.Register(Skill{
 		Tool: llm.Tool{
@@ -421,6 +428,112 @@ func RegisterServices(r *Registry, store *routes.Store) {
 					"to forget", service)
 			}
 			return fmt.Sprintf("Forgotten where %s lives.", service), nil
+		},
+	})
+}
+
+// registerServiceOpen is the fast path: resolve a remembered address and go
+// there, in one call.
+//
+// # Why this exists when service_where already returns the address
+//
+// service_where hands back an address for browser_open to load, which costs a
+// round every time she checks the mail. That is the wrong shape for the thing
+// she does most often, and the fix was not to duplicate the tab bookkeeping here
+// but to factor it out of browser_open, where it now lives as Tabs.OpenAt.
+//
+// # The verdict is taken from the page, not from her
+//
+// service_used exists so a route that has rotted stops being asserted, and it
+// depends on somebody remembering to call it. Here nobody has to: the address
+// was opened by this tool, so this tool can compare where it landed against the
+// host it promised and record the answer itself. That closes the loop that made
+// the memory trustworthy without asking the model to close it.
+//
+// A redirect to a sign-in page on the same host counts as landing: it is the
+// right place, asking for a session. A redirect somewhere else does not.
+func registerServiceOpen(r *Registry, g *guard.Guard, tabs *Tabs, store *routes.Store) {
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "service_open",
+			Description: "Open one of the user's services and land on it, in one call: " +
+				"their email, calendar, messages, or anything she has learned.\n\n" +
+				"This is the tool for 'check my email' and 'what's on my calendar'. It " +
+				"looks up the address she learned, opens it in the browser context that " +
+				"carries their real session, checks the page is really that service, and " +
+				"records whether the route still works. Read it afterwards with " +
+				"browser_read.\n\n" +
+				"Use service_find first if she has not learned the service yet.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"service": {Type: "string", Description: "email, calendar, messages, or " +
+					"whatever the user calls it."},
+				"capability": {Type: "string", Description: "Optional, a named place inside " +
+					"it such as compose or today. Omit for the way in."},
+				"tab": {Type: "string", Description: "What to call the tab. Defaults to the " +
+					"service name."},
+			}, "service"),
+		},
+		Mutates: true,
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			service := strings.TrimSpace(argString(args, "service"))
+			if service == "" {
+				return "", fmt.Errorf("which service?")
+			}
+			route, ok := store.Get(service)
+			if !ok {
+				return "", fmt.Errorf("she has not learned where %q is. service_find works "+
+					"it out from the user's own browsing, then service_learn keeps it", service)
+			}
+			url, has := route.URL(argString(args, "capability"))
+			if !has {
+				return "", fmt.Errorf("%q is known but has no address for that", service)
+			}
+			tab := strings.TrimSpace(argString(args, "tab"))
+			if tab == "" {
+				tab = service
+			}
+
+			action := guard.Action{
+				Kind:    guard.KindBrowser,
+				Command: "open " + url,
+				Reason: fmt.Sprintf("open the user's %s at %s, signed in as them "+
+					"(auth context, real cookies)", service, url),
+			}
+			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				title, landed, err := tabs.OpenAt(ctx, tab, browser.ContextAuth, url)
+				if err != nil {
+					// A route that would not open is exactly what the failure count is
+					// for, so it is recorded here rather than left to be reported.
+					if n, ferr := store.Failed(service); ferr == nil && n >= 2 {
+						return "", fmt.Errorf("%w — and that is %d failures in a row for %s, "+
+							"so the address is now treated as a guess. service_find will "+
+							"work out the current one", err, n, service)
+					}
+					return "", err
+				}
+
+				// Landing is judged on the host. A redirect to a sign-in page on the
+				// same site is the right place asking for a session; a redirect
+				// somewhere else entirely is a route that has moved.
+				got := routes.HostOf(landed)
+				if got != route.Host && !strings.HasSuffix(got, "."+route.Host) {
+					n, _ := store.Failed(service)
+					stale := ""
+					if n >= 2 {
+						stale = " That is two in a row, so the address is now treated as a " +
+							"guess rather than fact."
+					}
+					return fmt.Sprintf("Opened %s and it did NOT land on %s: the tab is on %s "+
+						"(%q). The remembered address has probably moved.%s\n\nUse "+
+						"service_find to work out the current one, then service_learn it.",
+						service, route.Host, got, title, stale), nil
+				}
+
+				_ = store.Worked(service)
+				return fmt.Sprintf("Tab %q is open on the user's %s: %q\n%s\n\n"+
+					"[Landed on %s as expected, so the route is confirmed working. Read it "+
+					"with browser_read.]", tab, service, title, landed, got), nil
+			})
 		},
 	})
 }

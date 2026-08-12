@@ -50,10 +50,10 @@ always-there version with a push-to-talk key.
 
 ## What she does
 
-145 tools offline, 150 with a provider that can see and a microphone attached.
+147 tools offline, 152 with a provider that can see and a microphone attached.
 `find_tools` finds the rest when a request needs something she was not offered.
 
-**Drives a real browser.** 42 of those tools are Chrome, over the DevTools
+**Drives a real browser.** 43 of those tools are Chrome, over the DevTools
 Protocol: click, type, drag, right-click, upload, download, switch tabs, read
 pages that lazy-load, work pagination, save a page as PDF. Clicks go through the
 browser's own input pipeline rather than `element.click()`, because the pages
@@ -62,6 +62,13 @@ browser on a real display and not a headless one, for the same reason: a window
 you can watch, on the machine you are sitting at. She can also read the
 browser's own history, bookmarks and saved usernames, which is how she answers
 "that site I was on last week" without being told the address.
+
+Chrome profiles are a first-class thing rather than an assumption. A machine with
+a work profile and a personal one has two different answers to "my account", and
+picking wrong does not produce a worse answer, it produces a confident one about
+somebody else's inbox. `browser_profiles` lists them by name and signed-in
+account, the history search and the login sync both take one, and a name that
+fits two profiles is refused rather than resolved by guessing.
 
 **Reads and drives native applications.** Ten tools for native windows. Six work
 at the display: list windows, focus one, move or resize it, send keys, type at
@@ -94,7 +101,9 @@ own browsing history and ranks the sites they actually go to, so "which email do
 I use" is answered from evidence about this person rather than from a default.
 Once confirmed, `service_learn` remembers it, along with the places inside it
 that took several steps to find: where compose is, where today's agenda is.
-`service_where` then makes it one step forever. Every answer carries how old the
+`service_open` then goes there in one call, checks the page it landed on is
+really that service, and records the answer itself rather than asking her to
+report it. Every answer carries how old the
 knowledge is, two failures in a row mark a route stale rather than trusted, and a
 route is an address and never a credential. Anything can be learned by name, so a
 self-hosted mail server or a university portal is a first-class route rather than
