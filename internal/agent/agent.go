@@ -32,7 +32,14 @@ import (
 // so a full quiz — navigate in, answer five questions, submit, confirm — runs
 // past 25 and was cut off one click from done. This ceiling is for a runaway
 // model, not for honest long work; it should sit above what real tasks need.
-const maxToolRounds = 40
+//
+// Raised again from 40 for the same reason, with the WebVoyager sample as the
+// measurement: two of fifteen tasks ran out here, both of them mid-filter on a
+// site with several filters to apply, and both reported honestly what remained
+// rather than failing — which is the salvage path working and is still a task
+// not finished. Anything that builds several files and checks each one spends
+// rounds faster than a browsing task does.
+const maxToolRounds = 60
 
 // Agent is one configured assistant.
 type Agent struct {
