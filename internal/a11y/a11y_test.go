@@ -93,3 +93,136 @@ func TestDescribeSurvivesTheEdges(t *testing.T) {
 		t.Errorf("an anonymous leaf rendered as %q, want it kept", got)
 	}
 }
+
+// The rendering gdbus actually produces for a (iiii) struct.
+//
+// Parsing is the half of this that fails quietly: a misread produces a plausible
+// rectangle rather than an error, and she clicks a coordinate nobody chose.
+func TestExtentsParsingMatchesWhatTheBusReturns(t *testing.T) {
+	for _, c := range []struct {
+		reply string
+		want  Rect
+		ok    bool
+	}{
+		{"((100, 200, 80, 30),)", Rect{100, 200, 80, 30}, true},
+		{"((0, 0, 0, 0),)", Rect{}, true},
+		// A window scrolled off the left edge answers with negatives rather than
+		// failing, which is why Offscreen exists.
+		{"((-1920, 40, 300, 20),)", Rect{-1920, 40, 300, 20}, true},
+		{"(( 12,  34,  56,  78 ),)", Rect{12, 34, 56, 78}, true},
+		// Not a struct: the node has no Component interface and gdbus said so.
+		{"", Rect{}, false},
+		{"()", Rect{}, false},
+		{"GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod", Rect{}, false},
+	} {
+		got, ok := parseExtents(c.reply)
+		if ok != c.ok {
+			t.Errorf("%q: ok=%v want %v", c.reply, ok, c.ok)
+			continue
+		}
+		if ok && got != c.want {
+			t.Errorf("%q: got %+v want %+v", c.reply, got, c.want)
+		}
+	}
+}
+
+// "No position" and "at the origin with no size" are different answers and must
+// stay different, because one means the node cannot be clicked and the other
+// means the toolkit does not say where it is.
+func TestAZeroRectangleIsAnAnswerAndAMissingOneIsNot(t *testing.T) {
+	zero, ok := parseExtents("((0, 0, 0, 0),)")
+	if !ok {
+		t.Fatal("a zero rectangle was treated as no answer at all")
+	}
+	if !zero.Offscreen() {
+		t.Error("a zero-sized box reported as clickable")
+	}
+	if _, ok := parseExtents("no such interface"); ok {
+		t.Error("a failed call was treated as a position")
+	}
+	for _, r := range []Rect{{0, 0, 10, 10}, {5, 5, 1, 1}} {
+		if r.Offscreen() {
+			t.Errorf("%+v reported as offscreen", r)
+		}
+	}
+	// Entirely off the left or top edge is unreachable, not merely unusual.
+	for _, r := range []Rect{{-100, 10, 50, 10}, {10, -40, 10, 20}} {
+		if !r.Offscreen() {
+			t.Errorf("%+v reported as clickable", r)
+		}
+	}
+}
+
+func TestCentreIsTheMiddle(t *testing.T) {
+	x, y := Rect{100, 200, 80, 30}.Centre()
+	if x != 140 || y != 215 {
+		t.Errorf("centre = %d,%d want 140,215", x, y)
+	}
+}
+
+// The shape a real GTK dialog has: every button contains a label carrying the
+// same text, so a naive search finds the label and clicking it does nothing.
+func TestFindPrefersTheExactMatchAndTheRightRole(t *testing.T) {
+	tree := &Node{Role: "dialog", Name: "Save file", Children: []*Node{
+		{Role: "push button", Name: "Save As…"},
+		{Role: "push button", Name: "Save", Children: []*Node{
+			{Role: "label", Name: "Save"},
+		}},
+		{Role: "push button", Name: "Don't Save"},
+	}}
+
+	// Exact beats containing, even though "Save As…" comes first in walk order.
+	if got := Find(tree, "Save", ""); got == nil || got.Name != "Save" {
+		t.Errorf("got %v, want the exact Save", got)
+	}
+	// Role disambiguates the button from the label inside it.
+	got := Find(tree, "Save", "push button")
+	if got == nil || got.Role != "push button" {
+		t.Errorf("got %v, want the button rather than its label", got)
+	}
+	// No exact match: the shortest containing one, not the first.
+	if got := Find(tree, "ave", ""); got == nil || got.Name != "Save" {
+		t.Errorf("got %v, want the shortest containing match", got)
+	}
+	if got := Find(tree, "Print", ""); got != nil {
+		t.Errorf("found %v for a name that is not there", got)
+	}
+	if got := Find(nil, "Save", ""); got != nil {
+		t.Error("found something in a nil tree")
+	}
+}
+
+// The fingerprint has to move when the window does and hold still when it does
+// not, or "nothing observably changed" is a sentence nobody checked.
+func TestFingerprintMovesOnlyWhenTheTreeDoes(t *testing.T) {
+	before := &Node{Role: "dialog", Name: "Save", Children: []*Node{
+		{Role: "push button", Name: "OK"},
+	}}
+	same := &Node{Role: "dialog", Name: "Save", Children: []*Node{
+		{Role: "push button", Name: "OK"},
+	}}
+	if Fingerprint(before) != Fingerprint(same) {
+		t.Error("two identical trees fingerprinted differently")
+	}
+
+	renamed := &Node{Role: "dialog", Name: "Save", Children: []*Node{
+		{Role: "push button", Name: "Saving…"},
+	}}
+	grown := &Node{Role: "dialog", Name: "Save", Children: []*Node{
+		{Role: "push button", Name: "OK"},
+		{Role: "alert", Name: "File exists"},
+	}}
+	for name, other := range map[string]*Node{"a relabelled button": renamed, "a new alert": grown} {
+		if Fingerprint(before) == Fingerprint(other) {
+			t.Errorf("%s did not change the fingerprint", name)
+		}
+	}
+
+	// Depth is part of it: the same nodes reparented is a different window.
+	nested := &Node{Role: "dialog", Name: "Save", Children: []*Node{
+		{Role: "panel", Name: "", Children: []*Node{{Role: "push button", Name: "OK"}}},
+	}}
+	if Fingerprint(before) == Fingerprint(nested) {
+		t.Error("moving a button into a panel did not change the fingerprint")
+	}
+}

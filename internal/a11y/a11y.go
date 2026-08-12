@@ -48,6 +48,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -75,12 +76,13 @@ var ErrNoRegistry = fmt.Errorf("no accessibility registry is answering")
 var ErrNoTree = fmt.Errorf("this window publishes no accessibility tree")
 
 const (
-	root     = "/org/a11y/atspi/accessible/root"
-	registry = "org.a11y.atspi.Registry"
-	iface    = "org.a11y.atspi.Accessible"
-	propsGet = "org.freedesktop.DBus.Properties.Get"
-	maxNodes = 4000
-	maxDepth = 40
+	root      = "/org/a11y/atspi/accessible/root"
+	registry  = "org.a11y.atspi.Registry"
+	iface     = "org.a11y.atspi.Accessible"
+	propsGet  = "org.freedesktop.DBus.Properties.Get"
+	component = "org.a11y.atspi.Component"
+	maxNodes  = 4000
+	maxDepth  = 40
 )
 
 // Address asks the session bus where the accessibility bus lives.
@@ -267,4 +269,150 @@ func unquote(s string) string {
 	s = strings.TrimPrefix(s, "<")
 	s = strings.TrimSuffix(s, ">")
 	return strings.Trim(strings.TrimSpace(s), "'")
+}
+
+// Rect is where a node is on screen, in pixels.
+type Rect struct{ X, Y, W, H int }
+
+// Centre is where to click.
+func (r Rect) Centre() (int, int) { return r.X + r.W/2, r.Y + r.H/2 }
+
+// Offscreen reports a rectangle that cannot be clicked.
+//
+// AT-SPI answers for nodes that are scrolled away, in a collapsed panel, or
+// belong to a window that is minimised, and it answers with real numbers rather
+// than an error. A zero-sized box and a box at a negative coordinate are both
+// "there, but not where a pointer can reach it", and clicking the middle of
+// either lands somewhere arbitrary — which is worse than refusing, because it
+// looks like it worked.
+func (r Rect) Offscreen() bool {
+	return r.W <= 0 || r.H <= 0 || r.X+r.W <= 0 || r.Y+r.H <= 0
+}
+
+// reExtents pulls the four numbers out of a GetExtents reply, which gdbus
+// renders as ((x, y, w, h),).
+var reExtents = regexp.MustCompile(`\(\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\s*\)`)
+
+// parseExtents reads gdbus's rendering of a (iiii) struct.
+//
+// Separate from the call so the parsing is testable without a bus, which is the
+// only part of this that can be got wrong quietly: a misparse produces a
+// plausible rectangle rather than an error, and she clicks a coordinate nobody
+// chose.
+func parseExtents(reply string) (Rect, bool) {
+	m := reExtents.FindStringSubmatch(reply)
+	if m == nil {
+		return Rect{}, false
+	}
+	n := make([]int, 4)
+	for i := range n {
+		v, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return Rect{}, false
+		}
+		n[i] = v
+	}
+	return Rect{X: n[0], Y: n[1], W: n[2], H: n[3]}, true
+}
+
+// Extents asks where a node is, in screen coordinates.
+//
+// # Why this is not fetched during the walk
+//
+// The walk already costs three gdbus calls per node against a four thousand node
+// ceiling, and every one is a process. Asking every node where it is would add a
+// third again to a tree she mostly wants to READ. Position only matters for the
+// one node she is about to act on, so it is asked for then.
+//
+// # Not every node has a position
+//
+// Component is an optional interface. Labels, panels and whole toolkits do not
+// implement it, and the call simply fails — which is why this returns whether it
+// could answer rather than a zero rectangle. A zero rectangle is a real answer
+// meaning "at the origin, no size", and it is exactly what a node scrolled out
+// of view reports.
+func (r *Reader) Extents(ctx context.Context, n *Node) (Rect, bool) {
+	if n == nil {
+		return Rect{}, false
+	}
+	// coordType 0 is screen coordinates. Window-relative would need the window's
+	// own origin to be useful, and xdotool clicks in screen space.
+	out, err := r.call(ctx, n.Bus, n.Path, component+".GetExtents", "uint32 0")
+	if err != nil {
+		return Rect{}, false
+	}
+	return parseExtents(out)
+}
+
+// Find returns the first node in a subtree whose name matches, preferring an
+// exact match over a containing one.
+//
+// # Why the shortest containing match
+//
+// The same rule the browser uses for clicking by text, for the same reason: on a
+// real dialog "Save" is also inside "Save As…" and "Don't Save", and the longest
+// match is reliably the wrong one. Exact wins outright; otherwise the shortest
+// name that contains what she asked for is the least surprising answer.
+//
+// Role is compared too, so "the OK button" can be asked for as a button when a
+// label beside it carries the same text — which is the normal shape of a GTK
+// tree, where every button contains a label with identical text.
+func Find(root *Node, name, role string) *Node {
+	want := strings.ToLower(strings.TrimSpace(name))
+	wantRole := strings.ToLower(strings.TrimSpace(role))
+	if want == "" {
+		return nil
+	}
+	var exact, shortest *Node
+	var visit func(*Node)
+	visit = func(n *Node) {
+		if n == nil || exact != nil {
+			return
+		}
+		if wantRole == "" || strings.EqualFold(n.Role, wantRole) {
+			got := strings.ToLower(strings.TrimSpace(n.Name))
+			switch {
+			case got == want:
+				exact = n
+				return
+			case strings.Contains(got, want):
+				if shortest == nil || len(got) < len(strings.ToLower(shortest.Name)) {
+					shortest = n
+				}
+			}
+		}
+		for _, c := range n.Children {
+			visit(c)
+		}
+	}
+	visit(root)
+	if exact != nil {
+		return exact
+	}
+	return shortest
+}
+
+// Fingerprint is a stable summary of a subtree, for telling whether acting on it
+// changed anything.
+//
+// The desktop equivalent of the page signature, and it exists for the same
+// reason: a click that did nothing and a click that worked look identical from
+// the outside, and the honest sentence "nothing observably changed" is only
+// honest if something was actually compared. Roles and names in walk order,
+// which changes when a dialog opens, a button's label flips, or a list gains a
+// row — and does not change when the pointer merely moves.
+func Fingerprint(n *Node) string {
+	var b strings.Builder
+	var visit func(*Node, int)
+	visit = func(n *Node, depth int) {
+		if n == nil {
+			return
+		}
+		fmt.Fprintf(&b, "%d:%s:%s\n", depth, n.Role, n.Name)
+		for _, c := range n.Children {
+			visit(c, depth+1)
+		}
+	}
+	visit(n, 0)
+	return b.String()
 }

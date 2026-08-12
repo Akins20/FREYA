@@ -31,6 +31,9 @@ import (
 func RegisterDesktop(r *Registry, g *guard.Guard) {
 	// The native counterpart to browser_inspect. See registerDesktopInspect.
 	registerDesktopInspect(r)
+	// And the other half: reading a control she cannot press stops short of
+	// useful. See registerDesktopClick.
+	registerDesktopClick(r, g)
 
 	if g == nil {
 		return
@@ -204,7 +207,22 @@ func (d *desktop) screenshot(ctx context.Context, args map[string]any) (string, 
 	if err != nil {
 		return "", fmt.Errorf("screenshot was not written: %w", err)
 	}
-	return fmt.Sprintf("Screenshot saved to %s (%.0f KB).", path, float64(info.Size())/1024), nil
+	// Says what kind of knowledge this is, because the two ways she can learn
+	// about a native window produce claims of very different strength and read
+	// identically in a reply.
+	//
+	// desktop_inspect asks the application what it is; a screenshot asks the
+	// screen what it looks like. "The Save button is greyed out" read from the
+	// tree is a fact the toolkit stated. Inferred from pixels it is a guess about
+	// a colour, and it is wrong on any theme with low contrast. Whoever reads her
+	// answer cannot tell those apart unless she says, and she has no reason to
+	// say unless something tells her the difference matters here.
+	return fmt.Sprintf("Screenshot saved to %s (%.0f KB).\n\n[This is pixels, not the "+
+		"application's own description of itself. Anything you conclude from it is "+
+		"inferred from how it looks — say so when you report it. desktop_inspect asks "+
+		"the window what its controls are and what they are called, which is the "+
+		"stronger answer where the toolkit supports it.]",
+		path, float64(info.Size())/1024), nil
 }
 
 // focusedWindowName reports what will receive synthetic input, so the

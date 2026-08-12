@@ -3,7 +3,7 @@
 **An AI assistant that counts what it just wrote, and hands the number back.**
 
 Written in Go, with zero external dependencies. One binary, builds in seconds.
-47,000 lines of standard library, 17,000 lines of tests. Developed on a 2014
+49,000 lines of standard library, 19,000 lines of tests. Developed on a 2014
 laptop with no GPU and meant to be comfortable there.
 
 The reasoning runs on a hosted model (Gemini or Anthropic). There is an offline
@@ -50,13 +50,25 @@ always-there version with a push-to-talk key.
 
 ## What she does
 
-**Drives a real browser.** 42 of her 136 tools are Chrome, over the DevTools
+**Drives a real browser.** 43 of her 151 tools are Chrome, over the DevTools
 Protocol: click, type, drag, right-click, upload, download, switch tabs, read
 pages that lazy-load, work pagination, save a page as PDF. Clicks go through the
 browser's own input pipeline rather than `element.click()`, because the pages
 where that distinction matters are the pages worth automating. It is a real
 browser on a real display and not a headless one, for the same reason: a window
 you can watch, on the machine you are sitting at.
+
+**Reads and clicks native applications too.** Every desktop toolkit publishes the
+same information the DOM gives her, over AT-SPI, and `desktop_inspect` reads it:
+the buttons, fields and labels of an application, by name, rather than a
+screenshot she has to squint at. `desktop_click` presses one — it asks the
+toolkit where the control is and clicks the middle of it, and refuses when the
+window publishes no tree, when nothing is called that, when the toolkit will not
+say where it is, or when the control is scrolled out of view. That last refusal
+matters most: AT-SPI answers for a node that is off-screen, with real numbers and
+no error, and clicking the middle of it lands on whatever else is there. Two of
+four toolkits publish nothing at all, so a screenshot now says out loud that it
+is pixels rather than the application's own account of itself.
 
 **Finishes what she starts.** Writes files, checks the syntax, checks that every
 link goes somewhere, serves it, and puts it on your screen. `site_check` resolves
@@ -273,6 +285,8 @@ internal/work     background jobs: bounded pool, cancellation, isolation
 internal/memory   tiered memory, context assembly, BM25 retrieval
 internal/skills   the tool registry and every capability
 internal/browser  CDP client, gestures, page state, event stream
+internal/a11y     the accessibility tree: what a native window says it contains
+internal/platform what this machine can actually do, asked once
 internal/wiring   whether the thing she built is actually joined up
 internal/playbook know-how, as distinct from tools
 internal/llm      provider-agnostic model interface
@@ -311,9 +325,10 @@ make install        # to ~/.local/bin
 go test ./... -race
 ```
 
-`go test ./...` runs 687 tests. On a bare machine 665 pass, 22 skip and none
-fail; the skips are the ones that need Chrome running, or the LibreOffice-produced
-documents that `FREYA_PROBE_DOCS` points at. The race detector is clean.
+`go test ./...` runs 703 test functions. Counting subtests the run reports 748
+results: 730 pass, 18 skip, none fail. The skips are the ones that need Chrome
+running, or the LibreOffice-produced documents that `FREYA_PROBE_DOCS` points
+at, so a barer machine skips more. The race detector is clean.
 
 ## What it needs
 
