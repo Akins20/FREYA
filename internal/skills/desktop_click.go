@@ -30,7 +30,7 @@ import (
 //
 // Because the failure it is guarding against is the one this codebase keeps
 // meeting: an action that reports success while nothing happened. Four ways that
-// arises here, and all four are refusals rather than clicks:
+// arises here:
 //
 //   - the window publishes no tree, so there is nothing to aim at;
 //   - the control is not in the tree under that name;
@@ -41,6 +41,13 @@ import (
 // of view — with real numbers, no error — and clicking the middle of a rectangle
 // at negative coordinates lands on whatever else is there. That is not a missed
 // click, it is a click somewhere nobody chose, and it looks like it worked.
+//
+// The last two are refusals only for a control with no action of its own. Once
+// the action path landed, a widget that publishes one is performed through the
+// application's handler, which needs no position at all — so it works scrolled
+// away, minimised, or in a window that is not in front. This comment said all
+// four were refusals for a while after that stopped being true, and so did the
+// tool description the model reads.
 //
 // # And it says whether anything moved
 //
@@ -63,11 +70,14 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 				"Run desktop_inspect first and click something you saw there. It reports " +
 				"whether the window changed afterwards, so a click that did nothing says " +
 				"so instead of reading like a click that worked.\n\n" +
-				"It refuses rather than guessing when the window publishes no " +
-				"accessibility tree, when nothing in it is called that, or when the " +
-				"control is scrolled out of view. In those cases use desktop_screenshot " +
-				"with desktop_key — a keyboard route usually exists even where this " +
-				"cannot help.",
+				"Where the control publishes an action of its own, this goes through " +
+				"the application's handler rather than the pointer, so it reaches a control " +
+				"that is scrolled out of view or in a window that is not in front, and " +
+				"leaves the user's pointer where they left it.\n\n" +
+				"It refuses rather than guessing when the window publishes no accessibility " +
+				"tree, when nothing in it is called that, or when a control with no action " +
+				"of its own is out of view. Then use desktop_screenshot with desktop_key: " +
+				"a keyboard route usually exists even where this cannot help.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"name": {Type: "string", Description: "What the control is called, as " +
 					"desktop_inspect showed it."},

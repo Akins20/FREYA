@@ -29,10 +29,16 @@ func RegisterSystem(r *Registry) {
 	r.Register(Skill{
 		Tool: llm.Tool{
 			Name: "what_can_i_do_here",
-			Description: "Report what this machine actually lets you do: whether you can " +
-				"drive windows, send keystrokes, take a screenshot, notify, record, speak " +
-				"and reach a browser — and, where you cannot, exactly why and what would " +
-				"fix it.\n\n" +
+			Description: "Report what this machine actually lets you do: whether you can drive " +
+				"windows, send keystrokes, take a screenshot, notify, record, speak, reach a " +
+				"browser and read an application's own controls, and, where you cannot, " +
+				"exactly why and what would fix it.\n\n" +
+				"It also says which of the windows open right now can be read, which is a " +
+				"different question from whether reading works at all: a Chromium " +
+				"application (Electron, so VS Code, Slack, Discord, Teams) publishes nothing " +
+				"inside itself unless it was started with a flag, so desktop_inspect shows " +
+				"the window and nothing in it. Ask here before concluding an application is " +
+				"empty.\n\n" +
 				"Reach for this before telling the user something is impossible, and when a " +
 				"desktop or voice tool refuses for a reason you do not understand. Saying " +
 				"'I cannot do that' when the real answer is 'xdotool is not installed' " +

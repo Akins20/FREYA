@@ -15,11 +15,18 @@ import (
 //
 // # Why a menu is not just another control
 //
-// A button is in the tree before it is pressed. A submenu is not: toolkits
-// populate a menu when it is first shown, so a tree read before the click shows
-// an empty "File" and one read after it shows Open, Save and the rest. The same
-// node answers differently at two moments, which means each level has to be
-// opened and then looked at again rather than planned from a single reading.
+// A button is in the tree before it is pressed. A submenu need not be: some
+// toolkits fill a menu only when it is first shown, so a tree read before the
+// click shows an empty "File" and one read after it shows Open, Save and the
+// rest. The same node answers differently at two moments, which means each
+// level has to be opened and then looked at again rather than planned from a
+// single reading.
+//
+// Not all of them, which is worth saying because the original wording here said
+// menus do not contain their items until shown, flatly, and GTK contradicts it:
+// a GTK menu lists Save As before anything opens it. The opening is still
+// necessary, because Qt and Chromium do not, and there is nothing on the node
+// that says which kind it is.
 //
 // It is also the thing a person uses constantly and she could not reach at all.
 // Keystrokes get to a menu with an accelerator and to nothing a designer put
@@ -54,9 +61,9 @@ func registerDesktopMenu(r *Registry, g *guard.Guard) {
 			Name: "desktop_menu",
 			Description: "Choose something from a native application's menus, by name: " +
 				"'File > Save As', 'Edit > Preferences', 'View > Zoom > Zoom In'.\n\n" +
-				"Each level is opened and then read, because menus do not contain their " +
-				"items until they are shown — so this reaches things no screenshot lists " +
-				"and no keyboard shortcut exists for.\n\n" +
+				"Each level is opened and then read, because some toolkits do not fill a " +
+				"menu until it is shown, so this reaches things no screenshot lists and no " +
+				"keyboard shortcut exists for.\n\n" +
 				"If a level is missing it tells you what that menu does contain, and it " +
 				"closes anything it opened on the way out.",
 			Params: llm.ObjectSchema(map[string]llm.Property{

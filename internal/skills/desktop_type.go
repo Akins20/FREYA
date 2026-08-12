@@ -45,6 +45,9 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 				"to that field rather than to whatever happens to have focus, needs no " +
 				"tabbing and no guessing, and tells you what actually landed — which is " +
 				"not always what was sent, because fields validate and reformat.\n\n" +
+				"It works even where the toolkit publishes nothing writable, which is " +
+				"Chromium and so every Electron application, by focusing the field and using " +
+				"the keyboard, and it reads the field back either way.\n\n" +
 				"Run desktop_inspect first and use the name it showed. Password fields are " +
 				"refused: ask the user to type those themselves.",
 			Params: llm.ObjectSchema(map[string]llm.Property{
