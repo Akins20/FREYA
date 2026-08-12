@@ -64,6 +64,7 @@ func RegisterDesktop(r *Registry, g *guard.Guard) {
 				"title": {Type: "string", Description: "Substring of the window title."},
 			}, "title"),
 		},
+		Serial:  true,
 		Handler: d.focusWindow,
 	})
 
@@ -91,6 +92,7 @@ func RegisterDesktop(r *Registry, g *guard.Guard) {
 				"reason": {Type: "string", Description: "Why, shown to the user when confirming."},
 			}, "text"),
 		},
+		Serial:  true,
 		Handler: d.typeText,
 	})
 
@@ -104,6 +106,7 @@ func RegisterDesktop(r *Registry, g *guard.Guard) {
 				"reason": {Type: "string", Description: "Why, shown to the user when confirming."},
 			}, "keys"),
 		},
+		Serial:  true,
 		Handler: d.sendKeys,
 	})
 }
@@ -150,12 +153,10 @@ func (d *desktop) listWindows(ctx context.Context, _ map[string]any) (string, er
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		// wmctrl -l: <id> <desktop> <host> <title...>
-		parts := strings.SplitN(strings.TrimSpace(line), " ", 4)
-		if len(parts) < 4 {
+		title := wmctrlTitle(line)
+		if title == "" {
 			continue
 		}
-		title := strings.TrimSpace(parts[3])
 		marker := " "
 		if active != "" && title == active {
 			marker = "*"
@@ -335,14 +336,41 @@ func onScreenTitles(ctx context.Context) ([]string, error) {
 	}
 	var titles []string
 	for _, line := range strings.Split(out, "\n") {
-		// wmctrl -l: <id> <desktop> <host> <title...>
-		if parts := strings.SplitN(strings.TrimSpace(line), " ", 4); len(parts) == 4 {
-			if t := strings.TrimSpace(parts[3]); t != "" {
-				titles = append(titles, t)
-			}
+		if t := wmctrlTitle(line); t != "" {
+			titles = append(titles, t)
 		}
 	}
 	return titles, nil
+}
+
+// wmctrlTitle pulls the window title out of one line of `wmctrl -l`.
+//
+// The columns are id, desktop, host, then the title, and they are separated by
+// runs of spaces rather than single ones: wmctrl pads the desktop number to a
+// fixed width. Splitting on a single space therefore produced an empty second
+// field and left the host glued to the front of every title.
+//
+// Two things broke on that, both quietly. Every listing reported windows as
+// "N/A Some Window" or "<hostname> Some Window", which puts a machine name into
+// an answer nobody asked one about. And the focused marker never appeared at
+// all, because the focused title comes from xdotool as the bare title and could
+// never equal the padded one — so "* = focused" was printed above a list in
+// which nothing was ever marked.
+//
+// The title is everything after the third field, because a window title can
+// contain any number of spaces. Same reason system_status anchors on trailing
+// columns: the variable-width thing has to be the remainder, never a field
+// index.
+func wmctrlTitle(line string) string {
+	rest := strings.TrimSpace(line)
+	for range 3 {
+		i := strings.IndexAny(rest, " \t")
+		if i < 0 {
+			return ""
+		}
+		rest = strings.TrimLeft(rest[i:], " \t")
+	}
+	return strings.TrimSpace(rest)
 }
 
 // registerDesktopInspect adds the native-window counterpart to browser_inspect.

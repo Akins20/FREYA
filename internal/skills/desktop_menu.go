@@ -67,6 +67,7 @@ func registerDesktopMenu(r *Registry, g *guard.Guard) {
 			}, "path"),
 		},
 		Mutates: true,
+		Serial:  true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			steps := menuPath(argString(args, "path"))
 			if len(steps) == 0 {

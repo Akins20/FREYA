@@ -55,6 +55,7 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 			}, "field", "text"),
 		},
 		Mutates: true,
+		Serial:  true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			field := strings.TrimSpace(argString(args, "field"))
 			if field == "" {

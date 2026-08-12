@@ -79,6 +79,7 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 			}, "name"),
 		},
 		Mutates: true,
+		Serial:  true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if err := requireX11(); err != nil {
 				return "", err

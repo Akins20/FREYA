@@ -497,56 +497,87 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 		outputs := make([]string, len(resp.ToolCalls))
 		failedAt := make([]bool, len(resp.ToolCalls))
 		var wg sync.WaitGroup
+		runOne := func(i int, call llm.ToolCall) {
+			// Refuse a call that has already failed twice, unchanged, in this
+			// exchange. Running it a third time cannot inform her — the answer is
+			// already known — and every attempt costs a round she needs for the work.
+			key := call.Name + "|" + telemetry.HashArgs(call.Args)
+			if attempts.failures(key) >= repeatLimit {
+				refusal := fmt.Sprintf("REFUSED: %s has already failed twice in this "+
+					"exchange with exactly these arguments, so it was not run again. "+
+					"Repeating it cannot tell you anything new. Look at what is actually "+
+					"there — read the page, list the directory, inspect the controls — and "+
+					"then do something different.", call.Name)
+				if opts := a.Skills.AffordancesFor(ctx, call.Name, call.Args); len(opts) > 0 {
+					refusal += "\n\nWhat is actually available here:\n- " + strings.Join(opts, "\n- ")
+				}
+				a.trace("error", call.Name, "refused: same call already failed twice")
+				a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args, 0, "", errRepeatedCall)
+				// A refusal is a failure for the record's purposes: nothing was
+				// run, so it is neither evidence nor achievement.
+				failedAt[i] = true
+				outputs[i] = refusal
+				return
+			}
+
+			a.trace("start", call.Name, formatArgs(call.Args))
+
+			started := time.Now()
+			output, err := a.Skills.Execute(ctx, call.Name, call.Args)
+			attempts.record(key, err)
+			// Recorded with the exchange, the round and a fingerprint of the
+			// arguments, so the log can answer "what did she do after this
+			// failed": twenty attempts at the same thing look nothing like
+			// twenty different attempts, and only the args hash tells them apart.
+			a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args,
+				time.Since(started), output, err)
+			if err != nil {
+				// Errors go back to the model as text: a failed tool is
+				// information it can act on, not a reason to abort the turn.
+				output = "ERROR: " + err.Error()
+				a.trace("error", call.Name, err.Error())
+			} else {
+				a.trace("ok", call.Name, truncate(output, 200))
+			}
+			failedAt[i] = err != nil
+			outputs[i] = output
+		}
+
+		// Concurrent, except where the order is the instruction.
+		//
+		// Some tools share one global resource that has no notion of whose turn
+		// it is: the keyboard, the pointer, the window that happens to have
+		// focus. Two of those in one round are not independent lookups, they are
+		// a sequence, and running them concurrently delivers them in whatever
+		// order the scheduler picks. Measured against an application that logs
+		// every keystroke it receives: asked to type "Ada" and then press Return,
+		// the log recorded Return first. Nothing failed, and the only reason it
+		// was visible at all is that the application was writing down what it
+		// actually got.
+		//
+		// So serial tools run in request order on one goroutine, and everything
+		// else keeps the concurrency it was written for.
+		var serial []int
 		for i, call := range resp.ToolCalls {
 			result.ToolCalls = append(result.ToolCalls, call.Name)
+			if a.Skills.IsSerial(call.Name) {
+				serial = append(serial, i)
+				continue
+			}
 			wg.Add(1)
 			go func(i int, call llm.ToolCall) {
 				defer wg.Done()
-
-				// Refuse a call that has already failed twice, unchanged, in this
-				// exchange. Running it a third time cannot inform her — the answer is
-				// already known — and every attempt costs a round she needs for the work.
-				key := call.Name + "|" + telemetry.HashArgs(call.Args)
-				if attempts.failures(key) >= repeatLimit {
-					refusal := fmt.Sprintf("REFUSED: %s has already failed twice in this "+
-						"exchange with exactly these arguments, so it was not run again. "+
-						"Repeating it cannot tell you anything new. Look at what is actually "+
-						"there — read the page, list the directory, inspect the controls — and "+
-						"then do something different.", call.Name)
-					if opts := a.Skills.AffordancesFor(ctx, call.Name, call.Args); len(opts) > 0 {
-						refusal += "\n\nWhat is actually available here:\n- " + strings.Join(opts, "\n- ")
-					}
-					a.trace("error", call.Name, "refused: same call already failed twice")
-					a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args, 0, "", errRepeatedCall)
-					// A refusal is a failure for the record's purposes: nothing was
-					// run, so it is neither evidence nor achievement.
-					failedAt[i] = true
-					outputs[i] = refusal
-					return
-				}
-
-				a.trace("start", call.Name, formatArgs(call.Args))
-
-				started := time.Now()
-				output, err := a.Skills.Execute(ctx, call.Name, call.Args)
-				attempts.record(key, err)
-				// Recorded with the exchange, the round and a fingerprint of the
-				// arguments, so the log can answer "what did she do after this
-				// failed": twenty attempts at the same thing look nothing like
-				// twenty different attempts, and only the args hash tells them apart.
-				a.Telemetry.ToolCall(call.Name, exchangeID, round, call.Args,
-					time.Since(started), output, err)
-				if err != nil {
-					// Errors go back to the model as text: a failed tool is
-					// information it can act on, not a reason to abort the turn.
-					output = "ERROR: " + err.Error()
-					a.trace("error", call.Name, err.Error())
-				} else {
-					a.trace("ok", call.Name, truncate(output, 200))
-				}
-				failedAt[i] = err != nil
-				outputs[i] = output
+				runOne(i, call)
 			}(i, call)
+		}
+		if len(serial) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for _, i := range serial {
+					runOne(i, resp.ToolCalls[i])
+				}
+			}()
 		}
 		wg.Wait()
 

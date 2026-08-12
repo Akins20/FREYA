@@ -67,3 +67,33 @@ func TestAWindowManagerThatCannotAnswerIsNotAnEmptyScreen(t *testing.T) {
 		t.Errorf("the error does not say what is missing: %v", err)
 	}
 }
+
+// wmctrl pads its columns, so the title is the remainder and never a field.
+//
+// Splitting on a single space produced an empty second field and glued the host
+// onto the front of every title. Both symptoms were quiet: listings reported
+// "N/A Some Window" and "<hostname> Some Window", putting a machine name into
+// answers nobody asked one about, and the focused marker never appeared once,
+// because the focused title arrives from xdotool bare and could not equal a
+// padded one.
+func TestAWindowTitleIsEverythingAfterTheThirdColumn(t *testing.T) {
+	for _, c := range []struct{ line, want string }{
+		// The real shape, with the desktop number padded.
+		{"0x00600018  0 N/A TkTarget", "TkTarget"},
+		{"0x00800003  0 somehost ControlTarget", "ControlTarget"},
+		// A title with spaces in it, which is why the remainder is taken whole.
+		{"0x00400007  1 somehost Untitled Document 1 - Writer", "Untitled Document 1 - Writer"},
+		// Single-spaced, which is what the old parser assumed and must still work.
+		{"0x00400007 0 N/A Terminal", "Terminal"},
+		// A sticky window, where wmctrl writes -1 for the desktop.
+		{"0x00400009 -1 N/A Conky", "Conky"},
+		// Nothing to take.
+		{"", ""},
+		{"0x00400007  0 N/A", ""},
+		{"garbage", ""},
+	} {
+		if got := wmctrlTitle(c.line); got != c.want {
+			t.Errorf("wmctrlTitle(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}

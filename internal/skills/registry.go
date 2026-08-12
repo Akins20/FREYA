@@ -37,6 +37,18 @@ type Skill struct {
 	Act Acting
 	// Mutates marks a skill that changes the world, so the framework verifies it.
 	Mutates bool
+	// Serial marks a skill that must not run beside another of its kind, because
+	// the order it runs in is part of what it means.
+	//
+	// Tool calls in a round are executed concurrently, which is right for
+	// independent lookups and wrong for anything driving one global resource
+	// with no notion of whose turn it is: the keyboard, the pointer, the window
+	// that happens to have focus. "Type Ada, then press Return" is a sequence,
+	// and delivered concurrently it arrives in whatever order the scheduler
+	// picks. Measured against an application logging every key it received, the
+	// Return landed first. Nothing failed and nothing warned; the application
+	// writing down what it actually got is the only reason it was visible.
+	Serial bool
 	// Observe returns a cheap fingerprint of whatever this skill touches. When it
 	// is set on a mutating skill, Execute samples it before and after: identical
 	// readings mean nothing happened, and the result says so.
@@ -162,6 +174,17 @@ func (r *Registry) Has(name string) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.skills[name]
 	return ok
+}
+
+// IsSerial reports whether a tool must run in request order rather than beside
+// its neighbours. Unknown tools are not serial: the answer is only consulted to
+// give up concurrency, and giving it up for something that does not need it
+// costs latency for nothing.
+func (r *Registry) IsSerial(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	s, ok := r.skills[name]
+	return ok && s.Serial
 }
 
 func (r *Registry) Names() []string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -574,5 +575,113 @@ func TestTheRoundCapDigestIsFenced(t *testing.T) {
 	}
 	if !strings.Contains(digest, "EXTERNAL CONTENT") {
 		t.Error("the digest replayed page content to the model without a boundary")
+	}
+}
+
+// Tools that drive one global resource run in the order they were asked for.
+//
+// Calls in a round execute concurrently, which is right for independent lookups
+// and wrong for anything sharing the keyboard, the pointer or the focused
+// window. "Type Ada, then press Return" is a sequence, and run concurrently it
+// arrives in whatever order the scheduler picks. Measured against an
+// application that logged every key it received: the Return landed first,
+// nothing failed, and nothing warned — the application writing down what it
+// actually got is the only reason it was ever visible.
+func TestSerialToolsRunInTheOrderTheyWereRequested(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+
+	p := &scriptedProvider{responses: []llm.Response{{
+		ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "type_first", Args: map[string]any{}},
+			{ID: "2", Name: "key_second", Args: map[string]any{}},
+		},
+	}, {Text: "done"}}}
+	a, _ := newTestAgent(t, p)
+
+	add := func(name string, pause time.Duration) {
+		a.Skills.Register(skills.Skill{
+			Tool:   llm.Tool{Name: name, Params: llm.ObjectSchema(nil)},
+			Serial: true,
+			Handler: func(context.Context, map[string]any) (string, error) {
+				// The one asked for first sleeps longest, so anything running
+				// these concurrently records them in the wrong order.
+				time.Sleep(pause)
+				mu.Lock()
+				order = append(order, name)
+				mu.Unlock()
+				return "ok", nil
+			},
+		})
+	}
+	add("type_first", 150*time.Millisecond)
+	add("key_second", 10*time.Millisecond)
+
+	if !a.Skills.IsSerial("type_first") {
+		t.Fatal("a skill registered as serial does not report as one")
+	}
+	if a.Skills.IsSerial("no_such_tool") {
+		t.Error("an unregistered tool reported as serial")
+	}
+
+	if _, err := a.Ask(context.Background(), "type Ada then press Return"); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 {
+		t.Fatalf("ran %d tools, want 2: %v", len(order), order)
+	}
+	if order[0] != "type_first" || order[1] != "key_second" {
+		t.Errorf("ran in order %v, want [type_first key_second]", order)
+	}
+}
+
+// And everything else keeps the concurrency it was written for, or three
+// independent lookups become three round trips of waiting.
+func TestOrdinaryToolsStillRunConcurrently(t *testing.T) {
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(2)
+
+	p := &scriptedProvider{responses: []llm.Response{{
+		ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "lookup_a", Args: map[string]any{}},
+			{ID: "2", Name: "lookup_b", Args: map[string]any{}},
+		},
+	}, {Text: "done"}}}
+	a, _ := newTestAgent(t, p)
+
+	for _, name := range []string{"lookup_a", "lookup_b"} {
+		a.Skills.Register(skills.Skill{
+			Tool: llm.Tool{Name: name, Params: llm.ObjectSchema(nil)},
+			Handler: func(context.Context, map[string]any) (string, error) {
+				// Neither can finish until both have started, so this only
+				// returns if they genuinely overlap.
+				started.Done()
+				<-release
+				return "ok", nil
+			},
+		})
+	}
+
+	go func() {
+		started.Wait()
+		close(release)
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Ask(context.Background(), "look both up")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("two ordinary tools did not run at the same time")
 	}
 }
