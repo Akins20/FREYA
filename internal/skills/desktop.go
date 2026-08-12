@@ -37,6 +37,9 @@ func RegisterDesktop(r *Registry, g *guard.Guard) {
 	// And filling one in. See registerDesktopTypeInto: keystrokes at whatever has
 	// focus cannot say afterwards whether they landed where they were aimed.
 	registerDesktopTypeInto(r, g)
+	// And the menus, which are the thing a person uses constantly and the one
+	// place keystrokes reach least. See registerDesktopMenu.
+	registerDesktopMenu(r, g)
 
 	if g == nil {
 		return

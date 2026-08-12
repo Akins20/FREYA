@@ -50,6 +50,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Node is one element of an application's own account of itself.
@@ -552,4 +553,46 @@ func (n *Node) Secret() bool {
 // the text silently becomes a different string or a parse error.
 func quoteArg(s string) string {
 	return "'" + strings.NewReplacer(`\`, `\`, `'`, `\'`).Replace(s) + "'"
+}
+
+// Refresh re-reads a node's children from the bus, discarding what was there.
+//
+// Needed because a menu does not have its items until it is opened. Toolkits
+// populate a submenu when it is first shown, so a tree walked before the click
+// shows an empty menu and a walk after it shows the contents — and the same node
+// legitimately answers differently at two moments. Anything that opens something
+// has to look again rather than reuse what it read.
+func (r *Reader) Refresh(ctx context.Context, n *Node) {
+	if n == nil {
+		return
+	}
+	n.Children = r.children(ctx, n)
+	for _, c := range n.Children {
+		r.describe(ctx, c)
+	}
+}
+
+// OpenAndRefresh performs a node's action and waits for children to appear.
+//
+// Population is asynchronous: the action returns as soon as the toolkit accepts
+// it, and the items exist a moment later. Reading immediately finds an empty
+// menu and concluding it is empty would be wrong for the commonest menu there
+// is. Bounded, because a menu that genuinely has no items must not hang the turn
+// waiting for some to arrive.
+func (r *Reader) OpenAndRefresh(ctx context.Context, n *Node) error {
+	if err := r.Do(ctx, n, 0); err != nil {
+		return err
+	}
+	for range 10 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(60 * time.Millisecond):
+		}
+		r.Refresh(ctx, n)
+		if len(n.Children) > 0 {
+			return nil
+		}
+	}
+	return nil
 }
