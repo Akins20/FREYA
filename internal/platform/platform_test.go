@@ -343,3 +343,33 @@ func TestACompositorIsFoundWithoutTheEnvironmentVariable(t *testing.T) {
 		t.Errorf("display is %q with a compositor socket and an X server, want xwayland", got)
 	}
 }
+
+// A capability's absence has to be a claim about this program, never about the
+// world, because only one of those can be checked here.
+//
+// "Nothing reads it yet" is the sentence that survived internal/a11y being
+// written and four desktop tools being built on top of it, because no code
+// could contradict a statement about what exists in general. Reasons are scoped
+// to whether a backend is implemented here, which is answerable by looking.
+func TestAnAbsentCapabilityBlamesThisProgramAndNotTheWorld(t *testing.T) {
+	dead := []string{"nothing reads it", "nothing reads any", "any platform"}
+
+	for _, os_ := range []OS{Linux, MacOS, Windows} {
+		c := probeAccessibility(os_, X11)
+		for _, phrase := range dead {
+			if strings.Contains(strings.ToLower(c.Why), phrase) {
+				t.Errorf("%s accessibility claims something about the world that nothing "+
+					"here can check (%q): %q", os_, phrase, c.Why)
+			}
+		}
+		if c.Available {
+			continue
+		}
+		// And an absence still has to name what would end it, which for a
+		// platform nobody has written a backend for means saying so.
+		if os_ != Linux && !strings.Contains(c.Why, "implemented here") {
+			t.Errorf("%s accessibility does not say the backend is what is missing: %q",
+				os_, c.Why)
+		}
+	}
+}

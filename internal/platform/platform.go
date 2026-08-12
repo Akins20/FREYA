@@ -58,7 +58,12 @@ const (
 type Display string
 
 const (
-	// X11 is the only display server the desktop tools can currently drive.
+	// X11 is a plain X session, which the desktop tools drive in full.
+	//
+	// It was "the only display server the desktop tools can drive" until
+	// XWayland below turned out to be drivable too, which is the same staleness
+	// this file keeps producing: a sentence saying what exists, written beside
+	// code that cannot contradict it.
 	X11 Display = "x11"
 	// Wayland is a session with no way in: xdotool and wmctrl both refuse, by
 	// design, because synthetic input is exactly what Wayland set out to stop.
@@ -137,9 +142,9 @@ type Info struct {
 	// Browser is a Chrome or Chromium that the DevTools Protocol can drive.
 	Browser Capability
 	// Accessibility is reading an application's own element tree, which is what
-	// the desktop tools need to stop working from a photograph. Nothing provides
-	// it yet on any platform; the probe exists so the answer is "no, and here is
-	// what would give it to you" rather than nothing at all.
+	// the desktop tools need to stop working from a photograph. Linux provides it
+	// through AT-SPI; macOS and Windows expose an equivalent that nothing here
+	// targets yet, and say so.
 	Accessibility Capability
 }
 
@@ -421,9 +426,18 @@ func shotCapability(os_ OS) Capability {
 // platform exposes one: AT-SPI over D-Bus on Linux, the Accessibility API on
 // macOS, UI Automation on Windows.
 //
-// Nothing reads any of them yet. The probe exists so the answer is "no, and here
-// is what would provide it" rather than nothing at all, and so the first backend
-// has somewhere to announce itself.
+// Linux is read, through AT-SPI over gdbus — see internal/a11y, and the desktop
+// tools built on it, verified against GTK, Qt, Tk and Electron. macOS and
+// Windows have no backend in this program, which is a fact about this program
+// and is the only thing the answers below claim.
+//
+// That distinction is the whole repair. This comment used to say nothing read
+// any of them, and it went on saying it while four tools were built on the
+// Linux one and shipped — because it was a sentence about the world, written
+// once, that no code could contradict. The Linux answer is now derived from
+// asking the bus, so it cannot drift again; the other two say only that nothing
+// here targets them, which stays true until somebody writes the backend and
+// changes the line beside the code they wrote.
 func probeAccessibility(os_ OS, d Display) Capability {
 	if d == Headless {
 		return Capability{Why: "there is no graphical session attached to this machine"}
@@ -465,11 +479,17 @@ func probeAccessibility(os_ OS, d Display) Capability {
 		// tell.
 		return Capability{Available: true, How: "AT-SPI over gdbus"}
 	case MacOS:
-		return Capability{Why: "the macOS Accessibility API needs a permission granted " +
-			"per application in System Settings, and nothing reads it yet"}
+		// Scoped to this program on purpose. "Nothing reads it" is a claim about
+		// the world that no code here can check, and the Linux version of that
+		// sentence stayed on the screen through four tools being built on top of
+		// it. This one is checkable by looking for the backend.
+		return Capability{Why: "no macOS accessibility backend is implemented here; " +
+			"one would go beside internal/a11y and would need the Accessibility " +
+			"permission, which a person grants per application in System Settings"}
 	case Windows:
-		return Capability{Why: "Windows UI Automation is available to any process " +
-			"and nothing reads it yet"}
+		return Capability{Why: "no Windows accessibility backend is implemented here; " +
+			"one would go beside internal/a11y and would use UI Automation, which " +
+			"needs no permission"}
 	}
 	return Capability{Why: "no accessibility backend is known for this platform"}
 }
