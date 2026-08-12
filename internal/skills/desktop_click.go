@@ -103,16 +103,20 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 			title := argString(args, "window")
 			window, err := reader.Window(ctx, title)
 			if err != nil {
+				// "publishes nothing" is a claim about the application, and a bus
+				// that was read short cannot support it: the application list goes
+				// through the same parser as the tree inside a window.
 				return "", fmt.Errorf("%w — %s publishes nothing to click. Take a "+
-					"screenshot and use keystrokes", err, quoteOrAny(title))
+					"screenshot and use keystrokes%s", err, quoteOrAny(title),
+					unreadNote(reader.Incomplete()))
 			}
 
 			node := a11y.Find(window, name, argString(args, "role"))
 			if node == nil {
 				// The failure carries what IS there, which is the rule everywhere else
 				// in this package: a miss she cannot act on costs a whole round.
-				return "", fmt.Errorf("nothing in %s is called %q. What is there:\n%s",
-					quoteOrAny(window.Name), name, clip(a11y.Describe(window), 1200))
+				return "", notInTree(reader.Incomplete(), name, quoteOrAny(window.Name),
+					clip(a11y.Describe(window), 1200))
 			}
 
 			// The widget's own action first, and a pointer only when there is none.
@@ -215,4 +219,39 @@ func treeChange(ctx context.Context, title, before string) string {
 	}
 	return "\n\n[The window changed, so that reached something. Read it again with " +
 		"desktop_inspect to see what is there now.]"
+}
+
+// notInTree is the failure for a name that is not in the tree, and it is worded
+// by whether the tree can be trusted to settle the question.
+//
+// "Nothing in this window is called Full Name" is a claim about the window. A
+// reader that stopped early is not entitled to make it, and the difference is
+// not academic: on the run that found the GetChildren parser bug the tree came
+// back as one node of a twenty-node window, she was told the field did not
+// exist, and she believed it — five rounds of looking for another way in, then
+// a confident wrong answer, from a tool that never returned an error. Once the
+// reader admits it read partially, the same miss becomes "read it again", which
+// costs one round and gets there.
+// The gap is passed in rather than the reader, so both halves of this can be
+// tested from here: a Reader's record of what it failed to read is its own
+// business, and reaching into one to fake it would test the faking.
+func notInTree(gap, name, where, tree string) error {
+	if gap != "" {
+		return fmt.Errorf("%q was not found in %s — but this window did not read fully "+
+			"(%s), so it may be there and simply unread. Read it again before concluding "+
+			"it is absent. What did come back:\n%s", name, where, gap, tree)
+	}
+	return fmt.Errorf("nothing in %s is called %q. What is there:\n%s", where, name, tree)
+}
+
+// unreadNote marks a tree that is not the whole tree.
+//
+// On a complete read this is empty, because a caveat on every answer is a
+// caveat nobody reads.
+func unreadNote(gap string) string {
+	if gap == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n\n[This is NOT all of the window: %s. Something you cannot see "+
+		"above may still be there.]", gap)
 }

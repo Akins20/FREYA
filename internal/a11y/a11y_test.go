@@ -2,6 +2,7 @@ package a11y
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,98 @@ func TestChildPairsAreReadFromTheReply(t *testing.T) {
 	}
 	if n := len(reChild.FindAllStringSubmatch("([],)", -1)); n != 0 {
 		t.Errorf("an empty reply produced %d children", n)
+	}
+}
+
+// gdbus tags the type once, and everything after the first child arrives bare.
+//
+// This is the reply a live GTK window actually sends, and the expression above
+// was written against a two-child reply where both carried the tag — which is
+// what a reply looks like when you construct it by hand from the documentation
+// rather than by reading one off the bus:
+//
+//	([(':1.1', objectpath '/…/1'), (':1.1', '/…/2')],)
+//
+// GVariant's textual form annotates a value only where the type would otherwise
+// be ambiguous. Requiring the keyword matched exactly one child of every node,
+// the walk descended into that one, and a GTK window with a menu bar, a text
+// field and a button was reported as a frame containing a single separator: the
+// leftmost path to the first leaf, handed over as the whole window with no
+// error anywhere.
+func TestEveryChildIsReadWhenGdbusTagsOnlyTheFirst(t *testing.T) {
+	reply := "([(':1.1', objectpath '/org/a11y/atspi/accessible/1'), " +
+		"(':1.1', '/org/a11y/atspi/accessible/2'), " +
+		"(':1.1', '/org/a11y/atspi/accessible/3')],)"
+
+	kids, sent := parseChildren(reply)
+	if len(kids) != 3 {
+		t.Fatalf("read %d children from a reply with three: %v", len(kids), kids)
+	}
+	if sent != 3 {
+		t.Fatalf("counted %d children in a reply with three", sent)
+	}
+	for i, want := range []string{"/org/a11y/atspi/accessible/1",
+		"/org/a11y/atspi/accessible/2", "/org/a11y/atspi/accessible/3"} {
+		if kids[i].Path != want {
+			t.Errorf("child %d is %q, want %q", i, kids[i].Path, want)
+		}
+		if kids[i].Bus != ":1.1" {
+			t.Errorf("child %d has bus %q", i, kids[i].Bus)
+		}
+	}
+}
+
+// The two counts disagree when the expression stops matching, and disagreeing is
+// the whole point of counting twice.
+//
+// Without this a parser that reads some of a reply reports a smaller window,
+// and a smaller window is indistinguishable from a simpler one. Nothing above
+// this could have caught the tagging bug, because every layer faithfully passed
+// on what it was given.
+func TestAReplyThatOnlyPartlyParsesIsCaught(t *testing.T) {
+	// Three tuples, one of them shaped so the expression cannot read it.
+	reply := "([(':1.1', objectpath '/a'), (':1.1', '/b'), (':1.1', broken)],)"
+	kids, sent := parseChildren(reply)
+	if sent <= len(kids) {
+		t.Fatalf("a reply with %d tuples and %d parsed children was not noticed as short",
+			sent, len(kids))
+	}
+
+	// And an ordinary reply must not trip it, or the warning is on every read.
+	kids, sent = parseChildren("([(':1.1', objectpath '/a'), (':1.1', '/b')],)")
+	if sent != len(kids) {
+		t.Errorf("a complete reply was reported as short: %d tuples, %d children", sent, len(kids))
+	}
+	if kids, sent = parseChildren("([],)"); sent != 0 || len(kids) != 0 {
+		t.Errorf("an empty reply gave %d tuples and %d children", sent, len(kids))
+	}
+}
+
+// A reader that read everything says nothing, and one that did not says what.
+//
+// The empty case matters as much as the other: a caveat attached to every
+// answer is a caveat that stops being read, and then the one answer that needed
+// it looks like all the rest.
+func TestAReaderSaysWhatItCouldNotRead(t *testing.T) {
+	r := &Reader{}
+	if got := r.Incomplete(); got != "" {
+		t.Errorf("a reader that read everything still complained: %q", got)
+	}
+
+	r.cannot("this window nests deeper than 40 levels and the rest was not read")
+	r.cannot("this window nests deeper than 40 levels and the rest was not read")
+	if got := r.Incomplete(); !strings.Contains(got, "nests deeper") {
+		t.Errorf("the gap is not reported: %q", got)
+	}
+	// Deduped, because a bound that fires on every branch of a wide tree would
+	// otherwise repeat itself hundreds of times and bury the answer.
+	if got := r.Incomplete(); strings.Count(got, "nests deeper") != 1 {
+		t.Errorf("the same gap was recorded twice: %q", got)
+	}
+
+	r.cannot("part of this window would not answer when asked what it contains")
+	if got := r.Incomplete(); !strings.Contains(got, "would not answer") {
+		t.Errorf("the second gap was lost: %q", got)
 	}
 }
 
@@ -305,5 +398,119 @@ func TestUnreadableIsNotEmpty(t *testing.T) {
 	}
 	if _, err := r.SetText(context.Background(), nil, "x"); err == nil {
 		t.Error("typing into nothing succeeded")
+	}
+}
+
+// fakeBus answers exactly what a GTK 3 application answered on a live
+// accessibility bus, including the two refusals that matter.
+//
+// The replies are transcribed from a gdbus introspection of a running window,
+// not written from the specification. That is the point: every bug this file
+// found was a disagreement between what the interface looks like it should be
+// and what it is, and a fake built from the same assumption as the code cannot
+// catch those.
+func fakeBus(t *testing.T) func(context.Context, string, string, string, ...string) (string, error) {
+	t.Helper()
+	return func(_ context.Context, _, path, method string, args ...string) (string, error) {
+		switch {
+		// There is no GetNActions. The real bus says so with UnknownMethod, and
+		// reading that as "no actions" is what disabled the whole feature.
+		case method == "org.a11y.atspi.Action.GetNActions":
+			return "", fmt.Errorf(`GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: ` +
+				`Method "GetNActions" with signature "" on interface ` +
+				`"org.a11y.atspi.Action" doesn't exist`)
+
+		case method == propsGet && len(args) == 2 && args[0] == "org.a11y.atspi.Action" &&
+			args[1] == "NActions":
+			if path == "/button" {
+				return "(<1>,)", nil
+			}
+			// A label has no Action interface at all, which is a real error and
+			// must stay one.
+			return "", fmt.Errorf("GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: " +
+				"No such interface")
+
+		case method == "org.a11y.atspi.Action.GetName":
+			return "('click',)", nil
+
+		case method == "org.a11y.atspi.Action.DoAction":
+			return "(true,)", nil
+
+		// gdbus's own option parser eats a leading dash, so GetText 0 -1 never
+		// reaches the bus at all — it exits with its usage text.
+		case method == "org.a11y.atspi.Text.GetText" && len(args) == 2 && args[1] == "-1":
+			return "", fmt.Errorf("gdbus: unrecognised option '-1'")
+
+		case method == propsGet && len(args) == 2 && args[0] == "org.a11y.atspi.Text" &&
+			args[1] == "CharacterCount":
+			return "(<12>,)", nil
+
+		case method == "org.a11y.atspi.Text.GetText":
+			return "('Ada Lovelace',)", nil
+
+		case method == "org.a11y.atspi.EditableText.SetTextContents":
+			return "(true,)", nil
+		}
+		return "", fmt.Errorf("unexpected call %s", method)
+	}
+}
+
+// How many actions a node has is a property, and asking for it as a method
+// disables every action on every toolkit while looking exactly like an
+// application that supports none.
+//
+// This is the bug that made desktop_click fall back to aiming a pointer at
+// coordinates and desktop_menu refuse every menu, for as long as both existed.
+// It survived a probe because the probe only asked nodes that genuinely have no
+// Action interface — a frame, an application, a dialog, some panels, a label —
+// where an error is the right answer, so every reply confirmed it.
+func TestActionCountIsAPropertyAndNotAMethod(t *testing.T) {
+	r := &Reader{invoke: fakeBus(t)}
+	button := &Node{Bus: ":1.1", Path: "/button", Role: "push button", Name: "Submit"}
+
+	got := r.Actions(context.Background(), button)
+	if len(got) != 1 || got[0] != "click" {
+		t.Fatalf("a button with one action came back with %v", got)
+	}
+	if err := r.Do(context.Background(), button, 0); err != nil {
+		t.Errorf("pressing a button through its own handler failed: %v", err)
+	}
+
+	// And a node with no Action interface must still come back with nothing,
+	// or the fix has simply moved the false answer to the other side.
+	label := &Node{Bus: ":1.1", Path: "/label", Role: "label", Name: "Full Name"}
+	if got := r.Actions(context.Background(), label); len(got) != 0 {
+		t.Errorf("a label reported actions: %v", got)
+	}
+	if err := r.Do(context.Background(), label, 0); err == nil {
+		t.Error("a label was actioned without complaint")
+	}
+}
+
+// Reading a field back must not pass an argument gdbus mistakes for an option.
+//
+// AT-SPI takes -1 as "to the end of the text", and gdbus exits with its usage
+// message before the call is ever made. Every field on every toolkit therefore
+// read as unreadable, and desktop_type_into set the text correctly and then
+// reported that it could not tell whether it had landed.
+func TestAFieldIsReadBackWithoutADashArgument(t *testing.T) {
+	r := &Reader{invoke: fakeBus(t)}
+	field := &Node{Bus: ":1.1", Path: "/entry", Role: "text", Name: "Full Name"}
+
+	got, ok := r.Text(context.Background(), field)
+	if !ok {
+		t.Fatal("a readable field came back unreadable")
+	}
+	if got != "Ada Lovelace" {
+		t.Errorf("read %q", got)
+	}
+
+	// And the whole round trip, which is what the tool actually calls.
+	back, err := r.SetText(context.Background(), field, "Ada Lovelace")
+	if err != nil {
+		t.Fatalf("setting text failed: %v", err)
+	}
+	if back != "Ada Lovelace" {
+		t.Errorf("the field read back as %q", back)
 	}
 }

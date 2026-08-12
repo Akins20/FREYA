@@ -69,7 +69,10 @@ func registerDesktopMenu(r *Registry, g *guard.Guard) {
 			title := argString(args, "window")
 			window, err := reader.Window(ctx, title)
 			if err != nil {
-				return "", err
+				// A bus that was read short cannot settle whether the window is
+				// there, and saying it is not would be the same unearned claim the
+				// tree makes when it stops early.
+				return "", fmt.Errorf("%w%s", err, unreadNote(reader.Incomplete()))
 			}
 
 			action := guard.Action{
@@ -95,8 +98,8 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 	for i, step := range steps {
 		node := a11y.Find(here, step, "")
 		if node == nil {
-			return "", fmt.Errorf("there is no %q in %s. What is there:\n%s",
-				step, whereWeAre(steps, i, window), clip(a11y.Describe(here), 900))
+			return "", notInTree(reader.Incomplete(), step, whereWeAre(steps, i, window),
+				clip(a11y.Describe(here), 900))
 		}
 		last := i == len(steps)-1
 		if last {
@@ -115,9 +118,12 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 		}
 		opened++
 		if len(node.Children) == 0 {
+			// Three things produce an empty menu and only two of them are about
+			// the menu. The third is a read that came back short, and it must not
+			// be reported as a menu with nothing in it.
 			return "", fmt.Errorf("%q opened and is empty, so there is no %q inside it. "+
 				"Either the path is wrong or this application fills that menu only when "+
-				"a person opens it", step, steps[i+1])
+				"a person opens it%s", step, steps[i+1], unreadNote(reader.Incomplete()))
 		}
 		here = node
 	}

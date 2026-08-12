@@ -394,7 +394,19 @@ func registerDesktopInspect(r *Registry) {
 				if strings.TrimSpace(body) == "" {
 					body = "(the window is on the bus and reports no elements inside it)"
 				}
-				return body, nil
+				// A partial tree read as a whole one is a false statement about the
+				// window, and it is the tool's job to say which it handed over.
+				return body + unreadNote(reader.Incomplete()), nil
+			}
+
+			// A window can also be missing because the list of applications was
+			// itself read short, and every sentence below is a claim about what is
+			// on the bus. The same parser reads the application list and the tree
+			// inside a window, so when it stops early it takes both with it.
+			if gap := reader.Incomplete(); gap != "" {
+				return "", fmt.Errorf("%s was not found on the accessibility bus, but the bus "+
+					"did not read fully (%s), so this is not an answer about that window. "+
+					"Try again", quoteOrAny(title), gap)
 			}
 
 			// Not on the bus. Whether that window exists at all decides which of

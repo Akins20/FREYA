@@ -105,6 +105,39 @@ func Address(ctx context.Context) (string, error) {
 type Reader struct {
 	addr  string
 	nodes int
+	// gaps are the reasons this reader knows its own answer is incomplete.
+	//
+	// A tree that stopped early is not a smaller tree, it is a false statement
+	// about what the window contains, and everything built on top inherits the
+	// lie: desktop_type_into answers "nothing in this window is called Full
+	// Name" about a window that has a field called Full Name, and she believes
+	// it, because the tool sounded certain. Measured on the run that found the
+	// parser bug below: five wasted rounds and a wrong conclusion, from a tool
+	// that never returned an error.
+	gaps []string
+	// invoke replaces the gdbus subprocess in tests, and is nil in every real
+	// Reader.
+	invoke func(ctx context.Context, bus, path, method string, args ...string) (string, error)
+}
+
+// cannot records a reason the tree is incomplete, once.
+func (r *Reader) cannot(why string) {
+	for _, g := range r.gaps {
+		if g == why {
+			return
+		}
+	}
+	r.gaps = append(r.gaps, why)
+}
+
+// Incomplete says what this reader could not read, and is empty when it read
+// everything. Callers that report a tree, or report something missing from one,
+// have to say this or their answer is unearned.
+func (r *Reader) Incomplete() string {
+	if len(r.gaps) == 0 {
+		return ""
+	}
+	return strings.Join(r.gaps, "; ")
 }
 
 // Open connects to the accessibility bus.
@@ -117,7 +150,17 @@ func Open(ctx context.Context) (*Reader, error) {
 }
 
 // call runs one method against a node and returns gdbus's rendering of the reply.
+//
+// invoke, when set, replaces the subprocess. It is how the wire contract is
+// tested: the members and reply shapes below are not guessable, they were read
+// off a live bus, and a bug in one of them looks from every layer above like an
+// application that does not support the feature. A test that answers exactly
+// what a GTK application answers catches that; nothing else does short of
+// running a desktop.
 func (r *Reader) call(ctx context.Context, bus, path, method string, args ...string) (string, error) {
+	if r.invoke != nil {
+		return r.invoke(ctx, bus, path, method, args...)
+	}
 	argv := []string{"call", "--address", r.addr, "--dest", bus,
 		"--object-path", path, "--method", method}
 	argv = append(argv, args...)
@@ -131,19 +174,56 @@ func (r *Reader) call(ctx context.Context, bus, path, method string, args ...str
 // reChild pulls ('bus.name', objectpath '/path') pairs out of a GetChildren
 // reply. Parsed with a regular expression rather than a D-Bus type decoder
 // because the reply shape is fixed and this is the only place it is read.
-var reChild = regexp.MustCompile(`\('([^']+)',\s*objectpath\s*'([^']+)'\)`)
+//
+// The type tag is optional because gdbus prints it once. GVariant's textual
+// form annotates a value only where the type would otherwise be ambiguous, so
+// the first element of an array carries objectpath and every later one is a
+// bare string:
+//
+//	([(':1.1', objectpath '/org/a11y/atspi/accessible/1'), (':1.1', '/org/a11y/atspi/accessible/2')],)
+//
+// Requiring the keyword therefore matched exactly one child of every node. The
+// walk still descended, so it followed the leftmost path to the first leaf and
+// returned that as the window: a GTK window with a menu bar, a text field and a
+// Submit button came back as a frame containing one separator, while pyatspi
+// standing next to it listed all three. Nothing failed and nothing was logged.
+// The expression found a match, and nobody checked whether it had found all of
+// them.
+var reChild = regexp.MustCompile(`\('([^']+)',\s*(?:objectpath\s*)?'([^']+)'\)`)
 
-// children lists a node's children.
+// children lists a node's children, and says so when it cannot read them all.
+//
+// The count is checked against the reply rather than trusted, because this
+// failure is silent by construction. A parser that returns fewer children than
+// the toolkit sent produces a smaller tree, not an error, and a smaller tree is
+// indistinguishable from a simpler window. One regular expression that had been
+// right about its own first match for weeks is what taught this.
 func (r *Reader) children(ctx context.Context, n *Node) []*Node {
 	out, err := r.call(ctx, n.Bus, n.Path, iface+".GetChildren")
 	if err != nil {
+		r.cannot("part of this window would not answer when asked what it contains")
 		return nil
 	}
-	var kids []*Node
+	kids, sent := parseChildren(out)
+	if sent != len(kids) {
+		r.cannot(fmt.Sprintf("%d of %d elements in one part of this window could not be read",
+			sent-len(kids), sent))
+	}
+	return kids
+}
+
+// parseChildren reads a GetChildren reply and separately counts what was in it.
+//
+// Two ways of counting on purpose. The second does not go through the
+// expression it is checking, so an expression that quietly stops matching some
+// shape of reply shows up as a disagreement rather than as a smaller window.
+// Every child is one ('bus', path) tuple, and neither a D-Bus bus name nor an
+// object path can contain "('".
+func parseChildren(out string) (kids []*Node, sent int) {
 	for _, m := range reChild.FindAllStringSubmatch(out, -1) {
 		kids = append(kids, &Node{Bus: m[1], Path: m[2]})
 	}
-	return kids
+	return kids, strings.Count(out, "('")
 }
 
 // describe fills in a node's role and name.
@@ -157,8 +237,22 @@ func (r *Reader) describe(ctx context.Context, n *Node) {
 }
 
 // walk fills a subtree, bounded so a pathological application cannot hang a turn.
+//
+// Each bound says which one it was. They existed to stop a runaway and returned
+// quietly when they fired, which means a window large enough or deep enough to
+// hit one was reported as a window that small — the same silent truncation the
+// parser above was guilty of, sitting one function away from it.
 func (r *Reader) walk(ctx context.Context, n *Node, depth int) {
-	if depth > maxDepth || r.nodes > maxNodes || ctx.Err() != nil {
+	if ctx.Err() != nil {
+		r.cannot("reading this window ran out of time before it was finished")
+		return
+	}
+	if depth > maxDepth {
+		r.cannot(fmt.Sprintf("this window nests deeper than %d levels and the rest was not read", maxDepth))
+		return
+	}
+	if r.nodes > maxNodes {
+		r.cannot(fmt.Sprintf("this window has more than %d elements and the rest was not read", maxNodes))
 		return
 	}
 	r.nodes++
@@ -424,11 +518,27 @@ func Fingerprint(n *Node) string {
 // Most nodes do not, and that is correct rather than a fault. A window, a panel
 // and a label are not actionable, and asking them errors with "No such
 // interface". Only widgets that do something implement it.
+//
+// # How many actions is a property, not a method
+//
+// org.a11y.atspi.Action publishes a read-only NActions property. There is no
+// GetNActions method and calling one errors with UnknownMethod, which is where
+// this went wrong: the error was read as "this node has no actions", so every
+// node on every toolkit came back with none. desktop_click silently fell back
+// to aiming a pointer at coordinates, desktop_menu refused every menu as
+// unactionable, and the feature whose entire point was to stop working from a
+// photograph had never once run.
+//
+// What made it survive a probe: the probe asked GetNActions of a desktop frame,
+// an application, a dialog, some panels and a label. Every one of those really
+// does lack the Action interface, so every reply was an error, and an error was
+// the expected answer. It proved nothing and read as confirmation. A probe has
+// to include the case that should succeed or it cannot fail.
 func (r *Reader) Actions(ctx context.Context, n *Node) []string {
 	if n == nil {
 		return nil
 	}
-	out, err := r.call(ctx, n.Bus, n.Path, "org.a11y.atspi.Action.GetNActions")
+	out, err := r.call(ctx, n.Bus, n.Path, propsGet, "org.a11y.atspi.Action", "NActions")
 	if err != nil {
 		return nil
 	}
@@ -467,7 +577,11 @@ func (r *Reader) Actions(ctx context.Context, n *Node) []string {
 // actioned. Neither case needs the window raised, focused, or even visible.
 //
 // Verified against a GTK button whose handler writes a file, driven entirely
-// through the bus with no pointer involved: the file appeared.
+// through the bus with no pointer involved: the file appeared. That verification
+// was run with gdbus by hand, against DoAction directly, and this function
+// gates on Actions first — which was asking for a method that does not exist,
+// so for as long as the claim above sat here nothing had ever reached DoAction
+// through this path. Proving the primitive is not proving the caller.
 func (r *Reader) Do(ctx context.Context, n *Node, index int) error {
 	names := r.Actions(ctx, n)
 	if len(names) == 0 {
@@ -490,11 +604,35 @@ func (r *Reader) Do(ctx context.Context, n *Node, index int) error {
 // The Text interface is optional, like Component and Action. A node that does
 // not implement it is not empty, it is unreadable, and those are different
 // enough that the caller must be able to tell.
+// # Why the length is asked for rather than passed as -1
+//
+// AT-SPI takes -1 as "to the end", and gdbus never sees it: its own option
+// parser takes a leading dash as a flag, prints its usage and exits, so the
+// read came back as a failure on every field on every toolkit. The symptom was
+// desktop_type_into setting a field successfully and then reporting that it
+// could not tell whether the text had landed — a true statement produced by a
+// broken instrument, which is the hardest kind to notice.
+//
+// CharacterCount is a property on the same interface, so this costs one extra
+// call and passes no argument gdbus can mistake for an option.
 func (r *Reader) Text(ctx context.Context, n *Node) (string, bool) {
 	if n == nil {
 		return "", false
 	}
-	out, err := r.call(ctx, n.Bus, n.Path, "org.a11y.atspi.Text.GetText", "0", "-1")
+	out, err := r.call(ctx, n.Bus, n.Path, propsGet, "org.a11y.atspi.Text", "CharacterCount")
+	if err != nil {
+		return "", false
+	}
+	count := 0
+	if _, err := fmt.Sscanf(unquote(out), "%d", &count); err != nil {
+		return "", false
+	}
+	if count <= 0 {
+		// An empty field is readable and empty, which is not the same as a field
+		// that cannot be read, and the caller distinguishes them.
+		return "", true
+	}
+	out, err = r.call(ctx, n.Bus, n.Path, "org.a11y.atspi.Text.GetText", "0", fmt.Sprint(count))
 	if err != nil {
 		return "", false
 	}

@@ -69,12 +69,15 @@ func registerDesktopTypeInto(r *Registry, g *guard.Guard) {
 			title := argString(args, "window")
 			window, err := reader.Window(ctx, title)
 			if err != nil {
-				return "", err
+				// A bus that was read short cannot settle whether the window is
+				// there, and saying it is not would be the same unearned claim the
+				// tree makes when it stops early.
+				return "", fmt.Errorf("%w%s", err, unreadNote(reader.Incomplete()))
 			}
 			node := a11y.Find(window, field, "")
 			if node == nil {
-				return "", fmt.Errorf("nothing in %s is called %q. What is there:\n%s",
-					quoteOrAny(window.Name), field, clip(a11y.Describe(window), 1200))
+				return "", notInTree(reader.Incomplete(), field, quoteOrAny(window.Name),
+					clip(a11y.Describe(window), 1200))
 			}
 			if node.Secret() {
 				return "", fmt.Errorf("%q is a password field. Nothing here types into one or "+

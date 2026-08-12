@@ -74,3 +74,60 @@ func TestAScreenshotSaysItIsPixels(t *testing.T) {
 		}
 	}
 }
+
+// A control that is missing from a tree she could not fully read is not a
+// control that is missing.
+//
+// This is the wording that decides what she does next, and the run that found
+// the GetChildren parser bug shows the cost of getting it wrong. The tree came
+// back as one node of a twenty-node window, desktop_type_into answered "nothing
+// in ControlTarget is called Full Name" about a window with a field called Full
+// Name, and she believed it: five rounds spent looking for another way in,
+// then a confident wrong answer. The tool never returned an error, so nothing
+// else in the stack had a reason to doubt it.
+func TestAMissingControlSaysWhetherTheTreeWasFullyRead(t *testing.T) {
+	tree := "frame \"ControlTarget\"\n  separator"
+
+	// Read in full: the window genuinely does not contain it, and the answer is
+	// allowed to be flat.
+	whole := notInTree("", "Full Name", "\"ControlTarget\"", tree).Error()
+	if !strings.Contains(whole, "nothing in") {
+		t.Errorf("a complete read hedges anyway: %q", whole)
+	}
+	if strings.Contains(whole, "not fully") || strings.Contains(whole, "unread") {
+		t.Errorf("a complete read warns about a gap it does not have: %q", whole)
+	}
+
+	// Read partially: the same miss is now a question about the reading, and it
+	// has to say what to do about it.
+	partial := notInTree("3 of 4 elements in one part of this window could not be read",
+		"Full Name", "\"ControlTarget\"", tree).Error()
+	for _, want := range []string{"Full Name", "not read", "Read it again"} {
+		if !strings.Contains(partial, want) {
+			t.Errorf("a partial read does not say %q: %s", want, partial)
+		}
+	}
+	// And it must not assert the thing it cannot know.
+	if strings.Contains(partial, "nothing in") {
+		t.Errorf("a partial read still claims the window does not contain it: %s", partial)
+	}
+	// The tree it did get is kept either way, or she has nothing to work from.
+	if !strings.Contains(partial, "separator") || !strings.Contains(whole, "separator") {
+		t.Error("the elements that were read were thrown away with the failure")
+	}
+}
+
+// The caveat on a tree is absent when there is nothing to caveat, because a
+// warning printed on every answer is a warning nobody reads.
+func TestATreeOnlyWarnsWhenItIsIncomplete(t *testing.T) {
+	if got := unreadNote(""); got != "" {
+		t.Errorf("a complete tree carried a warning: %q", got)
+	}
+	got := unreadNote("this window has more than 4000 elements and the rest was not read")
+	if !strings.Contains(got, "NOT all of the window") {
+		t.Errorf("the warning does not say the tree is partial: %q", got)
+	}
+	if !strings.Contains(got, "4000") {
+		t.Errorf("the warning drops the reason: %q", got)
+	}
+}
