@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Akins20/FREYA/internal/a11y"
 	"github.com/Akins20/FREYA/internal/llm"
 	"github.com/Akins20/FREYA/internal/platform"
 )
@@ -38,8 +39,8 @@ func RegisterSystem(r *Registry) {
 				"wastes their time and is not true.",
 			Params: llm.ObjectSchema(nil),
 		},
-		Handler: func(_ context.Context, _ map[string]any) (string, error) {
-			return platform.Current().Describe(), nil
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+			return platform.Current().Describe() + windowsIReadNow(ctx), nil
 		},
 	})
 
@@ -290,4 +291,124 @@ func firstPercent(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
+}
+
+// maxWindowsProbed bounds the live desktop scan. A desktop with more open
+// windows than this is real, and reading every one of them costs a gdbus call
+// per node; the cap is said out loud rather than silently applied.
+const maxWindowsProbed = 12
+
+// windowsIReadNow says which windows can actually be read at this moment.
+//
+// # Why the capability report was only half an answer
+//
+// Everything above it is a fact about the machine — xdotool is installed, a
+// registry is answering — and those stay true all day. Whether the window in
+// front of her can be read is a fact about right now, and the two come apart
+// badly. A Chromium application publishes nothing inside itself unless it was
+// started with --force-renderer-accessibility, so "accessibility: yes" and "I
+// can read that window" are different claims, and the only way to tell them
+// apart was to try and be told the window was empty.
+//
+// That is most of a modern desktop: VS Code, Slack, Discord, Teams. This is the
+// tool she is told to reach for before saying something is impossible, so it is
+// the right place to answer it.
+//
+// # Four answers, not two
+//
+// A window is readable, or withholding because it is Chromium, or on the bus
+// with nothing named in it, or not on the accessibility bus at all — which is
+// Tk, xterm, Wine and some Java applications, and is not a failure so much as a
+// toolkit that never published anything. Each one leads somewhere different,
+// and collapsing them loses exactly the part she needed.
+func windowsIReadNow(ctx context.Context) string {
+	if !platform.Current().Accessibility.Available {
+		return ""
+	}
+	reader, err := a11y.Open(ctx)
+	if err != nil {
+		return ""
+	}
+	apps, err := reader.Applications(ctx)
+	if err != nil {
+		return ""
+	}
+
+	var readable, withheld, nameless []string
+	onBus := map[string]bool{}
+	capped := 0
+	for _, app := range apps {
+		for _, w := range app.Children {
+			name := strings.TrimSpace(w.Name)
+			if name == "" {
+				continue
+			}
+			onBus[name] = true
+			if len(readable)+len(withheld)+len(nameless) >= maxWindowsProbed {
+				capped++
+				continue
+			}
+			// Three levels, the same bounded read a menu uses. One is not enough
+			// on GTK, where the first level below a window is an unnamed
+			// container and a window full of controls would come back looking
+			// like a window with nothing in it.
+			reader.Refresh(ctx, w)
+			switch {
+			case a11y.Named(w):
+				readable = append(readable, name)
+			case a11y.ChromiumLike(reader.Actions(ctx, w)):
+				withheld = append(withheld, name)
+			default:
+				nameless = append(nameless, name)
+			}
+		}
+	}
+
+	// A window on screen and not on the bus is the fourth answer, and it can
+	// only be seen by asking the window manager as well.
+	var offBus []string
+	if titles, err := onScreenTitles(ctx); err == nil {
+		for _, t := range titles {
+			if !onBus[t] {
+				offBus = append(offBus, t)
+			}
+		}
+	}
+	return desktopSection(readable, withheld, nameless, offBus, capped)
+}
+
+// desktopSection renders the live half of the report, and is empty when there
+// is nothing on the bus to say anything about.
+func desktopSection(readable, withheld, nameless, offBus []string, capped int) string {
+	if len(readable)+len(withheld)+len(nameless)+len(offBus) == 0 && capped == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nWindows right now:\n")
+	if len(readable) > 0 {
+		fmt.Fprintf(&b, "  readable: %s\n", strings.Join(readable, ", "))
+	}
+	if len(withheld) > 0 {
+		fmt.Fprintf(&b, "  withholding: %s — Chromium applications (Electron: VS Code, "+
+			"Slack, Discord, Teams). They publish nothing inside themselves unless started "+
+			"with --force-renderer-accessibility, so desktop_inspect will show the window "+
+			"and nothing in it. Restart them with that flag to read them, or use "+
+			"desktop_screenshot with desktop_key, which reach them as they are.\n",
+			strings.Join(withheld, ", "))
+	}
+	if len(nameless) > 0 {
+		fmt.Fprintf(&b, "  on the bus with nothing named in them: %s — there is nothing to "+
+			"aim desktop_click at. Screenshot and keystrokes still work.\n",
+			strings.Join(nameless, ", "))
+	}
+	if len(offBus) > 0 {
+		fmt.Fprintf(&b, "  not on the accessibility bus at all: %s — normal for Tk, xterm, "+
+			"Wine and some Java applications, which never publish a tree. Screenshot and "+
+			"keystrokes are the whole toolkit there.\n", strings.Join(offBus, ", "))
+	}
+	if capped > 0 {
+		fmt.Fprintf(&b, "  [%d more window(s) were not examined, to bound the cost of asking.]\n",
+			capped)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

@@ -406,7 +406,7 @@ func registerDesktopInspect(r *Registry) {
 			}),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			if c := platform.Current().Accessibility; !c.Available && !strings.Contains(c.Why, "answering") {
+			if c := platform.Current().Accessibility; !c.Available {
 				return "", fmt.Errorf("%s", c.Why)
 			}
 			reader, err := a11y.Open(ctx)

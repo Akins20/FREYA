@@ -451,7 +451,19 @@ func probeAccessibility(os_ OS, d Display) Capability {
 				"the session bus — install at-spi2-core, and on a bare session start it with " +
 				"/usr/libexec/at-spi-bus-launcher --launch-immediately"}
 		}
-		return Capability{Why: "AT-SPI is up and answering, and nothing reads it yet"}
+		// It reads it now, and this line said otherwise for as long as it did.
+		//
+		// The capability landed, desktop_inspect, desktop_click, desktop_type_into
+		// and desktop_menu were all built on it and verified against four
+		// toolkits, and the one tool whose entire job is to answer "what can I do
+		// here" kept reporting no. Two call sites had already worked around it by
+		// checking whether the refusal contained the word "answering", which is
+		// the shape of a lie being routed around rather than fixed.
+		//
+		// That is this package's own thesis failing on itself: a capability that
+		// exists, works, and is never surfaced, so nothing fails and nobody can
+		// tell.
+		return Capability{Available: true, How: "AT-SPI over gdbus"}
 	case MacOS:
 		return Capability{Why: "the macOS Accessibility API needs a permission granted " +
 			"per application in System Settings, and nothing reads it yet"}

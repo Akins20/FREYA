@@ -263,26 +263,38 @@ func TestAccessibilityIsAnsweredByTheBusNotByABinary(t *testing.T) {
 	t.Setenv("WAYLAND_DISPLAY", "")
 
 	c := Probe().Accessibility
-	if c.Available {
-		t.Fatal("something claims to read an accessibility tree and nothing implements one yet")
-	}
-	// Whatever the reason, it must not be the bare presence or absence of a
-	// binary standing in for whether the registry answered.
+	_, missingGdbus := exec.LookPath("gdbus")
+	answered := a11yBusAddress() != ""
+
 	switch {
-	case strings.Contains(c.Why, "not installed"):
-		if _, err := exec.LookPath("gdbus"); err == nil {
-			t.Errorf("gdbus is installed and the reason says it is not: %q", c.Why)
+	case answered:
+		// It reads the tree now. This assertion used to be the reverse — that
+		// nothing could possibly claim to read one — and it stayed that way
+		// while desktop_inspect, desktop_click, desktop_type_into and
+		// desktop_menu were all built on top and verified against four
+		// toolkits. The one tool whose job is to answer "what can I do here"
+		// went on saying no, and two call sites worked around it by matching a
+		// word inside the refusal.
+		if !c.Available {
+			t.Errorf("the bus answered and the capability still says no: %q", c.Why)
 		}
-	case strings.Contains(c.Why, "no accessibility registry answered"):
-		if _, err := exec.LookPath("gdbus"); err != nil {
-			t.Errorf("gdbus is absent and the reason blames the registry: %q", c.Why)
+		if c.How == "" {
+			t.Error("accessibility is available and does not say through what")
 		}
-	case strings.Contains(c.Why, "up and answering"):
-		if a11yBusAddress() == "" {
-			t.Errorf("the reason claims the bus answered and it does not: %q", c.Why)
+	case missingGdbus != nil:
+		if c.Available {
+			t.Error("accessibility claims to work with no gdbus to reach the bus")
+		}
+		if !strings.Contains(c.Why, "not installed") {
+			t.Errorf("gdbus is absent and the reason does not say so: %q", c.Why)
 		}
 	default:
-		t.Errorf("the reason does not distinguish the three cases: %q", c.Why)
+		if c.Available {
+			t.Error("accessibility claims to work with nothing answering on the bus")
+		}
+		if !strings.Contains(c.Why, "no accessibility registry answered") {
+			t.Errorf("the bus is silent and the reason blames something else: %q", c.Why)
+		}
 	}
 }
 

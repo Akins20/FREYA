@@ -88,7 +88,7 @@ func registerDesktopClick(r *Registry, g *guard.Guard) {
 				return "", fmt.Errorf("xdotool is not installed, so nothing here can move " +
 					"the pointer")
 			}
-			if c := platform.Current().Accessibility; !c.Available && !strings.Contains(c.Why, "answering") {
+			if c := platform.Current().Accessibility; !c.Available {
 				return "", fmt.Errorf("%s", c.Why)
 			}
 			name := strings.TrimSpace(argString(args, "name"))
