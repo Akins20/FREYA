@@ -24,6 +24,7 @@ import (
 	"github.com/Akins20/FREYA/internal/memory"
 	"github.com/Akins20/FREYA/internal/playbook"
 	"github.com/Akins20/FREYA/internal/reflect"
+	"github.com/Akins20/FREYA/internal/routes"
 	"github.com/Akins20/FREYA/internal/schedule"
 	"github.com/Akins20/FREYA/internal/sentinel"
 	"github.com/Akins20/FREYA/internal/skills"
@@ -205,6 +206,17 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	skills.RegisterWeb(reg, os.Getenv("SERPER_API_KEY"))
 	skills.RegisterDev(reg, cfg.ProjectsDir)
 	skills.RegisterDesktop(reg, g)
+	skills.RegisterClipboard(reg, g)
+	skills.RegisterArrange(reg, g)
+	// Where the user's own things live, learned from their browsing rather than
+	// hardcoded per provider. See internal/routes.
+	routeStore, routeErr := routes.Open(cfg.DataDir)
+	if routeErr != nil {
+		// A store that would not load is worth saying out loud once rather than
+		// disabling the feature in silence: she keeps working and knows less.
+		fmt.Fprintf(os.Stderr, "  routes: %v\n", routeErr)
+	}
+	skills.RegisterServices(reg, routeStore)
 	places, placesErr := skills.RegisterPlaces(reg, cfg.DataDir)
 	if placesErr != nil {
 		return placesErr

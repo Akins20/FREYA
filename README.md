@@ -3,7 +3,7 @@
 **An AI assistant that counts what it just wrote, and hands the number back.**
 
 Written in Go, with zero external dependencies. One binary, builds in seconds.
-51,000 lines of standard library, 21,000 lines of tests. Developed on a 2014
+52,000 lines of standard library, 21,000 lines of tests. Developed on a 2014
 laptop with no GPU and meant to be comfortable there.
 
 The reasoning runs on a hosted model (Gemini or Anthropic). There is an offline
@@ -50,7 +50,7 @@ always-there version with a push-to-talk key.
 
 ## What she does
 
-136 tools offline, 141 with a provider that can see and a microphone attached.
+145 tools offline, 150 with a provider that can see and a microphone attached.
 `find_tools` finds the rest when a request needs something she was not offered.
 
 **Drives a real browser.** 42 of those tools are Chrome, over the DevTools
@@ -63,21 +63,42 @@ you can watch, on the machine you are sitting at. She can also read the
 browser's own history, bookmarks and saved usernames, which is how she answers
 "that site I was on last week" without being told the address.
 
-**Reads and drives native applications.** Nine tools for native windows. Five
-work at the display: list windows, focus one, send keys, type at whatever has
-focus, screenshot. The other four ask the application itself, over AT-SPI, and
-that is the half that does not work from a photograph. `desktop_inspect` reads
-what a window says it contains: buttons, fields, labels, menus, by name.
-`desktop_type_into` fills a
-named field and reports what the field holds afterwards rather than what was
-sent. `desktop_menu` walks a menu path by name, opening each level and reading
-it again, because a menu is not the same object before and after it opens.
-`desktop_click` presses a control through the application's own handler where
-the toolkit publishes one, which needs no coordinates and therefore works on a
-control that is scrolled out of view, minimised, or in a window that is not in
-front; it falls back to the pointer only when there is no handler to call. What
-each toolkit will and will not tell her is measured, and is its own section
-below.
+**Reads and drives native applications.** Ten tools for native windows. Six work
+at the display: list windows, focus one, move or resize it, send keys, type at
+whatever has focus, screenshot. Windows are arranged by name rather than by pixel,
+so "docs on the left, editor on the right" is two calls, and the answer says where
+the window actually ended up, because a tiling manager overrides placement and a
+maximised window will not move until it is restored.
+
+The other four ask the application itself, over AT-SPI, and that is the half that
+does not work from a photograph. `desktop_inspect` reads what a window says it
+contains: buttons, fields, labels, menus, by name. `desktop_type_into` fills a
+named field and reports what the field holds afterwards rather than what was sent.
+`desktop_menu` walks a menu path by name, opening each level and reading it again,
+because a menu is not the same object before and after it opens. `desktop_click`
+presses a control through the application's own handler where the toolkit
+publishes one, which needs no coordinates and therefore works on a control that is
+scrolled out of view, minimised, or in a window that is not in front; it falls
+back to the pointer only when there is no handler to call. What each toolkit will
+and will not tell her is measured, and is its own section below.
+
+**Takes part in copy and paste.** The system clipboard, both directions, which
+is how a workstation actually moves data between applications. Reading it is
+deliberately not automatic and its contents arrive fenced as untrusted, because
+whatever the user last copied is sometimes a password and sometimes a web page
+that says "ignore your instructions".
+
+**Knows where your things are, and works it out rather than being told.** There
+is no Gmail tool here, and there will not be one. `service_find` reads the user's
+own browsing history and ranks the sites they actually go to, so "which email do
+I use" is answered from evidence about this person rather than from a default.
+Once confirmed, `service_learn` remembers it, along with the places inside it
+that took several steps to find: where compose is, where today's agenda is.
+`service_where` then makes it one step forever. Every answer carries how old the
+knowledge is, two failures in a row mark a route stale rather than trusted, and a
+route is an address and never a credential. Anything can be learned by name, so a
+self-hosted mail server or a university portal is a first-class route rather than
+an unsupported case.
 
 **Finishes what she starts.** Writes files, checks the syntax, checks that every
 link goes somewhere, serves it, and puts it on your screen. `site_check`
@@ -411,6 +432,7 @@ internal/a11y     the accessibility tree: what a native window says it contains
 internal/platform what this machine can actually do, asked rather than assumed
 internal/wiring   whether the thing she built is actually joined up
 internal/playbook know-how, as distinct from tools, including what she learns
+internal/routes   where the user's own services live, learned from their browsing
 internal/daemon   the always-on half, and who owns which files
 internal/sentinel noticing things, and deciding which are worth saying
 internal/schedule a task set for her own future self
@@ -456,7 +478,7 @@ make install        # to ~/.local/bin
 go test ./... -race
 ```
 
-`go test ./...` runs 733 test functions: 712 pass, 21 skip, none fail, and the
+`go test ./...` runs 747 test functions: 726 pass, 21 skip, none fail, and the
 race detector is clean. Every skip names what would run it: seven need a headless
 Chrome and `FREYA_BROWSER_E2E=1`, seven need the LibreOffice-produced documents
 that `FREYA_PROBE_DOCS` points at, four are live diagnostics behind

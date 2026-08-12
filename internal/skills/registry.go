@@ -382,6 +382,55 @@ func argBool(args map[string]any, key string) bool {
 
 // --- process helper ---------------------------------------------------------
 
+// runWithInput executes a command with a timeout, feeding it text on stdin.
+//
+// Separate from run because the output is not the point: the program is being
+// handed a value, and what matters is that it received all of it.
+//
+// # Why it waits, having first been written not to
+//
+// An X clipboard owner has to stay alive to serve the selection, so the first
+// version started xclip, wrote, and returned without waiting, on the reasoning
+// that reaping a process meant to outlive the call would kill the clipboard.
+// That is backwards, and the live run said so: xclip reads stdin to EOF, forks
+// the process that owns the selection, and the parent exits immediately.
+// Returning early cancelled the context and killed the parent before it had
+// forked, so the write reported an error and the clipboard stayed empty.
+//
+// Waiting is therefore both correct and quick, and the survivor is the child.
+//
+// Invoked directly rather than through a shell, exactly like run, so arguments
+// cannot inject commands.
+func runWithInput(ctx context.Context, timeout time.Duration, input, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if _, err := stdin.Write([]byte(input)); err != nil {
+		stdin.Close()
+		return fmt.Errorf("writing to %s: %w", name, err)
+	}
+	// Closing stdin is what tells it the value is complete. Without this it waits
+	// forever and so does the timeout.
+	if err := stdin.Close(); err != nil {
+		return fmt.Errorf("closing input to %s: %w", name, err)
+	}
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s did not finish within %s", name, timeout)
+		}
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return nil
+}
+
 // run executes a command with a timeout and returns its combined output.
 // Commands are invoked directly, never through a shell, so skill arguments
 // cannot inject extra commands.

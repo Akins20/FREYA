@@ -779,6 +779,11 @@ func (a *Agent) reflectAfter(query, reply string) {
 var untrustedPrefixes = []string{
 	"web_", "file_read", "dev_read", "dev_grep", "image_view", "screen_read",
 	"terminal_", "claude_", "run_shell", "run_command", "archive_",
+	// Whatever the user last copied, from anywhere: a web page, an error
+	// message, a block of somebody else's text. It arrives here as content and
+	// a page saying "ignore your instructions" is exactly the kind of thing
+	// somebody copies in order to ask about it.
+	"clipboard_read",
 }
 
 // fenceIfUntrusted wraps externally-sourced content so its boundary is explicit.
