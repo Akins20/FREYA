@@ -45,6 +45,8 @@ func (d DiskWatcher) Check(ctx context.Context) ([]Observation, error) {
 		return nil, err
 	}
 
+	readOnly := readOnlyMounts()
+
 	var observations []Observation
 	for i, line := range strings.Split(string(out), "\n") {
 		if i == 0 || strings.TrimSpace(line) == "" {
@@ -59,6 +61,17 @@ func (d DiskWatcher) Check(ctx context.Context) ([]Observation, error) {
 		availBytes, _ := strconv.ParseFloat(f[n-2], 64)
 		pcent, _ := strconv.Atoi(strings.TrimSuffix(f[n-1], "%"))
 		target := strings.Join(f[:n-4], " ")
+
+		// A read-only filesystem is always full and can never be freed, so an
+		// alert about one is noise by construction. Excluded by that property
+		// rather than by filesystem name, because the name list was already
+		// there and already wrong: it excluded squashfs, and a machine without
+		// the squashfs kernel module mounts the same snap packages through
+		// fuse.snapfuse instead. Eleven permanent "100% full" alerts, one per
+		// installed snap, from an exclusion list that looked complete.
+		if readOnly[target] {
+			continue
+		}
 
 		if pcent < warn {
 			continue
@@ -82,6 +95,39 @@ func (d DiskWatcher) Check(ctx context.Context) ([]Observation, error) {
 		})
 	}
 	return observations, nil
+}
+
+// readOnlyMounts is every mount point the kernel says cannot be written to.
+//
+// Read from /proc/self/mountinfo rather than by running a second command,
+// because it is already the authority df is summarising and it needs nothing
+// installed. Field 6 is the per-mount option list and "ro" appears there for a
+// read-only mount whatever the filesystem underneath happens to be.
+//
+// Empty on anything without procfs, which leaves the watcher exactly as it was
+// on those platforms.
+func readOnlyMounts() map[string]bool {
+	b, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return nil
+	}
+	ro := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		// 0 id, 1 parent, 2 dev, 3 root, 4 mount point, 5 options, then optional
+		// fields terminated by "-".
+		if len(f) < 6 {
+			continue
+		}
+		for _, opt := range strings.Split(f[5], ",") {
+			if opt == "ro" {
+				// Mount points are octal-escaped in mountinfo; a space is \040.
+				ro[strings.ReplaceAll(f[4], `\040`, " ")] = true
+				break
+			}
+		}
+	}
+	return ro
 }
 
 // BatteryWatcher reports low battery on a laptop.

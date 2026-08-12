@@ -2,6 +2,8 @@ package sentinel
 
 import (
 	"context"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -345,5 +347,42 @@ func TestSuppressedAndAnnouncedCoexist(t *testing.T) {
 	pending := s.Peek()
 	if len(pending) != 2 {
 		t.Fatalf("queue holds %d, want both announced and suppressed", len(pending))
+	}
+}
+
+// A read-only filesystem is always full and can never be freed, so it is never
+// an alert.
+//
+// The exclusion used to be a list of filesystem names and it read as complete:
+// tmpfs, devtmpfs, squashfs, overlay. Then a machine without the squashfs
+// kernel module mounted the same snap packages through fuse.snapfuse, every one
+// of them sat at 100% for the life of the system, and the disk watcher raised
+// eleven permanent alerts about disks nobody could do anything about. Naming
+// the property instead of the implementations is what stops the next one.
+func TestReadOnlyMountsAreNotDiskAlerts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("mountinfo is a Linux interface")
+	}
+	ro := readOnlyMounts()
+	if ro == nil {
+		t.Skip("no /proc/self/mountinfo here")
+	}
+
+	// Whatever is read-only on this machine must not appear in the output, at
+	// any threshold. A machine with none is not evidence either way, so say so
+	// rather than passing on nothing.
+	if len(ro) == 0 {
+		t.Skip("nothing is mounted read-only here, so there is nothing to exclude")
+	}
+	obs, err := (DiskWatcher{WarnPercent: 1, CriticalPercent: 1}).Check(context.Background())
+	if err != nil {
+		t.Skipf("df unavailable: %v", err)
+	}
+	for _, o := range obs {
+		for mount := range ro {
+			if strings.Contains(o.Summary, mount+" is ") {
+				t.Errorf("raised %q about a read-only filesystem", o.Summary)
+			}
+		}
 	}
 }
