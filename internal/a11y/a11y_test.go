@@ -514,3 +514,115 @@ func TestAFieldIsReadBackWithoutADashArgument(t *testing.T) {
 		t.Errorf("the field read back as %q", back)
 	}
 }
+
+// A click must never be satisfied by an action that only moves focus.
+//
+// The two toolkits do not share a vocabulary and one of them is a trap. GTK
+// gives a button the single action "click". Qt gives it "Press" and also
+// "SetFocus", and gives a text field "SetFocus" alone — so taking whichever
+// action came first would focus a field, return success, and report that the
+// field had been pressed. Nothing downstream could tell: the tool returns, the
+// guard records an action, and the click never happened.
+func TestAnActionIsChosenByNameAndFocusIsNotAClick(t *testing.T) {
+	for _, c := range []struct {
+		what  string
+		acts  []string
+		want  int
+		found bool
+	}{
+		{"a GTK button", []string{"click"}, 0, true},
+		{"a Qt button", []string{"Press", "SetFocus"}, 0, true},
+		{"a Qt button listing focus first", []string{"SetFocus", "Press"}, 1, true},
+		{"a Qt menu bar entry", []string{"ShowMenu"}, 0, true},
+		{"a Qt menu item", []string{"Press"}, 0, true},
+		{"a GTK text field", []string{"activate"}, 0, true},
+		// The one that matters: nothing here presses anything, so the caller has
+		// to fall through to the pointer rather than claim a click.
+		{"a Qt text field", []string{"SetFocus"}, 0, false},
+		{"a node with an unknown verb", []string{"Frobnicate"}, 0, false},
+		{"a node with no actions", nil, 0, false},
+	} {
+		got, ok := PreferredAction(c.acts)
+		if ok != c.found {
+			t.Errorf("%s: found=%v, want %v (from %v)", c.what, ok, c.found, c.acts)
+			continue
+		}
+		if ok && got != c.want {
+			t.Errorf("%s: chose %d (%q), want %d (%q)", c.what, got, c.acts[got], c.want, c.acts[c.want])
+		}
+	}
+}
+
+// An opened menu is populated when something inside it has a name, not when it
+// has children.
+//
+// Qt wraps a menu's items in an unnamed popup menu. That wrapper exists the
+// instant the menu opens and its items arrive a moment later, so waiting for
+// children stopped waiting too early, and searching one level down found the
+// wrapper and nothing else: "nothing in File is called Save As", about a File
+// menu containing Save As.
+func TestAnOpenedMenuIsEmptyUntilSomethingInItHasAName(t *testing.T) {
+	// The Qt shape, mid-open: the wrapper is there and holds nothing.
+	opening := &Node{Role: "menu item", Name: "File", Children: []*Node{
+		{Role: "popup menu"},
+	}}
+	if Named(opening) {
+		t.Error("a menu holding an empty unnamed wrapper was called populated")
+	}
+
+	// And once the items land, through the wrapper.
+	opened := &Node{Role: "menu item", Name: "File", Children: []*Node{
+		{Role: "popup menu", Children: []*Node{
+			{Role: "menu item", Name: "Save As"},
+		}},
+	}}
+	if !Named(opened) {
+		t.Error("a Qt menu with items behind its wrapper was called empty")
+	}
+
+	// The GTK shape, where the items hang directly off the menu.
+	if !Named(&Node{Role: "menu", Name: "File", Children: []*Node{
+		{Role: "menu item", Name: "Save As"},
+	}}) {
+		t.Error("a GTK menu with items was called empty")
+	}
+	if Named(nil) || Named(&Node{Role: "menu", Name: "File"}) {
+		t.Error("a menu with nothing in it was called populated")
+	}
+}
+
+// SHOWING is bit 25 of the first state word, and the reply tags its type once.
+//
+// Both halves were measured against a live Qt popup rather than read off a
+// header. Closed it answers ENABLED, RESIZABLE and SENSITIVE; opened it gains
+// exactly SHOWING and VISIBLE; and after the item's own action fires and the
+// application's handler runs, it answers the open value unchanged. That last
+// one is the finding: choosing something does not close the menu it was in, on
+// every toolkit.
+func TestShowingIsReadFromTheStateBitmap(t *testing.T) {
+	closed := "([uint32 18874624, 0],)"
+	open := "([uint32 1126170882, 0],)"
+
+	bit := func(reply string) bool {
+		m := reState.FindStringSubmatch(reply)
+		if m == nil {
+			t.Fatalf("no state word in %q", reply)
+		}
+		var v uint64
+		if _, err := fmt.Sscanf(m[1], "%d", &v); err != nil {
+			t.Fatal(err)
+		}
+		return v&(1<<stateShowing) != 0
+	}
+	if bit(closed) {
+		t.Error("a closed popup was read as showing")
+	}
+	if !bit(open) {
+		t.Error("an open popup was read as hidden")
+	}
+	// The second word carries no type tag, exactly like every other array reply
+	// from gdbus, so a parser that insists on one reads nothing at all.
+	if m := reState.FindAllStringSubmatch(open, -1); len(m) != 1 {
+		t.Errorf("expected the tag on the first word only, matched %d", len(m))
+	}
+}

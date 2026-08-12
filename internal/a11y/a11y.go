@@ -700,14 +700,89 @@ func quoteArg(s string) string {
 // shows an empty menu and a walk after it shows the contents — and the same node
 // legitimately answers differently at two moments. Anything that opens something
 // has to look again rather than reuse what it read.
+// # Why it reads more than one level
+//
+// One level is what a menu looks like on GTK, where the items hang directly off
+// the menu. Qt puts an unnamed "popup menu" in between, so a one-level refresh
+// of an opened Qt menu returns exactly one anonymous child and there is nothing
+// to match a name against: "nothing in File is called Save As", about a File
+// menu containing Save As. Measured against a live Qt 5 window, and it is the
+// same lesson as GTK calling its window a dialog while Qt calls it a filler,
+// one more level down.
+//
+// The depth is small and fixed. A menu is shallow by construction, so three
+// levels covers a wrapper Qt inserts and the wrapper some other toolkit has not
+// invented yet, while a full walk from an opened menu would pay for every
+// submenu under it on every step of the path.
+const refreshDepth = 3
+
 func (r *Reader) Refresh(ctx context.Context, n *Node) {
 	if n == nil {
+		return
+	}
+	r.refresh(ctx, n, refreshDepth)
+}
+
+func (r *Reader) refresh(ctx context.Context, n *Node, depth int) {
+	if depth <= 0 || ctx.Err() != nil {
 		return
 	}
 	n.Children = r.children(ctx, n)
 	for _, c := range n.Children {
 		r.describe(ctx, c)
+		r.refresh(ctx, c, depth-1)
 	}
+}
+
+// Named reports whether anything under this node has a name worth matching.
+//
+// The emptiness test for an opened menu, because "has children" is satisfied by
+// Qt's anonymous popup wrapper the instant the menu opens, and the items arrive
+// after it. Waiting for children therefore stopped waiting too early and then
+// searched a wrapper with nothing in it.
+func Named(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	for _, c := range n.Children {
+		if strings.TrimSpace(c.Name) != "" || Named(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// Activating reports whether an action name means "do this" rather than "get
+// ready to do this".
+//
+// The vocabularies do not overlap and one of them contains a trap. GTK offers a
+// button one action, "click". Qt offers "Press" and also "SetFocus", and a Qt
+// text field offers SetFocus alone — so a click that takes whatever action came
+// first would focus the field, succeed, and report that it had pressed
+// something. That is a false success of exactly the kind this package exists to
+// prevent, and it would have been invisible: the tool returns, the guard logs an
+// action, and nothing anywhere says the click did not happen.
+//
+// Unknown names are not activating. A verb nobody here has seen is more likely
+// to be another SetFocus than another Press, and the cost of being wrong the
+// cautious way is a pointer click that works.
+func Activating(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "click", "press", "activate", "invoke", "do", "open", "showmenu", "toggle":
+		return true
+	}
+	return false
+}
+
+// PreferredAction picks the action that means "do this", and reports false when
+// the node publishes none worth performing.
+func PreferredAction(names []string) (int, bool) {
+	for i, n := range names {
+		if Activating(n) {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // OpenAndRefresh performs a node's action and waits for children to appear.
@@ -718,7 +793,13 @@ func (r *Reader) Refresh(ctx context.Context, n *Node) {
 // is. Bounded, because a menu that genuinely has no items must not hang the turn
 // waiting for some to arrive.
 func (r *Reader) OpenAndRefresh(ctx context.Context, n *Node) error {
-	if err := r.Do(ctx, n, 0); err != nil {
+	acts := r.Actions(ctx, n)
+	i, ok := PreferredAction(acts)
+	if !ok {
+		return fmt.Errorf("%q is a %s and publishes no way to open it%s", n.Name, n.Role,
+			listActions(acts))
+	}
+	if err := r.Do(ctx, n, i); err != nil {
 		return err
 	}
 	for range 10 {
@@ -728,9 +809,76 @@ func (r *Reader) OpenAndRefresh(ctx context.Context, n *Node) error {
 		case <-time.After(60 * time.Millisecond):
 		}
 		r.Refresh(ctx, n)
-		if len(n.Children) > 0 {
+		// Named rather than non-empty: Qt's popup wrapper appears immediately
+		// and its items a moment later, so counting children stopped the wait
+		// before there was anything to read.
+		if Named(n) {
 			return nil
 		}
 	}
 	return nil
+}
+
+// stateShowing is SHOWING in the AT-SPI state bitmap, which is published as two
+// 32-bit words and read here for the first one only. Confirmed against a live Qt
+// popup rather than taken from the header: closed it reads ENABLED, RESIZABLE
+// and SENSITIVE; opened it gains exactly SHOWING and VISIBLE.
+const stateShowing = 25
+
+// reState pulls the first word out of a GetState reply. gdbus tags the array
+// element type once, as everywhere else here, so the reply is ([uint32 N, M],).
+var reState = regexp.MustCompile(`uint32\s+(\d+)`)
+
+func (r *Reader) showing(ctx context.Context, n *Node) bool {
+	out, err := r.call(ctx, n.Bus, n.Path, iface+".GetState")
+	if err != nil {
+		return false
+	}
+	m := reState.FindStringSubmatch(out)
+	if m == nil {
+		return false
+	}
+	v, err := strconv.ParseUint(m[1], 10, 32)
+	if err != nil {
+		return false
+	}
+	return v&(1<<stateShowing) != 0
+}
+
+// StillOpen reports whether what this node opened is on screen.
+//
+// # Why a menu has to be asked rather than assumed closed
+//
+// Choosing an item does not always close the menu it was in. Measured on Qt 5:
+// after the item's own Press action fires and the application's handler runs,
+// the popup's state is bit-for-bit what it was while open, SHOWING and VISIBLE
+// intact. The popup still holds a pointer grab, so the next click anywhere goes
+// to dismissing it and never reaches what it was aimed at — and the click
+// reports success, because a synthetic click has no way to know it was eaten.
+// Measured: click, menu, click, click, and the middle click is the one that
+// vanishes. GTK closes its own menus and never showed this.
+//
+// The children are asked, not the node. Qt's menu bar entry is on screen
+// whether or not its menu is down, so asking the entry answers yes forever; the
+// popup underneath it is the thing whose visibility means anything. On GTK
+// there is no wrapper and the items themselves answer, which is the same
+// question one level up. No role names are involved, deliberately.
+func (r *Reader) StillOpen(ctx context.Context, n *Node) bool {
+	if n == nil {
+		return false
+	}
+	for _, c := range n.Children {
+		if r.showing(ctx, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// listActions renders what a node did offer, for a refusal that says why.
+func listActions(acts []string) string {
+	if len(acts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (it offers only %s)", strings.Join(acts, ", "))
 }
