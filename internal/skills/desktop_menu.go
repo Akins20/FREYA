@@ -101,14 +101,14 @@ func registerDesktopMenu(r *Registry, g *guard.Guard) {
 					strings.Join(steps, " > "), quoteOrAny(window.Name)),
 			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				return walkMenu(ctx, reader, window, steps)
+				return walkMenu(ctx, reader, window, title, steps)
 			})
 		},
 	})
 }
 
 // walkMenu opens each level in turn, and closes what it opened whatever happens.
-func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps []string) (string, error) {
+func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, title string, steps []string) (string, error) {
 	var opened []*a11y.Node
 	chosen := false
 	// Two ways out, and they need different tidying. A failure leaves menus
@@ -150,6 +150,12 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 					"choose it — it may be a submenu you have not finished naming, or a "+
 					"heading%s", step, listing(acts))
 			}
+			// Sampled before the choice, for the same reason desktop_click does it:
+			// "Chose File > Save As." reads as success whether or not anything
+			// happened, and a menu entry is the more consequential of the two.
+			// DoAction answering true means the toolkit accepted the action, not
+			// that the application did anything a person would notice.
+			before := a11y.Fingerprint(window)
 			if err := reader.Do(ctx, node, pick); err != nil {
 				return "", fmt.Errorf("%q is the end of the path and does nothing when "+
 					"chosen — it may be a submenu you have not finished naming, or a "+
@@ -159,7 +165,8 @@ func walkMenu(ctx context.Context, reader *a11y.Reader, window *a11y.Node, steps
 			// Chosen. Whether anything is left hanging open is a question for
 			// the menus themselves, asked on the way out.
 			chosen = true
-			return fmt.Sprintf("Chose %s.", strings.Join(steps, " > ")), nil
+			return fmt.Sprintf("Chose %s.%s", strings.Join(steps, " > "),
+				treeChange(ctx, title, before)), nil
 		}
 		// Noted before the menu opens, so a menu that opens somewhere else can
 		// be recognised by being somewhere that was not there a moment ago.

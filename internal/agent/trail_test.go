@@ -87,6 +87,48 @@ func TestSubstanceSeparatesWhatSheDidFromWhatThePageSaid(t *testing.T) {
 	}
 }
 
+// The real shape of a real page: a skip link first, the content after it.
+//
+// Every accessible site puts one there, so this is the common case and not a
+// corner. Copied from a job-application run that hit the round cap — nine
+// browser_read calls, and the report the user got said `page said: Skip to main
+// content.` nine times. Nothing had gone wrong with the reads; substance() spent
+// its whole 200-character budget on the accessibility link and dropped the page.
+const realReadWithSkipLink = "Software Developer - Lagos - Indeed.com\n" +
+	"https://ng.indeed.com/viewjob?jk=abc123\n\n" +
+	"Skip to main content\n" +
+	"Software Developer\n" +
+	"Andela · Lagos · Full-time\n" +
+	"Apply with Indeed"
+
+func TestABodyThatOpensWithASkipLinkStillReportsThePage(t *testing.T) {
+	state, body := substance(realReadWithSkipLink)
+	if state != "Software Developer - Lagos - Indeed.com" {
+		t.Errorf("state = %q, want the page title", state)
+	}
+	if body == "Skip to main content" {
+		t.Fatalf("the digest reports the accessibility skip link as the whole page: %q", body)
+	}
+	for _, want := range []string{"Software Developer", "Andela", "Apply with Indeed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body omits %q — it is what the page actually said:\n%q", want, body)
+		}
+	}
+
+	// And through the two paths that matter: the model's spine and the no-network
+	// backstop. Both used to carry the skip link and nothing else.
+	var w trail
+	w.add(step{tool: "browser_read", round: 6, output: realReadWithSkipLink})
+	for name, got := range map[string]string{
+		"digest":  w.digest(),
+		"account": w.account("apply for software jobs", "I ran out of room."),
+	} {
+		if !strings.Contains(got, "Andela") {
+			t.Errorf("the %s tells the user nothing the page said:\n%s", name, got)
+		}
+	}
+}
+
 // The model path has the same defect if the digest only carries headers.
 func TestTheDigestCarriesThePageBodyAndFailures(t *testing.T) {
 	var w trail

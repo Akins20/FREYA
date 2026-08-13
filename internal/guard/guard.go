@@ -375,6 +375,15 @@ func (a Assessment) Describe() string {
 // harm anything belongs in Run, and the two callers here stop a subprocess she
 // started and append to her own notebook.
 func (g *Guard) Note(action Action, outcome string, err error) {
+	// Nil-safe, because this is the one method here whose whole contract is that
+	// it cannot affect the caller. Every tool that records something also has to
+	// work in a session assembled without a guard — the tests build several, and
+	// a bookkeeping call that panics takes the tool down with it. It was written
+	// without this check and the first caller in a guardless registry crashed the
+	// suite.
+	if g == nil {
+		return
+	}
 	r := Record{Time: time.Now(), Action: action, Risk: RiskLow.String(), Outcome: outcome}
 	if err != nil {
 		r.Outcome, r.Error = "error", err.Error()

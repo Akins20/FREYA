@@ -316,6 +316,12 @@ func RegisterServices(r *Registry, g *guard.Guard, tabs *Tabs, store *routes.Sto
 			if had {
 				verb = "Updated"
 			}
+			// Recorded rather than gated, exactly as skill_learn is. This writes into
+			// her own store, so Run would ask a permission nobody can give in the
+			// daemon — but where the user's services live is persistent state they
+			// cannot see change anywhere else. See Guard.Note.
+			g.Note(guard.Action{Kind: guard.KindWrite,
+				Command: "learn service " + service, Reason: url}, "ok", nil)
 			return fmt.Sprintf("%s %s: %s is %s. service_where finds it from now on.",
 				verb, service, where, url), nil
 		},
@@ -337,6 +343,10 @@ func RegisterServices(r *Registry, g *guard.Guard, tabs *Tabs, store *routes.Sto
 		},
 		Mutates: true,
 		Handler: func(_ context.Context, args map[string]any) (string, error) {
+			// Deliberately not recorded, unlike learn and forget. This is a
+			// high-frequency feedback signal that only ever marks a route stale — it
+			// creates nothing and destroys nothing — so an entry per call would bury
+			// the two that matter in an audit log the user reads by eye.
 			service := strings.TrimSpace(argString(args, "service"))
 			if service == "" {
 				return "", fmt.Errorf("which service?")
@@ -427,6 +437,10 @@ func RegisterServices(r *Registry, g *guard.Guard, tabs *Tabs, store *routes.Sto
 				return "", fmt.Errorf("she did not know where %q was, so there is nothing "+
 					"to forget", service)
 			}
+			// Forgetting is the one of the three that destroys something, which makes
+			// it the one most worth having in the record.
+			g.Note(guard.Action{Kind: guard.KindWrite,
+				Command: "forget service " + service}, "ok", nil)
 			return fmt.Sprintf("Forgotten where %s lives.", service), nil
 		},
 	})

@@ -677,3 +677,30 @@ func TestChromiumIsRecognisedByItsActions(t *testing.T) {
 		t.Error("a node with no actions was mistaken for Chromium")
 	}
 }
+
+// DoAction answers whether it performed the action, and that answer was thrown
+// away.
+//
+// Two different things were collapsed into one: the D-Bus call succeeding, and
+// the application agreeing to act. A greyed-out menu item replies (false,) to a
+// call that worked perfectly — so err was nil, the menu tool returned "Chose
+// File > Save As." and nothing had happened. It is the false-success shape this
+// codebase keeps meeting, one layer below where anything was watching for it.
+func TestARefusedActionIsNotASuccess(t *testing.T) {
+	for _, c := range []struct {
+		reply   string
+		refused bool
+	}{
+		{"(true,)", false},
+		{"(false,)", true},
+		// Unreadable is treated as done: some toolkits answer with nothing useful,
+		// and refusing an action that worked is the wrong way to be wrong.
+		{"", false},
+		{"()", false},
+	} {
+		got := strings.Contains(c.reply, "false")
+		if got != c.refused {
+			t.Errorf("%q read as refused=%v, want %v", c.reply, got, c.refused)
+		}
+	}
+}

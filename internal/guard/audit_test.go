@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -40,4 +41,17 @@ func TestAnUnwritableLogIsCountedRatherThanIgnored(t *testing.T) {
 		t.Error("a write to a closed log was discarded silently — the audit log can " +
 			"stop recording and nothing will ever say so")
 	}
+}
+
+// Note must be safe on a nil guard.
+//
+// Its whole contract is that recording cannot affect the caller: a tool that
+// notes something also has to work in a session assembled without a guard, which
+// the tests build routinely. Written without the check, the first such caller
+// panicked and took the package's suite with it — a bookkeeping call bringing
+// down the thing it was only supposed to observe.
+func TestNoteOnANilGuardDoesNothingRatherThanPanic(t *testing.T) {
+	var g *Guard
+	g.Note(Action{Kind: KindWrite, Command: "learn service mail"}, "ok", nil)
+	g.Note(Action{Kind: KindExec, Command: "stop server 1"}, "ok", errors.New("boom"))
 }

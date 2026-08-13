@@ -592,9 +592,27 @@ func (r *Reader) Do(ctx context.Context, n *Node, index int) error {
 		return fmt.Errorf("%q publishes %d action(s) (%s) and there is no number %d",
 			n.Name, len(names), strings.Join(names, ", "), index)
 	}
-	if _, err := r.call(ctx, n.Bus, n.Path,
-		"org.a11y.atspi.Action.DoAction", fmt.Sprint(index)); err != nil {
+	out, err := r.call(ctx, n.Bus, n.Path,
+		"org.a11y.atspi.Action.DoAction", fmt.Sprint(index))
+	if err != nil {
 		return fmt.Errorf("performing %q on %q: %w", names[index], n.Name, err)
+	}
+	// DoAction answers whether it did it, and that answer was being thrown away.
+	//
+	// Two different things were collapsed into one: the D-Bus call succeeding, and
+	// the application agreeing to perform the action. A greyed-out menu item, a
+	// button whose handler declines, a widget mid-transition — all reply (false,)
+	// to a call that worked perfectly. The error was nil, the caller said "Chose
+	// File > Save As." and nothing anywhere had happened.
+	//
+	// Unparseable is treated as done rather than as refused. Some toolkits answer
+	// with nothing useful, and turning "I cannot read the reply" into "it did not
+	// work" would refuse actions that succeeded — which is the wrong direction to
+	// be wrong in, and the caller verifies afterwards regardless.
+	if strings.Contains(out, "false") {
+		return fmt.Errorf("%q refused %q — the call reached it and it declined to act, "+
+			"which usually means the control is disabled or not applicable right now",
+			n.Name, names[index])
 	}
 	return nil
 }

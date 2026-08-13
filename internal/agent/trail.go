@@ -247,14 +247,41 @@ func substance(output string) (state, body string) {
 	if start < 0 {
 		start = 1
 	}
+
+	// The body is a SPAN of the page, not its first line.
+	//
+	// Taking one line was the first-line rule again, one layer down. Every
+	// accessible site — Indeed, LinkedIn, GitHub, gov.uk — opens its body with a
+	// skip link, so the first line of the body is "Skip to main content" and the
+	// content is on the next one. A forty-round job-application run reported nine
+	// page reads as `page said: Skip to main content.` nine times: the reads had
+	// worked, and this function threw away everything they returned. The report
+	// then read as though she had been staring at a blank page, which is the exact
+	// dishonesty this file exists to remove.
+	//
+	// There is no boilerplate blocklist here on purpose — guessing which lines are
+	// navigation is how you drop the one line that mattered. The budget was always
+	// 200 characters; it just used to be spent entirely on whatever came first.
+	// Filling it makes the skip link cost twenty characters instead of all of them.
+	const bodyBudget = 200
+	var b strings.Builder
 	for ; start < len(lines); start++ {
 		s := strings.TrimSpace(lines[start])
 		if s == "" || isBareURL(s) {
 			continue
 		}
-		return state, clipRunes(s, 200)
+		if b.Len() > 0 {
+			// Separated, not run together: two lines of page text are two
+			// statements, and "Skip to main content Software Developer Lagos" reads
+			// as one sentence that no page contains.
+			b.WriteString(" / ")
+		}
+		b.WriteString(s)
+		if b.Len() >= bodyBudget {
+			break
+		}
 	}
-	return state, ""
+	return state, clipRunes(b.String(), bodyBudget)
 }
 
 func isBareURL(s string) bool {

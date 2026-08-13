@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/Akins20/FREYA/internal/a11y"
+	"os"
+	"strings"
 )
 
 // The separators a person or a model actually writes, and none of them should
@@ -45,5 +47,29 @@ func TestAMissingStepNamesTheMenuItWasLookedForIn(t *testing.T) {
 	}
 	if got := whereWeAre(steps, 1, window); got != `"File"` {
 		t.Errorf("a later level should name the menu above it, got %s", got)
+	}
+}
+
+// Choosing a menu entry must say whether anything happened, like clicking does.
+//
+// "Chose File > Save As." reads as success whether or not the application did
+// anything, and a menu entry is the more consequential of the two actions — it
+// is where Quit, Delete and Save As live. DoAction answering true means the
+// toolkit accepted the call, not that a person would notice a difference.
+//
+// Asserted against the source, because the failure is a missing call rather than
+// a wrong result: every behavioural test of the walker passes either way.
+func TestChoosingAMenuEntryReportsWhetherAnythingChanged(t *testing.T) {
+	src, err := os.ReadFile("desktop_menu.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	if !strings.Contains(body, "a11y.Fingerprint(window)") {
+		t.Error("the menu walker does not sample the window before choosing, so a " +
+			"choice that did nothing reads exactly like one that worked")
+	}
+	if !strings.Contains(body, "treeChange(ctx, title, before)") {
+		t.Error("the menu walker does not report whether the window changed")
 	}
 }

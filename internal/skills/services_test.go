@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Akins20/FREYA/internal/routes"
+	"os"
 )
 
 // Learning where something lives is not the same as having used it.
@@ -110,4 +111,32 @@ func servicesOn(t *testing.T) (*Registry, *routes.Store) {
 	// only registered when there is a browser to open things in.
 	RegisterServices(r, nil, nil, store)
 	return r, store
+}
+
+// Creating and destroying a route reach the audit log; using one does not.
+//
+// The store is where the user's services live, and /audit is the only place they
+// can watch it change. skill_learn had the same hole and Guard.Note exists
+// because of it — routing these through Run would ask a permission nobody can
+// give in the daemon, or refuse a write to her own data directory outright.
+//
+// service_used is left out on purpose: it marks a route stale and never creates
+// or removes one, and it fires on every check, so recording it would bury the two
+// entries worth reading.
+func TestLearningAndForgettingAreAudited(t *testing.T) {
+	src, err := os.ReadFile("services.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	for _, want := range []string{`"learn service "`, `"forget service "`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s is not recorded, so the store changes with nothing in the "+
+				"audit log to show it", want)
+		}
+	}
+	if n := strings.Count(body, "g.Note("); n != 2 {
+		t.Errorf("%d audit records, want 2 — service_used is high-frequency and "+
+			"deliberately not one of them", n)
+	}
 }
