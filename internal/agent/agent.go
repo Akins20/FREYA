@@ -791,6 +791,26 @@ var untrustedPrefixes = []string{
 	// a page saying "ignore your instructions" is exactly the kind of thing
 	// somebody copies in order to ask about it.
 	"clipboard_read",
+	// The page, read through the browser rather than over HTTP.
+	//
+	// web_fetch was fenced from the beginning and browser_read never was, so the
+	// same page got opposite treatment depending on which door she came in by —
+	// and the browser is the door she uses for almost everything, because it is
+	// the one that works on a site needing a session. The stricter half of the
+	// rule was guarding the path she rarely takes.
+	//
+	// Named individually rather than by a browser_ prefix, because that prefix
+	// covers forty tools and most of them report what SHE did: "Clicked "Sign
+	// in". Now on …" is this machine's own account of its own action. Fencing
+	// those would put the marker on nearly every browser result, and a boundary
+	// that appears everywhere is one nobody reads — the same reason the review
+	// caveat is omitted when nothing was missed.
+	//
+	// These four are the ones whose body is somebody else's writing.
+	"browser_read", "browser_links", "browser_find", "browser_inspect",
+	// And the same argument outside the browser: the names and labels in another
+	// application's accessibility tree are text that application chose.
+	"desktop_inspect",
 }
 
 // fenceIfUntrusted wraps externally-sourced content so its boundary is explicit.
