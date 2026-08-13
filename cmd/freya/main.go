@@ -514,7 +514,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 				printInterim := a.OnInterim
 				a.OnInterim = func(text string) {
 					printInterim(text)
-					go func() { _ = vs.session.Speak(context.Background(), text) }()
+					// Only what is fit to say. See speakableNarration: the model's
+					// working-out arrives down this channel too, and it was being
+					// read aloud — tool names, arguments with itself, thirty lines
+					// of it, addressed to nobody.
+					if line, ok := speakableNarration(text); ok {
+						go func() { _ = vs.session.Speak(context.Background(), line) }()
+					}
 				}
 			}
 		}
@@ -770,8 +776,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		spoken := a.OnInterim
 		a.OnInterim = func(text string) {
 			spoken(text)
-			if vs.enabled {
-				go func() { _ = vs.session.Speak(context.Background(), text) }()
+			if !vs.enabled {
+				return
+			}
+			// Same filter as the daemon path. Two wirings, one rule, so voice mode
+			// in the REPL cannot quietly keep the behaviour the daemon dropped.
+			if line, ok := speakableNarration(text); ok {
+				go func() { _ = vs.session.Speak(context.Background(), line) }()
 			}
 		}
 	}
