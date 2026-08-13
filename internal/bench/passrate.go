@@ -157,4 +157,4 @@ func maxInt(a, b int) int {
 // imported because the benchmark drives the built binary as a black box and must
 // not link the package it is grading — but a mismatch would make the
 // cap-exhaustion metric read zero, so it is asserted in the tests.
-const agentRoundCap = 40
+const agentRoundCap = 60
