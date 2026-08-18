@@ -69,7 +69,7 @@ Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
 # The recorder starts first and runs long. Chrome comes up inside it, flashes the
 # slate, and the lead-in is trimmed off afterwards.
 $raw = Join-Path $work "raw.mkv"
-$lead = 6
+$lead = 18        # the window has to finish growing before the film starts
 $grab = Start-Process -PassThru -WindowStyle Hidden ffmpeg -ArgumentList @(
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "gdigrab", "-framerate", "30", "-draw_mouse", "0",

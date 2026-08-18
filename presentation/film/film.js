@@ -441,18 +441,33 @@ addEventListener("keydown", e => {
 
 /* ---- the slate ----------------------------------------------------------- */
 
-/* A screen recorder cannot be started at the same instant as the film, so the
-   film announces its own first frame: two frames of white, which the capture
-   script finds afterwards and trims to. It is the same reason a film set claps a
-   board, and it is only ever shown when the chrome is hidden for capture. */
+/* A screen recorder cannot be started on the same tick as the film, so the film
+   announces its own first frame with a flash of white that the capture script
+   finds afterwards and trims to. Same reason a film set claps a board.
+ *
+ * It also waits. A full-screen browser window takes several seconds to finish
+ * growing into place, and the first take made without this played its opening
+ * scene into a window that was still a quarter of the screen. So the flash does
+ * not happen, and the film does not start, until the viewport has held the same
+ * size for over a second, which is also the point at which the window is
+ * reliably painting and the flash can actually be captured. */
 if (BARE) {
   const slate = document.createElement("div");
   slate.style.cssText = "position:fixed;inset:0;background:#fff;z-index:999";
   document.body.appendChild(slate);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    slate.remove();
-    playScene(0);
-  }));
+
+  let lastW = 0, lastH = 0, still = 0;
+  (function settle() {
+    still = (innerWidth === lastW && innerHeight === lastH) ? still + 1 : 0;
+    lastW = innerWidth;
+    lastH = innerHeight;
+    if (still >= 8) {
+      // the flash is now on a painting window; hold it long enough to be caught
+      setTimeout(() => { slate.remove(); playScene(0); }, 450);
+      return;
+    }
+    setTimeout(settle, 160);
+  })();
 } else {
   playScene(0);
 }
