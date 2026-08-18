@@ -4,3 +4,4 @@ capture/*.mp4
 capture/*.mkv
 capture/picture.*
 film/vo/
+__pycache__/

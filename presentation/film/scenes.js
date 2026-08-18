@@ -29,7 +29,7 @@ const SCENES = [
 
 /* ===== I. the ask ========================================================= */
 {
-  id: "the ask", dur: 15500,
+  id: "the ask", dur: 14500,
   build(s) {
     s.fx({ warm: 0.34, dust: 0.6, grain: 0.05 });
     s.clock("08:12");
@@ -53,7 +53,7 @@ const SCENES = [
 
 /* she asks the one thing she cannot safely assume */
 {
-  id: "one question back", dur: 12500, keep: true,
+  id: "one question back", dur: 10500, keep: true,
   build(s) {
     const c = s.get("chat");
     s.at(500, () => s.said(c, "her",
@@ -72,7 +72,7 @@ const SCENES = [
 
 /* the right one of five */
 {
-  id: "the right account", dur: 14500, keep: true,
+  id: "the right account", dur: 14000, keep: true,
   build(s) {
     s.work(300, "chrome", "which profile",
       "<div class='profiles'>" + [
@@ -97,7 +97,7 @@ const SCENES = [
 
 /* mail is a website, so she opens it */
 {
-  id: "the inbox", dur: 14500, keep: true,
+  id: "the inbox", dur: 12500, keep: true,
   build(s) {
     const mail = [
       ["Northgate Supplies", "Q3 statement and line detail", "07:41", true],
@@ -136,7 +136,7 @@ const SCENES = [
 
 /* and the files land on your disk, where you can see them */
 {
-  id: "the files land", dur: 11000, keep: true,
+  id: "the files land", dur: 12500, keep: true,
   build(s) {
     s.clickOn(400, () => s.q(".att[data-a='0']"));
     s.at(850, () => s.q(".att[data-a='0']").classList.add("hot"));
@@ -165,7 +165,7 @@ const SCENES = [
 
 /* she reads the PDF rather than guessing what is in it */
 {
-  id: "reading the statement", dur: 13000, keep: true,
+  id: "reading the statement", dur: 10000, keep: true,
   build(s) {
     const lines = [
       ["NG-3341", "Oak worktop, 3m", "4", "1,240.00"],
@@ -195,7 +195,7 @@ const SCENES = [
 
 /* the part that is worth something: the two do not agree */
 {
-  id: "against our sheet", dur: 20000, keep: true,
+  id: "against our sheet", dur: 23000, keep: true,
   build(s) {
     const theirs = [["NG-3341", "4", "1,240.00"], ["NG-3352", "12", "384.00"],
       ["NG-2210", "1", "95.00"], ["NG-3390", "3", "1,110.00"],
@@ -240,7 +240,7 @@ const SCENES = [
 
 /* she writes the document, and it is laid out rather than dumped */
 {
-  id: "she writes it up", dur: 18500, keep: true,
+  id: "she writes it up", dur: 20500, keep: true,
   build(s) {
     s.work(300, "docx_write", "Q3-summary.docx",
       "<div class='paper'><div class='sheetbar'><b>Q3-summary.docx</b>" +
@@ -276,7 +276,7 @@ const SCENES = [
 
 /* filed where the team looks */
 {
-  id: "into the drive", dur: 15000, keep: true,
+  id: "into the drive", dur: 13000, keep: true,
   build(s) {
     s.work(300, "chrome  ·  work profile", "drive.northgate.co / Finance / Q3",
       "<div class='drive'>" +
@@ -312,7 +312,7 @@ const SCENES = [
 
 /* and the call is booked, with the document on it */
 {
-  id: "the diary", dur: 13500, keep: true,
+  id: "the diary", dur: 11500, keep: true,
   build(s) {
     const hours = ["10", "11", "12", "13", "14", "15", "16", "17"];
     const days = ["MON", "TUE", "WED", "THU", "FRI"];
@@ -341,7 +341,7 @@ const SCENES = [
 
 /* then she says what she did, and what she could not settle */
 {
-  id: "she reports back", dur: 18500, keep: true,
+  id: "she reports back", dur: 23000, keep: true,
   build(s) {
     const c = s.get("chat");
     s.at(600, () => s.said(c, "her",
@@ -369,7 +369,7 @@ const SCENES = [
 },
 
 {
-  id: "fifteen jobs", dur: 19000,
+  id: "fifteen jobs", dur: 22500,
   build(s) {
     s.fx({ warm: 0.35, dust: 0.4, grain: 0.045 });
     s.cursorOff(0);
@@ -400,7 +400,7 @@ const SCENES = [
 },
 
 {
-  id: "the programs", dur: 19500,
+  id: "the programs", dur: 21500,
   build(s) {
     s.fx({ warm: 0.5, dust: 0.55, grain: 0.05 });
 
@@ -459,7 +459,7 @@ const SCENES = [
 
 /* ===== IV. why you can leave it alone ==================================== */
 {
-  id: "memory", dur: 13500,
+  id: "memory", dur: 11500,
   build(s) {
     s.fx({ warm: 0.42, dust: 0.5, grain: 0.045 });
     s.cursorOff(0);
@@ -498,7 +498,7 @@ const SCENES = [
 },
 
 {
-  id: "presence", dur: 11500,
+  id: "presence", dur: 13500,
   build(s) {
     s.fx({ warm: 0.28, dust: 0.9, grain: 0.06 });
     s.cursorOff(0);
@@ -519,7 +519,7 @@ const SCENES = [
 },
 
 {
-  id: "yours", dur: 14500,
+  id: "yours", dur: 15000,
   build(s) {
     s.fx({ warm: 0.55, dust: 0.5, grain: 0.045 });
     s.pulse(0, false);

@@ -4,10 +4,13 @@
  * it, it runs each scene against a clock, and it composites the effects plate
  * that Go renders in WebAssembly.
  *
- * Two modes, and the second is a constraint rather than a feature:
+ * It plays by itself. That is the default because a film that waits to be
+ * advanced is a slide deck, and the first thing anyone did with the old default
+ * was sit through one scene wondering why it had stopped.
  *
- *   ?mode=explore   a person drives it, one scene at a time
- *   ?mode=film      deterministic autoplay on a fixed clock, which ffmpeg records
+ *   (no mode)       plays through, with the keyboard hints still on screen
+ *   ?mode=film      the same, with every hint hidden. This is what ffmpeg records
+ *   ?mode=explore   stops at each scene so a person can step through with arrows
  *
  * # Scenes that keep the set
  *
@@ -20,8 +23,10 @@
  */
 
 const W = 1600, H = 900;
-const FILM = new URLSearchParams(location.search).get("mode") === "film";
-if (FILM) document.body.classList.add("film");
+const MODE = new URLSearchParams(location.search).get("mode");
+const AUTO = MODE !== "explore";     // it plays unless you ask to drive it
+const BARE = MODE === "film";        // and it hides its chrome only for capture
+if (BARE) document.body.classList.add("film");
 
 const screenEl = document.getElementById("screen");
 const setEl = document.getElementById("set");
@@ -350,7 +355,7 @@ function playScene(i) {
   SCENES[i].build(stage);
   NARRATION.filter(n => n.scene === i).forEach(n => speak(i, n.at, n.text));
 
-  if (FILM) stage.at(SCENES[i].dur, () => advance(i + 1));
+  if (AUTO) stage.at(SCENES[i].dur, () => advance(i + 1));
 }
 
 /* A scene that keeps the set is simply the next beat of the same shot. Anything
@@ -429,9 +434,25 @@ addEventListener("keydown", e => {
   else if (e.key === " ") { e.preventDefault(); playScene(current); }
   else if (e.key === "f" || e.key === "F") {
     const u = new URL(location.href);
-    u.searchParams.set("mode", FILM ? "explore" : "film");
+    u.searchParams.set("mode", BARE ? "explore" : "film");
     location.href = u.toString();
   }
 });
 
-playScene(0);
+/* ---- the slate ----------------------------------------------------------- */
+
+/* A screen recorder cannot be started at the same instant as the film, so the
+   film announces its own first frame: two frames of white, which the capture
+   script finds afterwards and trims to. It is the same reason a film set claps a
+   board, and it is only ever shown when the chrome is hidden for capture. */
+if (BARE) {
+  const slate = document.createElement("div");
+  slate.style.cssText = "position:fixed;inset:0;background:#fff;z-index:999";
+  document.body.appendChild(slate);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    slate.remove();
+    playScene(0);
+  }));
+} else {
+  playScene(0);
+}
