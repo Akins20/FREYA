@@ -36,7 +36,9 @@ OUT="freya-${TARGET_MIB}mb.mp4"
 
 # The trim point and the running time come from the same places record.ps1 read
 # them from, so this cannot drift away from the take it is re-encoding.
-SS="${SS:-6.633}"
+# Where the film actually starts in the raw grab: the frame after the slate
+# flash ends. Override with SS= if a different take is being re-encoded.
+SS="${SS:-10.066}"
 DUR=$(python -c "
 import re, pathlib
 film = pathlib.Path('../film')

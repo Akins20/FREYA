@@ -114,28 +114,41 @@ $grab.WaitForExit()
 Stop-Process -Id $browser.Id -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 
-# Find the slate: the brightest frame in the lead-in is the two white frames.
-# ffmpeg's movie= filter takes a filter argument, not a path, so a Windows drive
-# letter has to be escaped inside it. Working from the file's own directory and
-# naming it relatively avoids the question entirely.
+# Find the slate and trim to the END of it.
+#
+# Two things were wrong here and both put the sound ahead of the picture. It cut
+# to the brightest frame, which is somewhere in the middle of a flash that lasts
+# nearly two seconds, so the film began well after the cut. And it worked out the
+# timestamp by counting output lines, which is only the frame number if ffprobe
+# emits exactly one line per frame and nothing else. Now the white run is found
+# properly, the last white frame ends it, and the time comes from the file.
+#
+# ffmpeg's movie= filter takes a filter argument rather than a path, so a Windows
+# drive letter would have to be escaped inside it. Working from the file's own
+# directory and naming it relatively avoids the question.
 Push-Location $work
 $probe = & ffprobe -v error -f lavfi -i "movie=raw.mkv,signalstats" `
-    -show_entries "frame_tags=lavfi.signalstats.YAVG" -of csv=p=0 `
-    -read_intervals "%+$($lead + 3)"
+    -show_entries "frame=pts_time:frame_tags=lavfi.signalstats.YAVG" -of csv=p=0 `
+    -read_intervals "%+$($lead + 6)"
 Pop-Location
-$best = $null; $bestY = -1; $frame = 0
+
+$lastWhite = $null
 foreach ($line in $probe) {
-    $y = 0.0
-    if (-not [double]::TryParse($line, [ref]$y)) { $frame++; continue }
-    if ($y -gt $bestY) { $bestY = $y; $best = $frame / 30.0 }
-    $frame++
+    $parts = $line -split ","
+    if ($parts.Count -lt 2) { continue }
+    $t = 0.0; $y = 0.0
+    if (-not [double]::TryParse($parts[0], [ref]$t)) { continue }
+    if (-not [double]::TryParse($parts[1], [ref]$y)) { continue }
+    if ($y -gt 200) { $lastWhite = $t }
 }
-if ($null -eq $best -or $bestY -lt 120) {
-    Write-Warning "no slate found (brightest frame was $bestY); trimming to the lead instead"
+if ($null -eq $lastWhite) {
+    Write-Warning "no slate found; trimming to the lead instead, and the sound will be early"
     $best = $lead
+} else {
+    $best = $lastWhite
 }
-$start = [math]::Round($best + 0.10, 3)
-Write-Host "slate at $best, cutting from $start"
+$start = [math]::Round($best + (1.0 / 30.0), 3)   # the first frame after the flash
+Write-Host "slate ends at $best, film starts at $start"
 
 # Trim to the slate, attach the narration, and write something seekable: a
 # keyframe every two seconds and the index at the front, so a player can scrub
