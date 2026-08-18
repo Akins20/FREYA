@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Freya</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="film.css">
+<link rel="stylesheet" href="errand.css">
+</head>
+<body>
+
+<!-- Everything is composed inside a fixed 1600x900 stage and then scaled to the
+     window, so a coordinate in the script is a coordinate in the finished frame. -->
+<div id="fit">
+  <div id="screen">
+
+    <div id="desk"></div>
+
+    <!-- where every scene mounts its windows -->
+    <div id="set"></div>
+
+    <!-- her pointer. One arrow, moved by the script, never by a person. -->
+    <div id="cursor">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M2 1 L2 15 L6 11.6 L8.6 17.4 L11.4 16.2 L8.8 10.6 L14 10.4 Z"
+              fill="#ece7df" stroke="#0b0b0c" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>
+    </div>
+
+    <div id="taskbar">
+      <div id="pulse"></div>
+      <span id="tblogo"></span>
+      <span id="clock">01:47</span>
+    </div>
+
+    <!-- the effects plate, rendered in Go -->
+    <canvas id="grain"></canvas>
+    <canvas id="cut"></canvas>
+    <div id="vignette"></div>
+
+    <div id="sub"></div>
+    <div id="progress"></div>
+  </div>
+</div>
+
+<div id="hint">space to play &middot; &larr; &rarr; scenes &middot; F for film mode</div>
+
+<audio id="vo" preload="auto"></audio>
+
+<script src="wasm_exec.js"></script>
+<script src="brand.js"></script>
+<script src="data.js"></script>
+<script src="narration.js"></script>
+<script src="scenes.js"></script>
+<script src="film.js"></script>
+</body>
+</html>

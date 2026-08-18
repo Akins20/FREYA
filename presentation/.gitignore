@@ -1,0 +1,6 @@
+# The rendered film and the voice track are build outputs, not sources. Both are
+# reproducible: capture/record.* renders the picture, narrate.py renders the voice.
+capture/*.mp4
+capture/*.mkv
+capture/picture.*
+film/vo/

@@ -1,0 +1,203 @@
+/* Act II. One errand, and every window it passes through.
+ *
+ * The chat spine stays on the left for the whole act while the working area on
+ * the right changes hands: profiles, mail, a downloaded invoice, a spreadsheet,
+ * the document she writes, the drive she files it in, the calendar she books.
+ * The act is about the handoff, so the spine never leaves the screen and the
+ * list of what she has done only ever grows.
+ *
+ * Paper is cream and everything else is near-black. That is the whole colour
+ * logic: the things she produces are the bright objects in the film.
+ */
+
+/* the running list of what she has actually done, which grows all act */
+.steps { padding: 13px 16px; overflow: hidden; }
+.steps .s {
+  display: flex; align-items: baseline; gap: 10px; padding: 4px 0;
+  font-size: 12.5px; color: #6b6660; line-height: 1.4;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity 300ms var(--ease), transform 300ms var(--ease), color 300ms var(--ease);
+}
+.steps .s.in { opacity: 1; transform: none; }
+.steps .s .m { font-family: var(--mono); font-size: 12px; flex: none; width: 12px; }
+.steps .s.now { color: var(--ink); }
+.steps .s.now .m { color: var(--accent); }
+.steps .s.done .m { color: var(--good); }
+.steps .s.flag, .steps .s.flag .m { color: var(--bad); }
+
+/* Chrome asking which of the five profiles this is for */
+.profiles { padding: 6px 0; }
+.prow {
+  display: flex; align-items: center; gap: 14px; padding: 10px 18px;
+  opacity: 0; transform: translateX(-6px);
+  transition: opacity 280ms var(--ease), transform 280ms var(--ease), background 220ms var(--ease);
+}
+.prow.in { opacity: 1; transform: none; }
+.prow.pick { background: #17140e; box-shadow: inset 2px 0 0 var(--accent); }
+.prow .av { width: 30px; height: 30px; border-radius: 50%; background: #26262d; flex: none;
+  display: grid; place-content: center; font-size: 12px; color: var(--ink-dim); }
+.prow.pick .av { background: var(--accent); color: #12100a; }
+.prow .nm { font-size: 14px; color: var(--ink); }
+.prow .em { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+.prow .tag { margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-faint); }
+.prow.pick .tag { color: var(--accent); }
+
+/* a mailbox */
+.mail { display: grid; grid-template-columns: 148px 1fr; height: 100%; }
+.mail .side { border-right: 1px solid #1f1f24; padding: 12px 0; background: var(--panel-2); }
+.mail .side div { padding: 7px 16px; font-size: 12.5px; color: var(--ink-faint); }
+.mail .side div.on { color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.mlist { overflow: hidden; position: relative; }
+.mrow {
+  display: grid; grid-template-columns: 152px 1fr 60px; gap: 14px; align-items: baseline;
+  padding: 11px 16px; border-bottom: 1px solid #1c1c21; font-size: 13px; color: var(--ink-faint);
+  opacity: 0; transition: opacity 260ms var(--ease), background 220ms var(--ease), color 220ms var(--ease);
+}
+.mrow.in { opacity: 1; }
+.mrow .who { color: var(--ink-dim); white-space: nowrap; overflow: hidden; }
+.mrow.unread .who, .mrow.unread .sub { color: var(--ink); font-weight: 500; }
+.mrow .when { text-align: right; font-family: var(--mono); font-size: 11px; }
+.mrow.hot { background: #17140e; }
+.mrow.hot .who, .mrow.hot .sub { color: var(--accent); }
+
+.mview { position: absolute; inset: 0; background: var(--panel); padding: 20px 22px;
+  opacity: 0; transition: opacity 320ms var(--ease); }
+.mview.on { opacity: 1; }
+.mview h4 { font-size: 17px; font-weight: 600; margin-bottom: 7px; }
+.mview .from { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); margin-bottom: 18px; }
+.mview p { font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); margin-bottom: 14px; max-width: 60ch; }
+.attach { display: flex; gap: 10px; margin-top: 8px; }
+.att {
+  display: flex; align-items: center; gap: 9px; padding: 9px 13px;
+  border: 1px solid #2c2c33; border-radius: 4px; background: #1a1a1f;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  opacity: 0; transform: translateY(5px);
+  transition: opacity 280ms var(--ease), transform 280ms var(--ease),
+              border-color 240ms var(--ease), color 240ms var(--ease);
+}
+.att.in { opacity: 1; transform: none; }
+.att .ic { font-size: 10.5px; color: var(--accent); letter-spacing: 0.08em; }
+.att.hot { border-color: var(--accent); color: var(--ink); }
+
+/* what the browser is downloading, along the bottom the way browsers show it */
+.dlbar {
+  position: absolute; left: 0; right: 0; bottom: 30px; height: 46px; z-index: 6;
+  background: #101013; border-top: 1px solid #202026;
+  display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  transform: translateY(120%); transition: transform 380ms var(--ease);
+}
+.dlbar.up { transform: none; }
+.dl { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+.dl .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+.dl .track { height: 2px; background: #26262d; border-radius: 1px; overflow: hidden; }
+.dl .track i { display: block; height: 100%; width: 0; background: var(--accent);
+  transition: width 900ms var(--ease); }
+.dl.done .n { color: var(--good); }
+
+/* anything on paper: cream, because the things she makes are the bright objects */
+.paper { position: absolute; inset: 0; background: #f7f3ec; color: #23201c; overflow: hidden;
+  transition: filter 400ms var(--ease); }
+.paper.dim { filter: brightness(0.62) saturate(0.75); }
+.paper .sheetbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  border-bottom: 1px solid #e2dacd; font-size: 12px; color: #6b6459; font-family: var(--mono); }
+.paper .sheetbar b { color: #23201c; font-weight: 600; font-family: var(--sans); font-size: 13.5px; }
+.paper .sheetbar .r { margin-left: auto; }
+.paper .pad { padding: 18px 24px; }
+
+.inv-h { font-size: 19px; font-weight: 700; margin-bottom: 4px; }
+.inv-s { font-family: var(--mono); font-size: 11.5px; color: #8a8175; margin-bottom: 16px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: #8a8175; padding: 0 10px 8px 0; border-bottom: 1px solid #ded5c7; }
+.tbl td { padding: 8px 10px 8px 0; border-bottom: 1px solid #ece5da; }
+.tbl td.num { font-family: var(--mono); text-align: right; }
+.tbl tr { opacity: 0; transition: opacity 260ms var(--ease), background 320ms var(--ease); }
+.tbl tr.in { opacity: 1; }
+.tbl tr.flag { background: #fbe6e0; }
+.tbl tr.flag td { color: #a8331d; }
+
+/* a spreadsheet */
+.grid { font-family: var(--mono); font-size: 12px; color: #3a352e; }
+.grid .r { display: grid; grid-template-columns: 32px 1.5fr 1fr 1fr 1fr; }
+.grid .r > span { padding: 7px 9px; border-right: 1px solid #e6ded1; border-bottom: 1px solid #ece5da;
+  overflow: hidden; white-space: nowrap; }
+.grid .r.cols > span { background: #f1ebe1; color: #a49a8c; text-align: center; font-size: 10px; }
+.grid .r.head > span { background: #ece5da; color: #6b6459; font-size: 10.5px; letter-spacing: 0.08em; }
+.grid .r { opacity: 0; transition: opacity 240ms var(--ease), background 340ms var(--ease); }
+.grid .r.in { opacity: 1; }
+.grid .r.flag > span { background: #fbe6e0; color: #a8331d; }
+.grid .num { text-align: right; }
+
+/* the document she writes */
+.doc-page { position: absolute; inset: 0; background: #fff; color: #23201c; padding: 24px 32px;
+  overflow: hidden; }
+.doc-page .brandline { height: 3px; width: 74px; background: #b9762a; margin-bottom: 15px;
+  transform: scaleX(0); transform-origin: left; transition: transform 460ms var(--ease); }
+.doc-page .brandline.in { transform: none; }
+.doc-page h2, .doc-page .sub, .doc-page .para {
+  opacity: 0; transition: opacity 340ms var(--ease); }
+.doc-page h2.in, .doc-page .sub.in, .doc-page .para.in { opacity: 1; }
+.doc-page h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.015em; margin-bottom: 5px; }
+.doc-page .sub { font-family: var(--mono); font-size: 11.5px; color: #8a8175; margin-bottom: 18px; }
+.doc-page .para { font-size: 13.5px; line-height: 1.65; color: #423c34; max-width: 64ch;
+  margin-bottom: 14px; }
+.doc-page .note { border-left: 3px solid #a8331d; background: #fbf1ee; padding: 11px 14px;
+  font-size: 13px; color: #a8331d; margin-top: 14px;
+  opacity: 0; transform: translateX(-5px);
+  transition: opacity 360ms var(--ease), transform 360ms var(--ease); }
+.doc-page .note.in { opacity: 1; transform: none; }
+
+/* the shared drive */
+.drive { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; padding: 18px; }
+.dfile { border: 1px solid #24242a; border-radius: 4px; background: #191920; overflow: hidden;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 280ms var(--ease), transform 280ms var(--ease), border-color 320ms var(--ease); }
+.dfile.in { opacity: 1; transform: none; }
+.dfile .th { height: 58px; background: linear-gradient(135deg, #26262d, #191920); }
+.dfile .nm { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); padding: 9px 10px;
+  white-space: nowrap; overflow: hidden; }
+.dfile.fresh { border-color: var(--accent); }
+.dfile.fresh .th { background: linear-gradient(135deg, #3d2e16, #1d1810); }
+.dfile.fresh .nm { color: var(--accent); }
+
+.uploading { display: flex; align-items: center; gap: 14px; padding: 13px 18px;
+  border-top: 1px solid #1f1f24; font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  position: absolute; left: 0; right: 0; bottom: 0; background: #101013;
+  opacity: 0; transition: opacity 300ms var(--ease); }
+.uploading.in { opacity: 1; }
+.uploading .track { flex: 1; height: 2px; background: #26262d; border-radius: 1px; overflow: hidden; }
+.uploading .track i { display: block; height: 100%; width: 0; background: var(--accent);
+  transition: width 1100ms var(--ease); }
+.uploading.done { color: var(--good); }
+
+/* the calendar */
+.cal { display: grid; grid-template-columns: 52px repeat(5, 1fr); height: 100%; }
+.cal .hcol { border-right: 1px solid #1f1f24; padding-top: 28px; }
+.cal .hcol div { height: 44px; padding: 2px 8px; font-family: var(--mono); font-size: 10px;
+  color: var(--ink-faint); text-align: right; }
+.cal .day { border-right: 1px solid #1a1a1f; position: relative; }
+.cal .dayname { height: 28px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; color: var(--ink-faint);
+  border-bottom: 1px solid #1f1f24; }
+.cal .day.today .dayname { color: var(--accent); }
+.cal .slot { height: 44px; border-bottom: 1px solid #17171c; }
+.ev { position: absolute; left: 4px; right: 4px; border-radius: 3px; padding: 6px 8px;
+  font-size: 11px; line-height: 1.35; background: #1e1e25; color: var(--ink-dim);
+  border-left: 2px solid #3a3a44;
+  opacity: 0; transform: scaleY(0.72); transform-origin: top;
+  transition: opacity 320ms var(--ease), transform 320ms var(--ease); }
+.ev.in { opacity: 1; transform: none; }
+.ev.mine { background: #1e1810; border-left-color: var(--accent); color: var(--accent); }
+.ev b { display: block; font-weight: 500; }
+.ev .paperclip { display: inline-block; margin-top: 5px; padding: 2px 6px; border-radius: 2px;
+  background: #2c2214; color: var(--accent); font-family: var(--mono); font-size: 9.5px; }
+
+/* the cards that separate the four movements */
+.actcard { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+  opacity: 0; transition: opacity 620ms var(--ease); }
+.actcard.in { opacity: 1; }
+.actcard .k { font-family: var(--mono); font-size: 12px; letter-spacing: 0.32em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 20px; }
+.actcard h2 { font-size: 50px; font-weight: 500; letter-spacing: -0.025em; max-width: 24ch;
+  line-height: 1.12; }
