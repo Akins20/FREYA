@@ -6,3 +6,4 @@ capture/picture.*
 film/vo/
 __pycache__/
 capture/work/
+capture/*.log
