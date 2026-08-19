@@ -23,8 +23,13 @@ function beat() {
   document.querySelectorAll("#set > *:not(.persist)").forEach(n => n.remove());
 }
 
-/* The header that names which case this is. It persists across the case. */
+/* The header that names which case this is. It persists across the beats of its
+   own case, so it is marked persist and beat() leaves it alone. Which means it
+   also has to take the previous one down itself: two consecutive beats that each
+   named their own case put two headers on top of each other, and the frame came
+   out as garbled overlapping type. There is only ever one. */
 function header(s, no, title, file) {
+  document.querySelectorAll("#set > .case").forEach(n => n.remove());
   const c = s.add(s.el("div", "case persist",
     "<div class='no'>" + no + "</div><h2>" + title + "</h2>" +
     "<div class='file'>internal/agent/" + file + "</div>"));
