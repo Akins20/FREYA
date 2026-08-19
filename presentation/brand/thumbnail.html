@@ -1,0 +1,139 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>thumbnail</title>
+<!--
+  The YouTube thumbnail, drawn rather than exported from a design tool, so it can
+  be regenerated when the film changes.
+
+      presentation/brand/thumbnail.sh
+
+  It is composed at exactly 1280x720 and it has to survive being shown at about a
+  quarter of that in a feed, which is the whole constraint: five words at a size
+  that still reads, one amber accent, and a shape on the right that is legible as
+  a checklist even when the words in it are not.
+-->
+<style>
+  :root {
+    --ground: #0b0b0c;
+    --ink: #ece7df;
+    --dim: #8b8681;
+    --faint: #4a4744;
+    --amber: #f0a437;
+    --good: #6fae72;
+    --bad: #c8503c;
+    --mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    --sans: Inter, "Segoe UI", system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    background: var(--ground);
+    font-family: var(--sans);
+    color: var(--ink);
+    position: relative;
+  }
+
+  /* the same pool of light the film opens on */
+  .desk {
+    position: absolute; inset: 0;
+    background: radial-gradient(760px 520px at 26% 46%, #221a10 0%, #100f0d 55%, #08080a 100%);
+  }
+  .vig {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+
+  .frame { position: absolute; inset: 0; padding: 62px 66px; display: flex; gap: 48px; }
+
+  .left { flex: 1; display: flex; flex-direction: column; }
+
+  .kicker {
+    font-family: var(--mono); font-size: 21px; letter-spacing: 0.24em;
+    text-transform: uppercase; color: var(--amber); margin-bottom: 26px;
+  }
+
+  h1 {
+    font-size: 106px; line-height: 0.96; letter-spacing: -0.04em; font-weight: 700;
+  }
+  h1 .q { color: var(--amber); }
+
+  .chain {
+    margin-top: 34px; font-family: var(--mono); font-size: 28px;
+    letter-spacing: 0.02em; color: var(--dim); line-height: 1.5;
+  }
+  .chain b { color: var(--ink); font-weight: 400; }
+
+  .lock { margin-top: 54px; display: flex; align-items: center; gap: 22px; }
+  .lock svg { display: block; height: 46px; }
+  .lock .sub { font-family: var(--mono); font-size: 17px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--faint); }
+
+  /* the ledger, which reads as a checklist even when the words do not */
+  .ledger {
+    width: 428px; align-self: center;
+    background: #131316; border: 1px solid #2a2a30; border-radius: 7px;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.65);
+    overflow: hidden;
+  }
+  .ledger .bar {
+    height: 40px; background: #1a1a1e; border-bottom: 1px solid #26262c;
+    display: flex; align-items: center; gap: 10px; padding: 0 15px;
+    font-family: var(--mono); font-size: 14px; letter-spacing: 0.1em; color: var(--faint);
+  }
+  .ledger .bar i { width: 9px; height: 9px; border-radius: 50%; background: #33333a; display: block; }
+  .ledger .rows { padding: 16px 18px; }
+  .ledger .r {
+    display: flex; align-items: baseline; gap: 13px; padding: 8px 0;
+    font-size: 18px; color: #6b6660;
+  }
+  .ledger .r .m { font-family: var(--mono); font-size: 17px; color: var(--good); width: 15px; flex: none; }
+  .ledger .r.flag { color: var(--bad); }
+  .ledger .r.flag .m { color: var(--bad); }
+</style>
+
+<div class="desk"></div>
+
+<div class="frame">
+  <div class="left">
+    <div class="kicker">one sentence &middot; nobody at the keyboard</div>
+    <h1>It did the<br>whole job.</h1>
+    <div class="chain">
+      <b>mail</b> &rarr; <b>PDF</b> &rarr; <b>spreadsheet</b> &rarr;<br>
+      <b>Word</b> &rarr; <b>Drive</b> &rarr; <b>calendar</b>
+    </div>
+    <div class="lock">
+      <span id="logo"></span>
+      <span class="sub">runs on your machine</span>
+    </div>
+  </div>
+
+  <div class="ledger">
+    <div class="bar"><i></i><i></i><i></i><span>what she has done</span></div>
+    <div class="rows">
+      <div class="r"><span class="m">&#10003;</span><span>opened your work profile</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>found the supplier email</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>downloaded both attachments</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>read the statement</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>compared it with our sheet</span></div>
+      <div class="r flag"><span class="m">!</span><span>line 4 does not match: 240.00 out</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>wrote the summary</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>filed it in the shared drive</span></div>
+      <div class="r"><span class="m">&#10003;</span><span>put the call in the diary</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="vig"></div>
+
+<script src="../film/brand.js"></script>
+<script>
+  /* The lockup is drawn from the same geometry the film uses, so the thumbnail
+     cannot end up with a different logo from the video it belongs to. */
+  const gap = 46;
+  const total = BRAND.mark.w + gap + BRAND.word.w;
+  document.getElementById("logo").innerHTML =
+    '<svg viewBox="-8 -8 ' + (total + 16) + ' ' + (BRAND.word.h + 16) + '" height="46">' +
+    '<g fill="' + BRAND.amber + '">' + BRAND.mark.d + '</g>' +
+    '<g fill="' + BRAND.ink + '" transform="translate(' + (BRAND.mark.w + gap) + ',0)">' +
+    BRAND.word.d + '</g></svg>';
+</script>
