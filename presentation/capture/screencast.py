@@ -169,13 +169,18 @@ def chrome_path():
     sys.exit("no Chrome found; set CHROME to its path")
 
 
-def film_seconds():
-    """How long the film runs, read from the film rather than restated here."""
+def film_seconds(film_dir=None):
+    """How long the film runs, read from the film rather than restated here.
+
+    The projector is shared, so the dissolve length always comes from film/, but
+    the scene durations come from whichever film is being recorded.
+    """
+    where = ROOT / (film_dir or "film")
     js = (FILM / "film.js").read_text(encoding="utf-8")
     cover, reveal = re.search(r"COVER = (\d+), REVEAL = (\d+)", js).groups()
     gap = int(cover) + 20 + int(reveal) + 30
     beats = re.findall(r"dur:\s*(\d+)(,\s*keep:\s*true)?",
-                       (FILM / "scenes.js").read_text(encoding="utf-8"))
+                       (where / "scenes.js").read_text(encoding="utf-8"))
     total = 0
     for i, (dur, _) in enumerate(beats):
         nxt = i + 1 < len(beats) and bool(beats[i + 1][1])
@@ -198,7 +203,7 @@ def page_target(port, tries=40):
 
 def record(url, seconds, frames_dir, port, width, height):
     frames_dir.mkdir(parents=True, exist_ok=True)
-    for old in frames_dir.glob("*.png"):
+    for old in list(frames_dir.glob("*.jpg")) + list(frames_dir.glob("*.png")):
         old.unlink()
 
     profile = HERE / "work" / "headless-profile"
@@ -222,7 +227,7 @@ def record(url, seconds, frames_dir, port, width, height):
     # and reload, so the film lays itself out at the size it will be recorded at
     ws.call("Page.reload", ignoreCache=True)
     time.sleep(2.5)
-    ws.call("Page.startScreencast", format="png", everyNthFrame=1,
+    ws.call("Page.startScreencast", format="jpeg", quality=92, everyNthFrame=1,
             maxWidth=width, maxHeight=height)
 
     stamps, n, first = [], 0, None
@@ -243,7 +248,7 @@ def record(url, seconds, frames_dir, port, width, height):
             at = t - first
             if at > seconds:
                 break
-            (frames_dir / ("%06d.png" % n)).write_bytes(base64.b64decode(p["data"]))
+            (frames_dir / ("%06d.jpg" % n)).write_bytes(base64.b64decode(p["data"]))
             stamps.append(at)
             n += 1
             if n % 300 == 0:
@@ -276,8 +281,9 @@ def to_video(frames_dir, stamps, out, fps, seconds):
     lines = []
     for i, at in enumerate(stamps):
         nxt = stamps[i + 1] if i + 1 < len(stamps) else seconds
-        lines.append("file '%06d.png'\nduration %.4f" % (i, max(nxt - at, 1.0 / 240)))
-    lines.append("file '%06d.png'" % (len(stamps) - 1))   # concat needs the last one twice
+        lines.append("file '%06d.jpg'" % i)
+        lines.append("duration %.4f" % max(nxt - at, 1.0 / 240))
+    lines.append("file '%06d.jpg'" % (len(stamps) - 1))   # concat needs the last one twice
     (frames_dir / "frames.txt").write_text("\n".join(lines), encoding="utf-8")
 
     done = subprocess.run([
@@ -304,7 +310,7 @@ def main():
     ap.add_argument("--height", type=int, default=1080)
     args = ap.parse_args()
 
-    seconds = args.seconds if args.seconds else film_seconds()
+    seconds = args.seconds if args.seconds else film_seconds(args.film)
     server = subprocess.Popen(
         [sys.executable, "-m", "http.server", str(args.serve), "--directory", str(ROOT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

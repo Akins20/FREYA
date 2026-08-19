@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Freya</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The stage, the palette and the projector are film one's, unchanged. This is
+     the same machine seen from underneath, so it should look like the same film. -->
+<link rel="stylesheet" href="../film/film.css">
+<link rel="stylesheet" href="checks.css">
+</head>
+<body>
+
+<div id="fit">
+  <div id="screen">
+    <div id="desk"></div>
+    <div id="set"></div>
+
+    <div id="cursor">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M2 1 L2 15 L6 11.6 L8.6 17.4 L11.4 16.2 L8.8 10.6 L14 10.4 Z"
+              fill="#ece7df" stroke="#0b0b0c" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>
+    </div>
+
+    <div id="taskbar">
+      <div id="pulse"></div>
+      <span id="tblogo"></span>
+      <span id="clock">08:12</span>
+    </div>
+
+    <canvas id="grain"></canvas>
+    <canvas id="cut"></canvas>
+    <div id="vignette"></div>
+
+    <div id="sub"></div>
+    <div id="progress"></div>
+  </div>
+</div>
+
+<div id="hint">space to play &middot; &larr; &rarr; scenes &middot; F for film mode</div>
+<audio id="vo" preload="auto"></audio>
+
+<script src="../film/wasm_exec.js"></script>
+<script src="../film/brand.js"></script>
+<script src="narration.js"></script>
+<script src="scenes.js"></script>
+<script src="../film/film.js"></script>
+</body>
+</html>
