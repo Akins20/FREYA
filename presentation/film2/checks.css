@@ -233,3 +233,9 @@
    both, so the badge saying the quiz was never handed in did not render at all. */
 .article .chip { position: static; opacity: 1; transform: none; }
 .article .chip.miss { border-color: var(--bad); color: var(--bad); }
+
+/* Commentary laid over the desk rather than replacing it, so the shot never
+   breaks. The windows behind it dim; they do not go away. */
+.big.over { z-index: 40; }
+.big.over p { font-size: 50px; }
+.big.over .under { max-width: 52ch; }
