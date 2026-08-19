@@ -352,7 +352,14 @@ function playScene(i) {
   subEl.classList.remove("on");
   progressEl.style.width = ((i + 1) / SCENES.length) * 100 + "%";
 
-  SCENES[i].build(stage);
+  // A scene that throws used to abort playScene silently, and the film simply
+  // stopped building from that line on. Nothing was on screen and nothing said
+  // why. It cost a capture to find out that a helper had been renamed.
+  try {
+    SCENES[i].build(stage);
+  } catch (e) {
+    console.error("scene " + i + " (" + SCENES[i].id + ") threw:", e);
+  }
   NARRATION.filter(n => n.scene === i).forEach(n => speak(i, n.at, n.text));
 
   if (AUTO) stage.at(SCENES[i].dur, () => advance(i + 1));

@@ -223,3 +223,13 @@
 .linkpage .row.dead { color: #a8331d; }
 .linkpage .row .href { font-family: var(--mono); font-size: 13px; color: #8a8175; }
 .linkpage .row.dead .href { color: #a8331d; }
+
+/* the quiz chip that says it was never handed in */
+.article .chip.miss { border-color: var(--bad); color: var(--bad); }
+
+/* film.css carries a .chip used for the things a person carries between windows,
+   and it is absolutely positioned and starts invisible. The chips inside a page
+   are a different thing that happens to share the name, and they were inheriting
+   both, so the badge saying the quiz was never handed in did not render at all. */
+.article .chip { position: static; opacity: 1; transform: none; }
+.article .chip.miss { border-color: var(--bad); color: var(--bad); }
