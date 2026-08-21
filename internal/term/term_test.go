@@ -6,6 +6,76 @@ import (
 	"time"
 )
 
+// Budgets for a machine that is busy, because that is the only machine these
+// ever run on.
+//
+// Every number in this file used to be tuned for a package running by itself:
+// 300ms for a shell to finish its startup banner, five seconds for a command to
+// echo. Alone the package passes in 43 seconds. Under `make check`, which builds
+// and tests twenty-seven packages at once on two cores, it failed three separate
+// times — always here, always on a timeout, never on a wrong answer.
+//
+// That is the worst kind of red. Nothing was broken, the suite went red anyway,
+// and the lesson anyone draws from a test that cries wolf is to stop reading it.
+//
+// So the budgets are generous rather than tuned. A slow machine pays the extra
+// wait only when it actually needs it; a fast one reaches the same assertion in
+// the same time it always did. The one thing that must not happen is a timeout
+// deciding a correctness question.
+const (
+	// shellReady bounds the wait for a shell to finish its banner. It is a
+	// ceiling, not a duration: waitQuiet returns as soon as the output stops, so
+	// an idle machine pays a few milliseconds and a loaded one pays what it needs.
+	shellReady = 10 * time.Second
+	// cmdBudget is how long a command that echoes a word gets to echo it.
+	cmdBudget = 20 * time.Second
+	// replBudget is deliberately NOT generous, because for a REPL the timeout is
+	// the wait rather than a ceiling on one.
+	//
+	// A shell can be asked to echo a marker after a command, so Run returns the
+	// moment the marker lands and a large budget costs nothing. An interpreter
+	// cannot, so Run has no way to know it has finished and waits the whole
+	// duration every single time. Raising this to match cmdBudget took the Python
+	// test from six seconds to seventy-seven and the package from 43 to 110 — a
+	// change made for robustness that bought nothing and cost a minute a run.
+	replBudget = 6 * time.Second
+	// settle is how long an asynchronous effect gets to show up.
+	settle = 2 * time.Second
+)
+
+// waitReady blocks until the shell answers, by asking it something and waiting
+// for the answer.
+//
+// Three approaches, and only the third is load-independent. A fixed sleep has to
+// be wrong somewhere: 300ms failed three times under `make check` and two seconds
+// tripled the package's runtime for a shell usually ready in twenty
+// milliseconds. Waiting for the output to go quiet is better and still wrong —
+// Start sends its own prompt-neutralising commands, and a gap between two of them
+// reads as quiet, which is how this arrived mid-setup and got "Freya: command not
+// found".
+//
+// A marker has no such gap. The shell cannot echo it before it is ready to run
+// commands, and once it has, it is ready by definition.
+func waitReady(t *testing.T, s *Session, within time.Duration) {
+	t.Helper()
+	const marker = "__TERM_READY__"
+	if err := s.Send("echo " + marker); err != nil {
+		t.Fatalf("priming the session: %v", err)
+	}
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		// Once is enough, and twice never happens: the pty does not echo the
+		// typed command back into the buffer, so the only way this string appears
+		// is the shell having RUN the echo. Waiting for a second occurrence — the
+		// obvious guess — waits forever.
+		if strings.Contains(s.Read(), marker) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the shell did not answer within %s: %q", within, s.Read())
+}
+
 func newSession(t *testing.T) (*Manager, *Session) {
 	t.Helper()
 	m := NewManager()
@@ -14,15 +84,21 @@ func newSession(t *testing.T) (*Manager, *Session) {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(func() { m.CloseAll() })
-	// Let the shell finish its own startup output.
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the banner to stop arriving rather than guessing how long it takes.
+	//
+	// A fixed sleep has to be wrong somewhere: 300ms was too short under `make
+	// check` and failed three times, and two seconds was long enough to triple
+	// the package's runtime for a shell that is usually ready in twenty
+	// milliseconds. Quiet is the thing actually being waited for, so it is the
+	// thing to wait for.
+	waitReady(t, s, shellReady)
 	s.Drain()
 	return m, s
 }
 
 func TestRunCommandCapturesOutput(t *testing.T) {
 	_, s := newSession(t)
-	out, err := s.Run("echo hello-from-pty", 5*time.Second)
+	out, err := s.Run("echo hello-from-pty", cmdBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,10 +112,10 @@ func TestRunCommandCapturesOutput(t *testing.T) {
 func TestSessionKeepsState(t *testing.T) {
 	_, s := newSession(t)
 
-	if _, err := s.Run("MYVAR=persisted", 5*time.Second); err != nil {
+	if _, err := s.Run("MYVAR=persisted", cmdBudget); err != nil {
 		t.Fatal(err)
 	}
-	out, err := s.Run("echo $MYVAR", 5*time.Second)
+	out, err := s.Run("echo $MYVAR", cmdBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +126,10 @@ func TestSessionKeepsState(t *testing.T) {
 
 func TestWorkingDirectoryPersists(t *testing.T) {
 	_, s := newSession(t)
-	if _, err := s.Run("cd /tmp", 5*time.Second); err != nil {
+	if _, err := s.Run("cd /tmp", cmdBudget); err != nil {
 		t.Fatal(err)
 	}
-	out, _ := s.Run("pwd", 5*time.Second)
+	out, _ := s.Run("pwd", cmdBudget)
 	if !strings.Contains(Clean(out), "/tmp") {
 		t.Errorf("cd did not persist: %q", Clean(out))
 	}
@@ -67,7 +143,7 @@ func TestInteractivePrompt(t *testing.T) {
 	if err := s.Send(`read -p "Name: " answer && echo "got:$answer"`); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(settle)
 
 	prompt := Clean(s.Read())
 	if !strings.Contains(prompt, "Name:") {
@@ -77,7 +153,7 @@ func TestInteractivePrompt(t *testing.T) {
 	if err := s.Send("Freya"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(settle)
 	if got := Clean(s.Drain()); !strings.Contains(got, "got:Freya") {
 		t.Errorf("answering the prompt did not work: %q", got)
 	}
@@ -93,17 +169,30 @@ func TestLongRunningWorkContinues(t *testing.T) {
 	}
 
 	// Come back early: some output, but not all of it.
-	time.Sleep(500 * time.Millisecond)
-	early := Clean(s.Read())
+	//
+	// Polled for the first tick rather than slept for a fixed interval, because
+	// there is no interval that is right on both an idle machine and one running
+	// the rest of the suite. The shape that IS load-independent: the command's
+	// five sleeps are wall-clock, so load can only delay FINISHED, never hasten
+	// it. Seeing tick-1 therefore guarantees at least four more sleeps to go, on
+	// any machine, and the assertion below is safe the instant it is true.
+	var early string
+	deadline := time.Now().Add(cmdBudget)
+	for time.Now().Before(deadline) {
+		if early = Clean(s.Read()); strings.Contains(early, "tick-1") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if !strings.Contains(early, "tick-1") {
-		t.Errorf("no early output: %q", early)
+		t.Fatalf("no early output within %s: %q", cmdBudget, early)
 	}
 	if strings.Contains(early, "FINISHED") {
 		t.Error("the command completed instantly; it was not actually long-running")
 	}
 
 	// Come back later: it carried on without being waited on.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(cmdBudget)
 	for time.Now().Before(deadline) {
 		if strings.Contains(Clean(s.Read()), "FINISHED") {
 			return
@@ -121,10 +210,10 @@ func TestPythonREPL(t *testing.T) {
 	if err != nil {
 		t.Skipf("python3 unavailable: %v", err)
 	}
-	time.Sleep(800 * time.Millisecond)
+	time.Sleep(settle)
 	s.Drain()
 
-	out, err := s.Run("print(6*7)", 6*time.Second)
+	out, err := s.Run("print(6*7)", replBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +222,10 @@ func TestPythonREPL(t *testing.T) {
 	}
 
 	// State must persist inside the REPL too.
-	if _, err := s.Run("x = 'remembered'", 6*time.Second); err != nil {
+	if _, err := s.Run("x = 'remembered'", replBudget); err != nil {
 		t.Fatal(err)
 	}
-	out, _ = s.Run("print(x)", 6*time.Second)
+	out, _ = s.Run("print(x)", replBudget)
 	if !strings.Contains(Clean(out), "remembered") {
 		t.Errorf("REPL lost its state: %q", Clean(out))
 	}
@@ -157,7 +246,7 @@ func TestControlCharacterInterrupts(t *testing.T) {
 	}
 	time.Sleep(400 * time.Millisecond)
 
-	out, _ := s.Run("echo recovered", 5*time.Second)
+	out, _ := s.Run("echo recovered", cmdBudget)
 	if !strings.Contains(Clean(out), "recovered") {
 		t.Errorf("session did not recover after an interrupt: %q", Clean(out))
 	}
@@ -220,7 +309,7 @@ func TestCleanStripsEscapes(t *testing.T) {
 func TestInputIsNotEchoed(t *testing.T) {
 	_, s := newSession(t)
 
-	out, err := s.Run("echo UNIQUEMARKER_OUTPUT", 5*time.Second)
+	out, err := s.Run("echo UNIQUEMARKER_OUTPUT", cmdBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +501,7 @@ func TestNonShellStillUsesSettle(t *testing.T) {
 	if err != nil {
 		t.Skipf("python3 unavailable: %v", err)
 	}
-	time.Sleep(800 * time.Millisecond)
+	time.Sleep(settle)
 	s.Drain()
 
 	// A REPL cannot echo a marker, so the heuristic must still work there.
@@ -431,7 +520,7 @@ func TestNonShellStillUsesSettle(t *testing.T) {
 // the captured output.
 func TestNoPromptInOutput(t *testing.T) {
 	_, s := newSession(t)
-	time.Sleep(500 * time.Millisecond) // let prompt neutralisation apply
+	time.Sleep(settle) // let prompt neutralisation apply
 	s.Drain()
 
 	out, err := s.Run("echo THE-ONLY-THING-HERE", 15*time.Second)
@@ -453,7 +542,7 @@ func TestNoPromptInOutput(t *testing.T) {
 
 func TestMultilineCommandStillCompletes(t *testing.T) {
 	_, s := newSession(t)
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(settle)
 	s.Drain()
 
 	// A semicolon join is invalid here, so this must take the brace-group path.
