@@ -39,6 +39,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -53,8 +54,8 @@ var assets embed.FS
 // the front end has to understand deeply is a shape that has to change whenever
 // she does.
 type Event struct {
-	// thought | interim | tool | reply | error | done | confirm | confirm-timeout
-	// | heard | speaking | listening
+	// thought | interim | tool | reply | error | stopped | done | confirm
+	// | confirm-timeout | heard | speaking | listening
 	Kind string `json:"kind"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name, for kind=tool
@@ -89,8 +90,10 @@ type Server struct {
 	inTurn bool
 	reader Reader
 
+	handoffs   map[string]time.Time
 	confirmSeq int
 	waiting    map[string]chan bool
+	pending    map[string]pendingQ
 	state      StateFunc
 	controls   Controls
 }
@@ -133,6 +136,76 @@ func (s *Server) URL() string {
 		return ""
 	}
 	return fmt.Sprintf("http://%s/?t=%s", s.ln.Addr().String(), s.token)
+}
+
+// handoffLife is how long a one-shot address stays usable.
+//
+// Long enough for Chrome to start cold on a slow disk, short enough that a
+// nonce sitting in a shell history or a log is spent by the time anyone reads
+// it. It is also burned on first use, so this is the outer bound rather than
+// the window.
+const handoffLife = 2 * time.Minute
+
+// HandoffURL is the address to hand to a browser, and it carries no secret worth
+// stealing.
+//
+// # Why the token cannot go on a command line
+//
+// openWindow launches Chrome with --app=<url>, and Chrome keeps its argv.
+// /proc/<pid>/cmdline is world-readable on an ordinary Linux desktop, so a token
+// in that URL is readable by every uid on the machine — and loopback is
+// reachable by every uid by definition, so the endpoint that runs shell commands
+// would be, in effect, unauthenticated locally. Both halves of "loopback AND a
+// token" have to hold, and argv breaks the second one.
+//
+// It leaks by a quieter route too: she has run_shell and a tool that lists
+// processes, so any `ps` she runs puts the live token in archive.jsonl and in
+// the next prompt sent to the model. Nothing would redact it, because nothing
+// knows it is there.
+//
+// So the address on the command line is a nonce that is good for one request and
+// two minutes. Chrome spends it on the first page load, which sets the real
+// token as an HttpOnly SameSite=Strict cookie, and what is left on argv opens
+// nothing.
+func (s *Server) HandoffURL() (string, error) {
+	if s.ln == nil {
+		return "", fmt.Errorf("the window is not listening yet")
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("mint a handoff: %w", err)
+	}
+	nonce := hex.EncodeToString(raw)
+
+	s.mu.Lock()
+	if s.handoffs == nil {
+		s.handoffs = map[string]time.Time{}
+	}
+	// Sweep here rather than on a timer: this is the only place the map grows.
+	for k, born := range s.handoffs {
+		if time.Since(born) > handoffLife {
+			delete(s.handoffs, k)
+		}
+	}
+	s.handoffs[nonce] = time.Now()
+	s.mu.Unlock()
+
+	return fmt.Sprintf("http://%s/?h=%s", s.ln.Addr().String(), nonce), nil
+}
+
+// burnHandoff spends a nonce, and reports whether it was worth anything.
+//
+// Delete-then-check, under the lock, so two requests racing on the same nonce
+// cannot both be admitted.
+func (s *Server) burnHandoff(nonce string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	born, ok := s.handoffs[nonce]
+	if !ok {
+		return false
+	}
+	delete(s.handoffs, nonce)
+	return time.Since(born) <= handoffLife
 }
 
 // Serve runs until the context ends.
@@ -189,17 +262,29 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "local only", http.StatusForbidden)
 			return
 		}
-		got := r.URL.Query().Get("t")
+		// Three ways in, in order of how much they cost if seen: a one-shot
+		// handoff nonce, the cookie, and the token itself.
+		query := r.URL.Query()
+		admit := false
+		if h := query.Get("h"); h != "" && s.burnHandoff(h) {
+			admit = true
+		}
+		got := query.Get("t")
 		if got == "" {
 			if c, err := r.Cookie("freya_token"); err == nil {
 				got = c.Value
 			}
 		}
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1 {
+			admit = true
+		}
+		if !admit {
 			http.Error(w, "not this window", http.StatusForbidden)
 			return
 		}
-		if r.URL.Query().Get("t") != "" {
+		// Whichever door was used, leave the real token in a cookie so no later
+		// request has to carry it in a URL.
+		if query.Get("t") != "" || query.Get("h") != "" {
 			http.SetCookie(w, &http.Cookie{
 				Name: "freya_token", Value: s.token, Path: "/",
 				HttpOnly: true, SameSite: http.SameSiteStrictMode,
@@ -236,7 +321,28 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan Event, 64)
 	s.mu.Lock()
 	s.subs[ch] = struct{}{}
+	// Anything still waiting on an answer is re-sent to this window.
+	//
+	// Emit drops events when a subscriber's channel is full, and that is right
+	// for a thought bubble and catastrophic for this one kind: the question is
+	// asked once, and a window that missed it shows nothing, looks healthy, and
+	// five minutes later the guard reports "declined by user" for something no
+	// human ever saw. A reconnect — a sleep, a Wi-Fi blip, a burst of tool
+	// events backing the writer up — is enough to cause it. So the question is
+	// held until it is answered, and every window that arrives is told.
+	outstanding := make([]Pending, 0, len(s.pending))
+	for _, p := range s.pending {
+		outstanding = append(outstanding, p.now())
+	}
 	s.mu.Unlock()
+	for _, p := range outstanding {
+		if body, err := json.Marshal(p); err == nil {
+			select {
+			case ch <- Event{Kind: "confirm", Text: string(body)}:
+			default:
+			}
+		}
+	}
 	defer func() {
 		s.mu.Lock()
 		delete(s.subs, ch)
@@ -325,6 +431,15 @@ func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
 		}()
 		reply, err := asker.Ask(context.Background(), body.Text)
 		if err != nil {
+			// Superseded is not failed, and this package has said so in a doc
+			// comment since ErrStopped was written — while emitting it as an error
+			// anyway, so the window drew a red failure box for a turn something
+			// else had legitimately taken over. The kind is distinct now, which is
+			// what let the front end tell them apart.
+			if errors.Is(err, ErrStopped) {
+				s.Emit(Event{Kind: "stopped", Text: "Stopped — something else took the turn."})
+				return
+			}
 			s.Emit(Event{Kind: "error", Text: err.Error()})
 			return
 		}
@@ -369,7 +484,7 @@ type Reader interface {
 	// NewSession begins a new conversation and returns its id. It is on this
 	// interface rather than a setter of its own because it is the same concern:
 	// how the archive is cut into the rows the rail shows.
-	NewSession() string
+	NewSession() (string, error)
 }
 
 // SetReader supplies the history the rail lists.
@@ -396,7 +511,15 @@ func (s *Server) newSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no archive is wired up", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, map[string]any{"session": reader.NewSession()})
+	id, err := reader.NewSession()
+	if err != nil {
+		// A terminal session has the archive. Saying so is the whole answer: the
+		// window's own turns are refused for the same reason, and a silent 200
+		// would leave the rail claiming a conversation that was never cut.
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, map[string]any{"session": id})
 }
 
 // conversations groups turns into sessions, newest first.
@@ -566,16 +689,24 @@ func (s *Server) Confirm(ctx context.Context, command, reason, risk, preview str
 		s.waiting = map[string]chan bool{}
 	}
 	s.waiting[id] = answer
+	q := pendingQ{
+		Pending:  Pending{ID: id, Command: command, Reason: reason, Risk: risk, Preview: preview},
+		deadline: time.Now().Add(confirmWait),
+	}
+	if s.pending == nil {
+		s.pending = map[string]pendingQ{}
+	}
+	s.pending[id] = q
 	s.mu.Unlock()
 
 	defer func() {
 		s.mu.Lock()
 		delete(s.waiting, id)
+		delete(s.pending, id)
 		s.mu.Unlock()
 	}()
 
-	body, _ := json.Marshal(Pending{ID: id, Command: command, Reason: reason,
-		Risk: risk, Preview: preview, Seconds: int(confirmWait / time.Second)})
+	body, _ := json.Marshal(q.now())
 	s.Emit(Event{Kind: "confirm", Text: string(body)})
 
 	select {
@@ -691,6 +822,10 @@ type State struct {
 	Servers    []Serving  `json:"servers,omitempty"`
 	Tabs       []string   `json:"tabs,omitempty"`
 	Watchers   int        `json:"watchers"`
+	// Asking is whatever she is waiting on an answer for. Carried on the state
+	// poll as well as the event stream, because the stream can drop an event and
+	// this is the one kind where a drop is read as a refusal.
+	Asking []Pending `json:"asking,omitempty"`
 }
 
 // StateFunc gathers it. A function rather than an interface because every field
@@ -711,11 +846,17 @@ func (s *Server) stateHandler(w http.ResponseWriter, r *http.Request) {
 	busy := s.inTurn
 	s.mu.Unlock()
 	if f == nil {
-		writeJSON(w, State{Busy: busy})
+		writeJSON(w, State{Busy: busy, Asking: s.outstanding()})
 		return
 	}
 	st := f()
-	st.Busy = busy
+	st.Asking = s.outstanding()
+	// OR, not assign. The gatherer answers for the whole process — a spoken turn,
+	// a REPL turn, a due self-task — which is the entire point of registering
+	// every surface with beginTurn. Overwriting it with this server's own inTurn
+	// threw that away on every poll and told the window she was idle through the
+	// whole of a spoken request, which is when its plan panel is worth watching.
+	st.Busy = st.Busy || busy
 	writeJSON(w, st)
 }
 
@@ -792,4 +933,40 @@ func (s *Server) voiceHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// pendingQ is a question and when it gives up on being answered.
+//
+// The deadline is kept rather than the countdown, because a question replayed to
+// a window that connected late has to show the time actually LEFT. Sending the
+// stored figure restarted it at five minutes, so the second window would sit
+// with a full clock and then have the question expire under it — the same lie
+// about a timeout that raising the wait from ninety seconds was meant to end.
+type pendingQ struct {
+	Pending
+	deadline time.Time
+}
+
+// now returns the question with its countdown as of this moment.
+func (p pendingQ) now() Pending {
+	q := p.Pending
+	if left := time.Until(p.deadline); left > 0 {
+		q.Seconds = int(left / time.Second)
+	}
+	return q
+}
+
+// outstanding lists the questions still waiting on an answer.
+func (s *Server) outstanding() []Pending {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return nil
+	}
+	out := make([]Pending, 0, len(s.pending))
+	for _, p := range s.pending {
+		out = append(out, p.now())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }

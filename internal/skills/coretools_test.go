@@ -2,14 +2,18 @@ package skills
 
 import (
 	"context"
+	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/Akins20/FREYA/internal/claude"
 	"github.com/Akins20/FREYA/internal/defect"
 	"github.com/Akins20/FREYA/internal/guard"
 	"github.com/Akins20/FREYA/internal/memory"
 	"github.com/Akins20/FREYA/internal/playbook"
+	"github.com/Akins20/FREYA/internal/routes"
 	"github.com/Akins20/FREYA/internal/schedule"
 	"github.com/Akins20/FREYA/internal/term"
 )
@@ -64,7 +68,102 @@ func everything(t *testing.T) *Registry {
 		t.Fatal(terr)
 	}
 	RegisterSchedule(r, tasks)
+
+	// The families that were missing. Without them the fixture held 102 tools
+	// against a real session's 147, so a third of the registry — every desktop
+	// tool, every dev tool, the terminal, the clipboard, telemetry — was invisible
+	// to every test in this file, including the one whose whole job is to notice
+	// a core-kit entry naming a tool that does not exist.
+	RegisterArrange(r, g)
+	RegisterClipboard(r, g)
+	RegisterDesktop(r, g)
+	RegisterDev(r, dir)
+	RegisterTelemetry(r, dir)
+	RegisterTerminal(r, g, term.NewManager())
+	RegisterProactive(r, nil)
+	RegisterReflection(r, nil)
+	routeStore, rerr := routes.Open(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	RegisterServices(r, g, NewTabs(), routeStore)
+	claudeClient := claude.New("")
+	RegisterClaude(r, g, claudeClient)
+	RegisterClaudeAdvice(r, g, claudeClient)
 	return r
+}
+
+// fixtureTools is how many tools everything() registers.
+//
+// # Why a number is pinned here and nowhere else
+//
+// The tool count has been written down in prose three times and been wrong every
+// time: CLAUDE.md said 136, the README said 151, the registry held 152. Nothing
+// ever compared the sentence to the code, so each number was correct for about a
+// fortnight and then quietly was not.
+//
+// The documents no longer carry it — they point at /tools, which counts the live
+// registry. This constant is the one place a number lives, and its job is not to
+// be right about the product: it is to FAIL when the registry changes, so that
+// whoever added or removed a tool is made to look at what the docs claim.
+//
+// Four families are absent because they register nothing without a real
+// dependency: work needs a running pool, review and the vision tools need a
+// provider that can see, and voice_adjust needs a synthesiser. Passing them nil
+// registers zero tools rather than erroring, which is exactly the kind of silent
+// nothing this file exists to catch — so they are named here instead of counted.
+const fixtureTools = 142
+
+var registeredOnlyWithARealDependency = []string{
+	"work_start", "work_list", "work_cancel", // a running pool
+	"review",       // a provider that can see
+	"voice_adjust", // a synthesiser
+}
+
+func TestTheToolCountIsAssertedRatherThanWrittenDown(t *testing.T) {
+	r := everything(t)
+	got := len(r.Names())
+	if got != fixtureTools {
+		t.Errorf("the registry holds %d tools, this test expects %d.\n"+
+			"That is not a bug — it means tools were added or removed. Update "+
+			"fixtureTools, and while you are here check that nothing in README.md, "+
+			"CLAUDE.md or docs/ has gone stale about what she can do. The count has "+
+			"been wrong in prose three times because nothing made anyone look.",
+			got, fixtureTools)
+	}
+
+	// And the ones that need hardware really are absent, so the list above stays
+	// honest rather than becoming folklore.
+	have := map[string]bool{}
+	for _, n := range r.Names() {
+		have[n] = true
+	}
+	for _, n := range registeredOnlyWithARealDependency {
+		if have[n] {
+			t.Errorf("%s is named as needing a real dependency but the fixture "+
+				"registered it; move it into the count", n)
+		}
+	}
+}
+
+// The documents must not carry a tool count, because a number in prose is a
+// number nothing checks. /tools prints the live one.
+func TestTheDocsDoNotWriteTheToolCountDown(t *testing.T) {
+	for _, doc := range []string{"../../README.md", "../../CLAUDE.md"} {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// "147 tools", "152 tools registered", "136 tools" — a number immediately
+		// before the word. Deliberately narrow: prose about "43 of those tools are
+		// Chrome" is a proportion, not a total, and does not go stale the same way.
+		re := regexp.MustCompile(`\b(\d{2,4}) tools\b`)
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			t.Errorf("%s writes the tool count down as %q. It has been wrong three "+
+				"times this way. Say what she can do and point at /tools for how many.",
+				doc, m[0])
+		}
+	}
 }
 
 // A core entry naming a tool that does not exist is worse than useless: it reads

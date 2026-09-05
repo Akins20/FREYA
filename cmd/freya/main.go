@@ -208,7 +208,15 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// ask. It must still refuse — but as "nobody could be asked", not as a
 	// refusal somebody made.
 	var terminalConfirm guard.ConfirmFunc
-	if isTerminal() {
+	// Not in the daemon, whatever stdin claims to be. The daemon never reads it —
+	// it returns d.Run(ctx) and no REPL ever starts — so a terminal prompt there
+	// is a question printed where nobody is looking, and it has two ways to end
+	// and both are wrong: EOF on /dev/null returns false, which the guard reports
+	// as "declined by user" for an action nobody was shown; a real inherited tty
+	// blocks on ReadString forever, holding guard.confirmMu, and every later
+	// action in the process queues behind it permanently. The microphone is the
+	// daemon's channel to a person, and it is reached by not installing this one.
+	if !daemonize && isTerminal() {
 		// One stdin reader shared with the REPL, so the prompt and the input line
 		// never race for the same bytes.
 		terminalConfirm = confirmPrompt(stdin)
@@ -421,6 +429,21 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		// So a spoken exchange reaches whoever is watching one. Set here rather
 		// than in setupVoice because the hub does not exist that early.
 		vs.trace = trace
+		if vs.speaker != nil {
+			// On the Speaker, not the Session. The Speaker is the one thing every
+			// utterance passes through — the reply, the narration, a notification,
+			// a background report — and the only one that can report the stop as
+			// well as the start. Wired to Session.OnSpeaking instead, the indicator
+			// lit for a typed turn and stayed dark for a spoken one, which is the
+			// case the microphone button exists for.
+			vs.speaker.OnSpeaking = func(speaking bool, text string) {
+				if speaking {
+					trace.emit("speaking", "", text)
+					return
+				}
+				trace.emit("speaking", "", "")
+			}
+		}
 	}
 	a.OnThought = func(text string) { trace.emit("thought", "", text) }
 	a.OnInterim = func(text string) { trace.emit("interim", "", text) }
@@ -817,7 +840,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			// must not stop them.
 			fmt.Fprintf(os.Stderr, "%swindow: %v%s\n", cYellow, gerr, cReset)
 		} else {
-			d.Window = func() (string, error) { return url, nil }
+			// A fresh one-shot address per request, so the token never reaches a
+			// command line or a log. See gui.Server.HandoffURL.
+			d.Window = srv.HandoffURL
 			// And the window becomes a place a question can be asked. Without this
 			// every destructive action in a daemon session came back refused with
 			// the user sitting in front of her, because the guard was deciding
@@ -825,7 +850,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			confirms.setWindow(srv)
 			fmt.Printf("%s  %s%s\n", cDim, guiBanner(url), cReset)
 			if window {
-				if oerr := openWindow(ctx, url, cfg.DataDir); oerr != nil {
+				handoff, herr := srv.HandoffURL()
+				if herr != nil {
+					handoff = url
+				}
+				if oerr := openWindow(ctx, handoff, cfg.DataDir); oerr != nil {
 					fmt.Fprintf(os.Stderr, "%s  could not open a window (%v) — the address "+
 						"above still works%s\n", cYellow, oerr, cReset)
 				}

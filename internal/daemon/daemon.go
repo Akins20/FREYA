@@ -82,13 +82,17 @@ type Request struct {
 	Command string `json:"command"`
 }
 
-// Reply is the daemon's answer.
 // Window is where the daemon's window is served.
+//
+// URL is a one-shot address: it carries a nonce good for a single page load, not
+// the session token, so it is safe to hand to a browser on a command line. See
+// gui.Server.HandoffURL.
 type Window struct {
 	URL string `json:"url"`
 	PID int    `json:"pid"`
 }
 
+// Reply is the daemon's answer.
 type Reply struct {
 	OK           bool                   `json:"ok"`
 	Window       *Window                `json:"window,omitempty"`

@@ -298,7 +298,7 @@ func RegisterBrowser(r *Registry, g *guard.Guard, tabs *Tabs) {
 				}
 				title, _ := tab.client.Title(ctx)
 				current, _ := tab.client.URL(ctx)
-				tab.lastURL = current
+				tabs.noteURL(tab, current)
 				return fmt.Sprintf("%q\n%s%s%s", title, current, tabNote, guessNote), nil
 			})
 		},
@@ -1072,11 +1072,28 @@ func (t *Tabs) Open() []Tab {
 	if t == nil {
 		return nil
 	}
-	tabs := t.list()
-	out := make([]Tab, 0, len(tabs))
-	for _, tab := range tabs {
+	// Read under the lock, not through list(). list() hands back the pointers and
+	// releases, and lastURL is written by browser_navigate on a tool goroutine —
+	// so a window polling /state every 1.5 seconds while she drives a page is a
+	// genuine data race on that string, which -race finds only if the two land in
+	// the same test.
+	t.mu.Lock()
+	out := make([]Tab, 0, len(t.byName))
+	for _, tab := range t.byName {
 		out = append(out, Tab{Name: tab.name, URL: tab.lastURL, Ctx: string(tab.ctx)})
 	}
+	t.mu.Unlock()
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// noteURL records where a tab ended up, under the same lock Open reads it with.
+func (t *Tabs) noteURL(tab *openTab, url string) {
+	if t == nil || tab == nil {
+		return
+	}
+	t.mu.Lock()
+	tab.lastURL = url
+	t.mu.Unlock()
 }

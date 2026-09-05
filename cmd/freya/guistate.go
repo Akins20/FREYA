@@ -64,10 +64,29 @@ func (s *guiSources) state() gui.State {
 	// Background work. Unfinished first, because that is what someone glancing at
 	// a panel wants to know.
 	if jobs != nil {
+		// Unfinished first, and only a few of the finished ones. jobs.List()
+		// returns everything the process has ever run, so after an hour the panel
+		// was a scroll of completed work with the one job actually in flight
+		// somewhere in the middle of it — a panel headed "Background" that could
+		// not answer "is anything running".
+		var running, done []gui.Job
 		for _, j := range jobs.List() {
-			st.Jobs = append(st.Jobs, gui.Job{
-				ID: j.ID, Goal: j.Goal, State: string(j.State()), For: j.Origin,
-			})
+			state := j.State()
+			row := gui.Job{ID: j.ID, Goal: j.Goal, State: string(state), For: j.Origin}
+			// work.State.Finished, not a list of strings here: a new terminal state
+			// added there would otherwise silently start counting as running.
+			if state.Finished() {
+				done = append(done, row)
+				continue
+			}
+			running = append(running, row)
+		}
+		st.Jobs = running
+		if n := len(done); n > 0 {
+			if n > finishedJobsShown {
+				done = done[n-finishedJobsShown:]
+			}
+			st.Jobs = append(st.Jobs, done...)
 		}
 	}
 
@@ -114,14 +133,22 @@ func (s *guiSources) state() gui.State {
 // talking that is the thing to know.
 func (s *guiSources) voiceState() string {
 	v := s.voice
-	if v == nil || !v.voiceOn() {
+	if v == nil {
 		return "off"
 	}
+	// What the hardware is DOING is reported whether or not spoken replies are
+	// switched on, because those are different questions. v.enabled means "read
+	// your replies aloud"; the daemon never sets it, so gating on it made the
+	// pill say "off" while she was talking through it — which is the one moment
+	// the pill has a job.
 	if v.speaker != nil && v.speaker.Speaking() {
 		return "speaking"
 	}
 	if who := mic.Holder(); who != "" {
 		return "hearing"
+	}
+	if !v.voiceOn() {
+		return "off"
 	}
 	if v.listener != nil && v.listener.Listening() {
 		return "listening"
@@ -165,6 +192,10 @@ func (s *guiSources) reminders() []gui.Reminder {
 // poll would make the window the most expensive thing watching her. Thirty
 // seconds is under the interval at which a number reads as stuck.
 const costRefresh = 30 * time.Second
+
+// finishedJobsShown is how many completed jobs stay in the panel. Enough to see
+// what just finished, few enough that a running job is never below the fold.
+const finishedJobsShown = 3
 
 func (s *guiSources) costToday() (float64, int) {
 	s.costMu.Lock()

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"sync"
@@ -204,13 +203,4 @@ func (c *confirmRoutes) confirm(ctx context.Context, action guard.Action, a guar
 	}
 	// Unreachable while attended() is honest, and a deny if it ever is not.
 	return false
-}
-
-// isTerminal reports whether stdin is an interactive terminal.
-func isTerminal() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
 }

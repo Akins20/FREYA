@@ -178,6 +178,21 @@ Three constraints hold this together and each has a test:
   `(answer, asked)`, and `cmd/freya/confirm.go`'s router tries window, terminal,
   then speech. Speech is last because a typed answer is the word the person
   meant. `guard.Attended` is set once, from the router, never reassigned.
+  **The daemon registers no terminal channel at all**, whatever stdin claims: a
+  detached process gets `/dev/null` on fd 0, `/dev/null` is a character device,
+  and the old char-device `isTerminal` therefore answered "yes, somebody is
+  there" — so the prompt read EOF and refused on behalf of a user who was never
+  asked. `isTerminal` is a real `TCGETS` now (`cmd/freya/tty_unix.go`).
+
+The window's address is a **one-shot handoff nonce**, not the token: Chrome keeps
+its argv, `/proc/<pid>/cmdline` is world-readable, and loopback is reachable by
+every local uid — a token there would leave an endpoint that runs shell commands
+effectively unauthenticated. See `gui.Server.HandoffURL`.
+
+An outstanding permission question is **held and replayed** to any window that
+connects, and carried on `/state` as well as the event stream. `Emit` drops
+events when a subscriber is slow, which is right for a thought bubble and turns
+this one into a silent five-minute refusal.
 
 Voice in the window presses `pushToTalk` — her existing pipeline, verification
 included. Do not add `getUserMedia`: it is a second recorder on one device, and

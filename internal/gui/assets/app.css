@@ -105,6 +105,14 @@ button.wide { width: 100%; text-align: left; }
      slivers with the text clipped through the middle — and the rail scrolls, so
      there was nothing to fit them into in the first place. */
   flex: none;
+  /* font before font-size: the shorthand resets size, so the other order made
+     every rail row inherit the body size instead of 13px. */
+  font: inherit;
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
   padding: 7px 10px;
   border-radius: 8px;
   color: var(--text-2);
@@ -265,10 +273,13 @@ details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
 }
 @keyframes pulse { 0%,100% { opacity:.25 } 50% { opacity:1 } }
 
+/* Themed, not hard-coded. These were three dark-theme hexes, so in light theme
+   the failure text was pale salmon on white and effectively unreadable — which
+   is the message you most need to be able to read. */
 .failed {
-  border: 1px solid #7d3a2b;
-  background: color-mix(in srgb, #d2694f 12%, transparent);
-  color: #e0a08f;
+  border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--edge));
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: color-mix(in srgb, var(--bad) 78%, var(--text));
   border-radius: var(--radius);
   padding: 10px 14px;
   font-size: 13px;
@@ -618,3 +629,26 @@ body.offline #inspector::before {
   color: var(--bad);
   margin-bottom: 4px;
 }
+
+/* Superseded, not failed: a note in her own dim, with none of .failed's alarm. */
+.note {
+  border-left: 2px solid var(--mute);
+  padding: 6px 0 6px 11px;
+  margin: 6px 0;
+  color: var(--mute);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* The rail is reachable from the keyboard. It is a list of buttons in behaviour,
+   so it gets a button's focus ring whatever element it is built from. */
+.history .item:focus-visible,
+#inspect:focus-visible,
+.sheet-foot button:focus-visible,
+#mic:focus-visible,
+#send:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+#inspect:disabled { opacity: .35; cursor: not-allowed; }

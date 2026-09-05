@@ -80,8 +80,12 @@ cache — see `internal/memory/journal.go`.
 
 ## What she does
 
-147 tools offline, 152 with a provider that can see and a microphone attached.
-`find_tools` finds the rest when a request needs something she was not offered.
+Around a hundred and fifty tools; `/tools` prints the exact number, and a few
+more appear when the provider can see and a microphone is attached. The figure
+is deliberately not written down here — it has been stated three times in these
+documents and been wrong every time, so a test now forbids a count in prose and
+pins the registry instead. `find_tools` finds what a request needs when she was
+not offered it.
 
 **Drives a real browser.** 43 of those tools are Chrome, over the DevTools
 Protocol: click, type, drag, right-click, upload, download, switch tabs, read

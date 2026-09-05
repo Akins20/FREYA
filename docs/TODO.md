@@ -1781,3 +1781,79 @@ nothing, and silent about it.** The pattern is not "the code was wrong"; it is
 "nothing would ever have said so". The fix each time is a test that names the
 failure, and — this is the part that keeps being worth the time — running the
 real thing and looking at it.
+
+### What the audit of that work found
+
+Twenty-five findings survived adversarial verification across five dimensions —
+plan conformance, dead wiring, Go correctness, the front end, and the local HTTP
+surface. Two were blockers, and both had the same shape: a refusal manufactured
+on behalf of a user who was never asked.
+
+- **`isTerminal()` was true for /dev/null.** It tested for a character device,
+  and /dev/null is one. Every detached daemon — `daemon.Spawn` sets Stdin to nil,
+  systemd's default is `StandardInput=null` — therefore installed the terminal
+  confirmation prompt, which read EOF and returned false. False is how a person
+  says no, so the guard reported "declined by user" for every destructive action
+  in the daemon, with the microphone that could have asked never reached. It is a
+  real `TCGETS` now, and the daemon registers no terminal channel at all.
+  Started from a foreground shell it was worse: `ReadString` blocks with no
+  timeout while `guard.Run` holds `confirmMu`, so the turn hangs forever and
+  every later guarded action queues behind it.
+- **The window token was on Chrome's command line.** `--app=<url>` with the token
+  in the query, and Chrome keeps its argv; `/proc/<pid>/cmdline` is world-readable
+  on an ordinary desktop. Loopback is reachable by every local uid by definition,
+  so the endpoint that runs shell commands was, in effect, locally
+  unauthenticated. It also leaked by a quieter route: she has `run_shell` and a
+  process-list tool, so any `ps` she ran would have put the live token in
+  `archive.jsonl` and in the next prompt sent to the model. The address is a
+  one-shot nonce now, spent on the first page load, which hands over the real
+  token as an HttpOnly SameSite=Strict cookie. Verified by stealing the nonce
+  off argv and replaying it: 403.
+
+And the majors, each of them silent:
+
+- A permission question that missed the event stream was **lost for good**. `Emit`
+  drops events when a subscriber is slow — right for a thought bubble, and for
+  this one kind it becomes a five-minute timeout the model reads as a refusal. A
+  sleep, a Wi-Fi blip or a burst of tool output was enough. Outstanding questions
+  are held and replayed to any window that connects, carried on `/state` too, and
+  their countdown continues from where it actually is rather than restarting.
+- `guiSources` computed `Busy` from `currentTurn()` — the process-wide answer, the
+  whole point of registering every surface with `beginTurn` — and `stateHandler`
+  **overwrote it** with the window's own `inTurn` on every poll. So the inspector
+  said she was idle through the whole of a spoken turn, and polled at the slow
+  interval exactly when the plan panel was ticking over.
+- The `speaking` event **never fired for a spoken reply**. It was emitted from
+  `voiceState.speak`, which the push-to-talk reply does not use — so the indicator
+  lit for a typed turn with voice on and stayed dark for the case the microphone
+  button exists for. It is emitted from `Speaker.OnSpeaking` now: the one gate
+  every utterance passes through, and the only one that can report the stop as
+  well as the start.
+- `pushToTalk` emitted `listening` and, on a recorder failure or an empty
+  transcript, no `turn-done` — leaving the window's microphone glowing until the
+  page was reloaded. One deferred emit now, because there are seven returns and
+  the ones that were missed were the unhappy ones.
+- `Tabs.Open()` read `lastURL` outside the lock while `browser_navigate` wrote it.
+- `Store.NewSession` rewrote state.json while the store was suspended.
+- The Background panel listed **every job ever run**, so it could not answer "is
+  anything running". The voice pill was hard-wired to "off" in the daemon,
+  because it gated on `enabled` — which means "read replies aloud", not "the
+  microphone exists".
+- Front end: two turns' events could interleave into one bubble; `finish()` put
+  out the microphone indicator while the recorder was still open; a cancelled
+  turn left the modal on screen blocking every later question; a 410 from
+  `/answer` looked exactly like a successful Allow; the failure box kept
+  dark-theme hexes and was unreadable in light; the rail was unreachable from the
+  keyboard; below 1080px the inspector was hidden but kept polling and its toggle
+  silently did nothing.
+
+**Two tests could not fail**, which is why some of the above survived review:
+`TestEveryControlInThePageIsWiredUp` never opened index.html and passed on a bare
+mention of an id, and the spoken-exchange test asserted against a sibling
+subscriber on the same hub rather than the window — so it would have passed with
+`windowTrace` dropping every kind on the floor, which is the exact bug it was
+written for. Both now check the thing they claimed to.
+
+The tool count is no longer written down anywhere. A test forbids a count in
+prose and pins the registry instead, so adding or removing a tool fails the suite
+and somebody has to look at what the documents claim.

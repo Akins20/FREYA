@@ -94,7 +94,13 @@ func TestNewSessionDoesNotDeadlockTheStore(t *testing.T) {
 	// into a ten-minute timeout with a goroutine dump.
 	first := s.SessionID()
 	done := make(chan string, 1)
-	go func() { done <- s.NewSession() }()
+	go func() {
+		id, err := s.NewSession()
+		if err != nil {
+			t.Errorf("NewSession on a writing store: %v", err)
+		}
+		done <- id
+	}()
 
 	select {
 	case got := <-done:
@@ -123,6 +129,18 @@ func TestNewSessionDoesNotDeadlockTheStore(t *testing.T) {
 	// NewSession left behind rather than back at the start.
 	if again.SessionID() <= first {
 		t.Errorf("after a reopen the session is %s, no later than %s", again.SessionID(), first)
+	}
+
+	// And a suspended store refuses rather than clobbering the session count the
+	// process that owns the archive is keeping.
+	if err := again.Suspend(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := again.NewSession(); err == nil {
+		t.Error("a suspended store rolled the session anyway")
+	}
+	if err := again.Resume(); err != nil {
+		t.Fatal(err)
 	}
 
 	// A turn written after the roll carries the new id, which is the whole point.

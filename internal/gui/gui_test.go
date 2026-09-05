@@ -596,20 +596,321 @@ func TestTheScriptOnlyReachesForElementsThePageHas(t *testing.T) {
 	}
 }
 
-// And the other direction for the handful that carry behaviour: a control the
-// page shows but the script never wires up is a button that does nothing.
+// And the other direction: a control the page shows but the script never listens
+// to is a button that does nothing when pressed.
+//
+// The first version of this only grepped app.js for the id, so a control that
+// was mentioned once — in a $() that read it and never bound a handler — counted
+// as wired. It also never opened index.html, so it would have passed happily for
+// a button that had been deleted from the page. Both halves are checked now: the
+// element exists, AND something listens to it.
 func TestEveryControlInThePageIsWiredUp(t *testing.T) {
 	js, err := assets.ReadFile("assets/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(js)
-	for _, id := range []string{
-		"new-chat", "theme", "inspect", "voice", "mic", "stop",
-		"confirm-yes", "confirm-no", "confirm-word", "composer", "input",
-	} {
-		if !strings.Contains(script, `'`+id+`'`) {
-			t.Errorf("#%s is in the page and the script never mentions it", id)
+	html, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, page := string(js), string(html)
+
+	// id -> the event it must handle. A control with no handler is furniture.
+	controls := map[string]string{
+		"new-chat":     "click",
+		"theme":        "click",
+		"inspect":      "click",
+		"voice":        "click",
+		"mic":          "click",
+		"stop":         "click",
+		"confirm-yes":  "click",
+		"confirm-no":   "click",
+		"confirm-word": "input",
+		"composer":     "submit",
+		"input":        "keydown",
+	}
+	for id, event := range controls {
+		if !strings.Contains(page, `id="`+id+`"`) {
+			t.Errorf("#%s is wired up in the script and is not in the page", id)
+			continue
+		}
+		// Either $('x').addEventListener('click', …) directly, or through the
+		// module-level alias some of them are held in (const input = $('input')).
+		names := []string{`\$\(\s*['"]` + regexp.QuoteMeta(id) + `['"]\s*\)`}
+		alias := regexp.MustCompile(
+			`(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\$\(\s*['"]` +
+				regexp.QuoteMeta(id) + `['"]\s*\)`)
+		if m := alias.FindStringSubmatch(script); m != nil {
+			names = append(names, `\b`+regexp.QuoteMeta(m[1]))
+		}
+		var wired bool
+		for _, n := range names {
+			if regexp.MustCompile(n + `\s*\.addEventListener\(\s*['"]` +
+				regexp.QuoteMeta(event) + `['"]`).MatchString(script) {
+				wired = true
+				break
+			}
+		}
+		if !wired {
+			t.Errorf("#%s is in the page but nothing listens for its %s — pressing it "+
+				"does nothing, silently", id, event)
 		}
 	}
+}
+
+// ---- the address that goes on a command line -----------------------------
+
+// The token must never reach Chrome's argv.
+//
+// openWindow launches Chrome with --app=<url>, and Chrome keeps its argv.
+// /proc/<pid>/cmdline is world-readable on an ordinary Linux desktop, so a token
+// there is readable by every uid on the machine — and loopback is reachable by
+// every uid by definition, which would leave an endpoint that runs shell
+// commands effectively unauthenticated locally. She also has run_shell and a
+// process-list tool, so any `ps` she runs would put the live token into
+// archive.jsonl and into the next prompt sent to the model.
+func TestTheHandoffAddressCarriesNoTokenAndWorksOnce(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	if _, err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
+
+	url, err := s.HandoffURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(url, s.token) {
+		t.Fatalf("the handoff address contains the token: %s", url)
+	}
+	nonce := url[strings.Index(url, "?h=")+3:]
+	if nonce == "" || nonce == s.token {
+		t.Fatalf("no usable nonce in %s", url)
+	}
+
+	// It opens the window once...
+	req := httptest.NewRequest(http.MethodGet, "/?h="+nonce, nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	var reached int
+	s.guard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached++ })).ServeHTTP(w, req)
+	if reached != 1 {
+		t.Fatalf("the handoff did not admit the first request (code %d)", w.Code)
+	}
+	// ...and hands over the real token as a cookie, so nothing later needs a URL.
+	var cookie string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "freya_token" {
+			cookie = c.Value
+			if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+				t.Error("the token cookie is not HttpOnly SameSite=Strict")
+			}
+		}
+	}
+	if cookie != s.token {
+		t.Error("the first load did not leave the real token in a cookie")
+	}
+
+	// And it is spent. Anyone who read it off argv afterwards has nothing.
+	req2 := httptest.NewRequest(http.MethodGet, "/?h="+nonce, nil)
+	req2.RemoteAddr = "127.0.0.1:5000"
+	w2 := httptest.NewRecorder()
+	reached = 0
+	s.guard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached++ })).ServeHTTP(w2, req2)
+	if reached != 0 || w2.Code != http.StatusForbidden {
+		t.Errorf("the handoff was reusable: code %d, reached %d", w2.Code, reached)
+	}
+}
+
+func TestAnInventedHandoffOpensNothing(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	if _, err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/?h="+strings.Repeat("ab", 16), nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	s.guard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("a made-up nonce got in")
+	})).ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("code %d, want 403", w.Code)
+	}
+}
+
+// A question that misses the stream must not be lost.
+//
+// Emit drops events when a subscriber's channel is full — right for a thought
+// bubble, catastrophic for this one kind. A window that missed it shows nothing,
+// looks perfectly healthy, and five minutes later the guard reports "declined by
+// user" for something no human ever saw. A reconnect is enough to cause it.
+func TestAWindowThatArrivesLateStillGetsAskedTheQuestion(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+
+	// A window is present so Confirm asks rather than falling through...
+	early := make(chan Event, 4)
+	s.mu.Lock()
+	s.subs[early] = struct{}{}
+	s.mu.Unlock()
+
+	go s.Confirm(context.Background(), "rm -rf notes", "tidying", "destructive", "delete 4 files")
+
+	select {
+	case <-early:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first window never got the question")
+	}
+
+	// ...and now it goes away and a fresh one connects, the way an EventSource
+	// reconnect does.
+	s.mu.Lock()
+	delete(s.subs, early)
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/events?t="+s.token, nil).WithContext(ctx)
+	req.RemoteAddr = "127.0.0.1:5000"
+	// A locked recorder, because the handler writes from its own goroutine while
+	// this one reads. httptest.ResponseRecorder is not safe for that and -race
+	// says so.
+	w := &lockedRecorder{ResponseRecorder: httptest.NewRecorder()}
+	done := make(chan struct{})
+	go func() { defer close(done); s.events(w, req) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.body(), "rm -rf notes") {
+			cancel()
+			<-done
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	t.Error("a window that connected while a question was outstanding was never " +
+		"told about it; the turn dies of a silent timeout the user reads as their own refusal")
+}
+
+// A replayed question shows the time actually left, not a fresh five minutes.
+//
+// The stored countdown was being resent verbatim, so a window that connected
+// four minutes in was handed a full clock and then had the question expire under
+// it — the same lie about a silent timeout that raising the wait from ninety
+// seconds existed to stop.
+func TestAReplayedQuestionCountsDownFromWhereItIs(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	ch := make(chan Event, 4)
+	s.mu.Lock()
+	s.subs[ch] = struct{}{}
+	s.mu.Unlock()
+
+	go s.Confirm(context.Background(), "rm -rf build", "cleanup", "destructive", "")
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no question was asked")
+	}
+
+	// Wind the clock on by hand: this is the only way to observe the difference
+	// without waiting minutes, and it is the deadline that is stored.
+	s.mu.Lock()
+	for id, q := range s.pending {
+		q.deadline = time.Now().Add(42 * time.Second)
+		s.pending[id] = q
+	}
+	s.mu.Unlock()
+
+	out := s.outstanding()
+	if len(out) != 1 {
+		t.Fatalf("%d outstanding, want 1", len(out))
+	}
+	if out[0].Seconds > 45 || out[0].Seconds < 30 {
+		t.Errorf("the replayed countdown says %ds left; about 42 was actually left. "+
+			"A window arriving late is told it has the full wait and then watches the "+
+			"question expire early.", out[0].Seconds)
+	}
+}
+
+// The same question is also on the state poll, so a window can recover one even
+// if the stream never carries it.
+func TestTheStatePollCarriesAnOutstandingQuestion(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	ch := make(chan Event, 4)
+	s.mu.Lock()
+	s.subs[ch] = struct{}{}
+	s.mu.Unlock()
+
+	go s.Confirm(context.Background(), "sudo rm /etc/hosts", "cleanup", "destructive", "")
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no question was asked")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/state?t="+s.token, nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	s.guard(http.HandlerFunc(s.stateHandler)).ServeHTTP(w, req)
+
+	var st State
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Asking) != 1 || st.Asking[0].Command != "sudo rm /etc/hosts" {
+		t.Errorf("the state poll does not carry the outstanding question: %+v", st.Asking)
+	}
+}
+
+// Busy is the process-wide answer OR this window's own turn, never just the
+// window's. A spoken turn, a REPL turn and a due self-task all set the first and
+// none of them touch the second.
+func TestBusyIsNotOverwrittenByTheWindowsOwnIdleness(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	s.SetState(func() State { return State{Busy: true, Model: "m"} })
+
+	req := httptest.NewRequest(http.MethodGet, "/state?t="+s.token, nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	s.guard(http.HandlerFunc(s.stateHandler)).ServeHTTP(w, req)
+
+	var st State
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if !st.Busy {
+		t.Error("the gatherer said she was working and the server said she was idle; " +
+			"the inspector then polls at the slow interval for the whole of a spoken turn")
+	}
+}
+
+// lockedRecorder is an httptest.ResponseRecorder that a test can read while the
+// handler is still writing to it.
+type lockedRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func (l *lockedRecorder) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ResponseRecorder.Write(b)
+}
+
+func (l *lockedRecorder) WriteHeader(code int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ResponseRecorder.WriteHeader(code)
+}
+
+func (l *lockedRecorder) Flush() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ResponseRecorder.Flush()
+}
+
+func (l *lockedRecorder) body() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ResponseRecorder.Body.String()
 }

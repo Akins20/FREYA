@@ -26,7 +26,7 @@ import (
 type archiveReader struct{ store *memory.Store }
 
 // NewSession cuts the archive here, so what follows is a new row in the rail.
-func (a archiveReader) NewSession() string { return a.store.NewSession() }
+func (a archiveReader) NewSession() (string, error) { return a.store.NewSession() }
 
 func (a archiveReader) Turns() []gui.Turn {
 	src := a.store.Turns()
@@ -70,6 +70,24 @@ type guiAsker struct {
 	vs    *voiceState
 	store *memory.Store
 	mu    sync.Mutex
+
+	// run is what actually answers, and exists so the registration around it can
+	// be tested without a model. Nil means the agent, which is what every real
+	// caller wants; only the test that checks a window turn is visible to
+	// currentTurn() ever sets it.
+	run func(ctx context.Context, input string) (string, error)
+}
+
+// answer is the agent, or whatever was substituted for it.
+func (g *guiAsker) answer(ctx context.Context, input string) (string, error) {
+	if g.run != nil {
+		return g.run(ctx, input)
+	}
+	res, err := g.a.Ask(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return res.Reply, nil
 }
 
 func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
@@ -94,7 +112,7 @@ func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
 	turnCtx, endTurn := beginTurn(ctx, "working on: "+clipLine(input, 60))
 	defer endTurn()
 
-	res, err := g.a.Ask(turnCtx, input)
+	reply, err := g.answer(turnCtx, input)
 	if err != nil {
 		// Superseded is not failed. Something else took the turn — a spoken
 		// request, a stop word — and saying "error" about that would be wrong.
@@ -108,9 +126,9 @@ func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
 	// never the session directly, because the Speaker is the single audio gate
 	// and bypassing it is how two things end up talking at once.
 	if g.vs.voiceOn() {
-		go g.vs.speak(context.Background(), voice.Reply, res.Reply)
+		go g.vs.speak(context.Background(), voice.Reply, reply)
 	}
-	return res.Reply, nil
+	return reply, nil
 }
 
 // serveGUI starts the window server on the agent that already owns the archive
@@ -241,10 +259,16 @@ func openWindow(ctx context.Context, url, dataDir string) error {
 }
 
 // guiBanner is what the terminal says while the window is the real interface.
+// guiBanner is what the terminal says about the window, address only.
+//
+// The credential is cut off deliberately. This line goes to stdout, which in the
+// daemon is daemon.log — a file that outlives the run, gets read over a
+// shoulder, and gets pasted into bug reports. `freya -gui` is how you open the
+// window; the address is here so you can see which port it took.
 func guiBanner(url string) string {
 	at := url
-	if i := strings.Index(at, "/?t="); i > 0 {
-		at = at[:i]
+	if i := strings.IndexAny(at, "?"); i > 0 {
+		at = strings.TrimSuffix(at[:i], "/")
 	}
 	return fmt.Sprintf("window on %s", at)
 }

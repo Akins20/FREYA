@@ -205,9 +205,16 @@ func (s *Store) SessionID() string {
 // what you were just doing. That is deliberate: the alternative is a button that
 // silently throws away the context you were relying on, and this is an assistant
 // rather than a series of strangers.
-func (s *Store) NewSession() string {
+func (s *Store) NewSession() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Not while another process owns the archive. state.json is rewritten whole,
+	// so a suspended store doing it clobbers the session count the writer is
+	// keeping — the same reason AppendTurn refuses rather than accepting and
+	// discarding.
+	if s.archive == nil {
+		return fmt.Sprintf("s%04d", s.st.Sessions), ErrSuspended
+	}
 	s.st.Sessions++
 	// saveJSONLocked, not saveJSON: the lock is already held and it is not
 	// reentrant. Calling the wrong one deadlocks the whole store — not just this
@@ -218,7 +225,7 @@ func (s *Store) NewSession() string {
 	// restart; failing the call would cost the conversation the user just asked
 	// for, which is worse.
 	_ = s.saveJSONLocked(stateFile, s.st)
-	return fmt.Sprintf("s%04d", s.st.Sessions)
+	return fmt.Sprintf("s%04d", s.st.Sessions), nil
 }
 
 // --- turns ------------------------------------------------------------------

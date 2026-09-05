@@ -215,6 +215,19 @@ function renderReply(text) {
   scroll(true);
 }
 
+// Superseded is not failed. Something else took the turn — a spoken request, the
+// stop word — and a red failure box would be wrong about what happened.
+function renderStopped(text) {
+  if (!turnEl) beginFreyaTurn();
+  const body = turnEl.querySelector('.body');
+  body.querySelector('.working')?.remove();
+  const d = document.createElement('div');
+  d.className = 'note';
+  d.textContent = text || 'Stopped.';
+  body.appendChild(d);
+  scroll(true);
+}
+
 function renderError(text) {
   if (!turnEl) beginFreyaTurn();
   const body = turnEl.querySelector('.body');
@@ -258,6 +271,7 @@ function connect() {
       case 'tool':     addStep(e.name, e.ok); break;
       case 'reply':    renderReply(e.text); break;
       case 'error':    renderError(e.text); break;
+      case 'stopped':  renderStopped(e.text); break;
       case 'done':     finish(); break;
       case 'confirm':         askPermission(e.text); break;
       case 'confirm-timeout': closePermission(e.text); break;
@@ -284,8 +298,10 @@ function connect() {
 // button is pressed once and then spoken at. The label says so.
 
 let voiceOn = false;
+let listening = false;   // the recorder is open, whatever else is happening
 
 function micState(state) {
+  listening = state === 'listening';
   const mic = $('mic');
   mic.classList.toggle('listening', state === 'listening');
   mic.classList.toggle('speaking', state === 'speaking');
@@ -299,6 +315,16 @@ function micState(state) {
 // beside the answer it produced.
 function spokenTurn(text) {
   if (!text) return;
+  // A spoken request supersedes whatever was running — beginTurn cancels it on
+  // her side. The bubble it was writing into has to be closed here, or the
+  // reply to THIS request lands in the previous turn's body and then finish()
+  // tears down the wrong element.
+  if (busy && turnEl) {
+    turnEl.querySelector('.working')?.remove();
+    turnEl = null;
+    traceEl = null;
+  }
+  listening = false;
   micState('');
   busy = true;
   send.disabled = true;
@@ -363,7 +389,8 @@ const INSPECT_IDLE = 6000;  // nothing running: slow enough to be free
 const INSPECT_BUSY = 1500;  // mid-turn: fast enough that the plan ticks over
 
 let inspectTimer = 0;
-let inspectOn = localStorage.getItem('freya.inspect') !== 'off';
+let inspectOn = true;
+try { inspectOn = localStorage.getItem('freya.inspect') !== 'off'; } catch {}
 
 function panel(title, count) {
   const sec = document.createElement('section');
@@ -416,6 +443,13 @@ function renderState(st) {
   $('ins-model').textContent = st.model && !provider.includes(st.model)
     ? [provider, st.model].filter(Boolean).join(' · ')
     : provider || st.model || '';
+
+  // The event stream can drop a confirm — a reconnect, a full channel — and a
+  // dropped one reads to her as a refusal five minutes later. The poll carries
+  // the outstanding question too, so a window that missed it still gets asked.
+  if (!permission && st.asking && st.asking.length) {
+    askPermission(JSON.stringify(st.asking[0]));
+  }
 
   const panels = $('panels');
   panels.textContent = '';
@@ -484,7 +518,7 @@ function renderState(st) {
 
 async function pollState() {
   clearTimeout(inspectTimer);
-  if (!inspectOn) return;
+  if (!inspectOn || !inspectorFits()) return;
   let st = null;
   try {
     const r = await fetch('/state');
@@ -494,13 +528,28 @@ async function pollState() {
   inspectTimer = setTimeout(pollState, st && st.busy ? INSPECT_BUSY : INSPECT_IDLE);
 }
 
+// Below this the CSS hides the inspector outright, so the toggle has nothing to
+// toggle and the poll has nobody to render for. Kept in one constant with the
+// media query in app.css; they have to agree.
+const INSPECT_MIN_WIDTH = 1080;
+
+function inspectorFits() { return window.innerWidth > INSPECT_MIN_WIDTH; }
+
 function showInspector(on) {
   inspectOn = on;
-  localStorage.setItem('freya.inspect', on ? 'on' : 'off');
+  try { localStorage.setItem('freya.inspect', on ? 'on' : 'off'); } catch {}
   document.body.classList.toggle('no-inspector', !on);
-  $('inspect').setAttribute('aria-pressed', String(on));
-  if (on) pollState(); else clearTimeout(inspectTimer);
+  const btn = $('inspect');
+  btn.setAttribute('aria-pressed', String(on));
+  // A control that silently does nothing is worse than one that is not there.
+  btn.disabled = !inspectorFits();
+  btn.title = inspectorFits()
+    ? 'What she has on'
+    : 'The window is too narrow to show this';
+  if (on && inspectorFits()) pollState(); else clearTimeout(inspectTimer);
 }
+
+window.addEventListener('resize', () => showInspector(inspectOn));
 
 $('inspect').addEventListener('click', () => showInspector(!inspectOn));
 
@@ -579,11 +628,19 @@ async function decide(ok) {
   const id = permission.id;
   closePermission(id);
   try {
-    await fetch('/answer', {
+    const r = await fetch('/answer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, ok }),
     });
+    // 410 means the question timed out or was answered elsewhere. Swallowing it
+    // made a too-late "Allow" look exactly like an approval, so the user watched
+    // for something to happen and nothing did.
+    if (r.status === 410) {
+      renderStopped('That question had already expired, so it was declined.');
+    } else if (!r.ok) {
+      renderError('that answer was not accepted (' + r.status + ')');
+    }
   } catch (err) {
     renderError('could not send that answer: ' + String(err));
   }
@@ -607,8 +664,17 @@ document.addEventListener('keydown', (ev) => {
 function finish() {
   busy = false;
   send.disabled = false;
-  micState('');
+  // Only if the microphone is actually shut. A turn ending while the recorder is
+  // still open — she finishes answering, you tap the mic before the trace
+  // settles — used to put the indicator out while the room was still being
+  // recorded, which is the one light in this window that must never lie.
+  if (!listening) micState('');
   $('stop').hidden = true;
+  // A turn that ends with a question still on screen would leave the modal there
+  // for a turn that is over, and answering it then posts to an id the server has
+  // already forgotten. Anything unanswered is declined, which is the direction
+  // this whole dialog errs in.
+  if (permission) decide(false);
   $('status').textContent = '';
   turnEl?.querySelector('.working')?.remove();
   turnEl = null;
@@ -691,7 +757,11 @@ async function loadHistory() {
       return;
     }
     for (const c of list) {
-      const item = document.createElement('div');
+      // A button, not a div. It behaves like one — click it and the conversation
+      // opens — and built as a div it was unreachable from the keyboard and
+      // announced as nothing by a screen reader.
+      const item = document.createElement('button');
+      item.type = 'button';
       item.className = 'item' + (c.id === current ? ' on' : '');
       item.textContent = c.title;
       item.title = `${c.at} · ${c.turns} turn${c.turns === 1 ? '' : 's'}`;
@@ -728,7 +798,23 @@ async function openConversation(id, title) {
 // just doing. A button that silently threw that away would be worse.
 $('new-chat').addEventListener('click', async () => {
   if (busy) return;
-  try { await fetch('/session', { method: 'POST' }); } catch { /* say it below */ }
+  try {
+    const r = await fetch('/session', { method: 'POST' });
+    // 409 means a terminal session holds the archive, so there is nothing to cut
+    // here. Clearing the thread anyway would show a new conversation that the
+    // rail will never have a row for.
+    if (r.status === 409) {
+      renderStopped('A terminal session has her memory — the conversation was not cut.');
+      return;
+    }
+    if (!r.ok) {
+      renderError('could not start a new conversation (' + r.status + ')');
+      return;
+    }
+  } catch (err) {
+    renderError('could not start a new conversation: ' + String(err));
+    return;
+  }
   thread.textContent = '';
   const empty = document.createElement('div');
   empty.className = 'empty';

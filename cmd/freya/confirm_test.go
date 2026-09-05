@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -311,12 +313,8 @@ func TestTheGuardIsWiredOnceAndOnlyOnce(t *testing.T) {
 // dropped, and nothing errored.
 func TestASpokenExchangeReachesTheWindow(t *testing.T) {
 	w := openTestWindow(t)
-	events := make(chan struct{ kind, text string }, 32)
-	// A second listener on the same server, so this test reads events without
-	// re-implementing the SSE parse in openTestWindow.
 	hub := newTraceHub()
 	hub.Add(windowTrace(w.srv))
-	hub.Add(func(kind, _, text string) { events <- struct{ kind, text string }{kind, text} })
 
 	for _, e := range []struct{ kind, name, text string }{
 		{"listening", "", ""},
@@ -331,39 +329,109 @@ func TestASpokenExchangeReachesTheWindow(t *testing.T) {
 		hub.emit(e.kind, e.name, e.text)
 	}
 
-	// Everything published must be delivered; the mapping is allowed to rename a
-	// kind but never to drop one.
-	got := map[string]bool{}
-	for len(events) > 0 {
-		e := <-events
-		got[e.kind] = true
+	// Read from the WINDOW, not from a sibling subscriber on the same hub. The
+	// first version of this test added a second Add() and asserted against that,
+	// which proves only that the hub fans out — it would have passed with
+	// windowTrace dropping every kind on the floor, which is the exact bug the
+	// test was written for.
+	deadline := time.After(10 * time.Second)
+	want := map[string]string{
+		"listening": "",
+		"heard":     "open my portal",
+		"thought":   "she needs the portal",
+		"tool":      "", // browser_open, twice: start then ok
+		"speaking":  "opening it now",
+		"reply":     "Done — it's open.",
+		"done":      "",
 	}
-	for _, kind := range []string{"listening", "heard", "thought", "tool-start",
-		"tool-ok", "speaking", "spoken", "turn-done"} {
-		if !got[kind] {
-			t.Errorf("%s never left the hub", kind)
-		}
-	}
-
-	// And the window's side of the rename: the transcript arrives as its own kind
-	// so the front end can render it as the user's turn, and the spoken reply
-	// arrives as a reply so it lands in the thread.
-	deadline := time.After(5 * time.Second)
-	want := map[string]string{"heard": "open my portal", "reply": "Done — it's open.", "done": ""}
 	seen := map[string]string{}
 	for len(seen) < len(want) {
 		select {
 		case e := <-w.events:
 			if _, ok := want[e.Kind]; ok {
-				seen[e.Kind] = e.Text
+				if _, already := seen[e.Kind]; !already {
+					seen[e.Kind] = e.Text
+				}
 			}
 		case <-deadline:
-			t.Fatalf("the window only ever saw %v", seen)
+			var missing []string
+			for k := range want {
+				if _, ok := seen[k]; !ok {
+					missing = append(missing, k)
+				}
+			}
+			sort.Strings(missing)
+			t.Fatalf("the window never saw %s — a spoken exchange leaves the thread "+
+				"blank from the moment the microphone opens", strings.Join(missing, ", "))
 		}
 	}
 	for kind, text := range want {
-		if seen[kind] != text {
+		if text != "" && seen[kind] != text {
 			t.Errorf("the window saw %s=%q, want %q", kind, seen[kind], text)
 		}
+	}
+}
+
+// A daemon must not be handed the terminal as a place to ask questions.
+//
+// This shipped, and it was the worst kind of bug: silent, and it inverted the
+// meaning of an answer. isTerminal() tested for a character device and /dev/null
+// IS one, so every detached daemon — daemon.Spawn sets Stdin to nil, and
+// systemd's default is StandardInput=null — installed the terminal prompt. The
+// prompt read /dev/null, got EOF immediately, and returned false; false is how a
+// person says no, so the guard reported "declined by user" for every destructive
+// action, with the microphone that could have asked never reached.
+//
+// A daemon started from a foreground shell was worse still: ReadString blocks
+// with no timeout while guard.Run holds confirmMu, so the turn hangs forever and
+// every later guarded action in the process queues behind it.
+func TestADaemonAsksTheMicrophoneAndNotTheTerminal(t *testing.T) {
+	var asked []string
+	c := &confirmRoutes{}
+	// What run() builds for a daemon: no terminal channel at all.
+	c.terminal = nil
+	c.setVoice(func(context.Context, guard.Action, guard.Assessment) bool {
+		asked = append(asked, "voice")
+		return true
+	})
+
+	if !c.attended() {
+		t.Error("a daemon with a live microphone reported that nobody could be asked")
+	}
+	if !c.confirm(context.Background(), rmAction(), highRisk()) {
+		t.Error("refused, rather than asking the one channel it had")
+	}
+	if len(asked) != 1 || asked[0] != "voice" {
+		t.Errorf("asked %v, want the microphone", asked)
+	}
+}
+
+// And with neither a window nor a microphone, a daemon must say nobody could be
+// asked rather than manufacture a refusal.
+func TestADaemonWithNoChannelIsUnattendedRatherThanRefusing(t *testing.T) {
+	c := newConfirmRoutes(&guard.Guard{}, nil)
+	if c.attended() {
+		t.Error("claimed somebody could be asked with no window, no voice and no terminal; " +
+			"the guard then reports a refusal for a question nobody was shown")
+	}
+}
+
+// isTerminal has to mean "a person could type here", not "this is a character
+// device". /dev/null is a character device.
+func TestDevNullIsNotATerminal(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer null.Close()
+
+	saved := os.Stdin
+	os.Stdin = null
+	defer func() { os.Stdin = saved }()
+
+	if isTerminal() {
+		t.Error("isTerminal() says /dev/null is a terminal. Every detached daemon " +
+			"gets /dev/null on fd 0, so this makes the confirmation prompt read EOF " +
+			"and answer 'no' on behalf of a user who was never asked.")
 	}
 }

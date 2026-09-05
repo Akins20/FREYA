@@ -679,6 +679,13 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	if !takeMic() {
 		return // already recording; two recorders on one device produce nothing
 	}
+	// From here every path out says the exchange is over — deferred rather than
+	// written at each return, because there are seven of them and the ones that
+	// were missed were exactly the unhappy ones. The window lights its
+	// microphone on "listening" and has nothing else to put it out with: a
+	// recorder that failed, a pocket press, an empty transcript all left it
+	// glowing until the page was reloaded.
+	defer v.trace.emit("turn-done", "", "")
 	released := false
 	releaseNow := func() {
 		if !released {
@@ -715,7 +722,6 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	// phantom "Freya". The energy gate stops it here, quietly: no chime, no
 	// hallucinated turn in memory.
 	if !voice.HasSpeechEnergy(ctx, path) {
-		v.trace.emit("turn-done", "", "")
 		return
 	}
 
@@ -723,11 +729,9 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	if err != nil {
 		_ = voice.ChimeError()
 		fmt.Fprintf(os.Stderr, "push-to-talk transcribe: %v\n", err)
-		v.trace.emit("turn-done", "", "")
 		return
 	}
 	if strings.TrimSpace(transcript) == "" {
-		v.trace.emit("turn-done", "", "")
 		return // pressed but said nothing; no chime, no fuss
 	}
 	fmt.Printf("%s  ▸ %s%s\n", cCyan, transcript, cReset)
@@ -746,7 +750,6 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 		msg := stopEverything()
 		fmt.Printf("%s  ⏹ %s%s\n", cYellow, msg, cReset)
 		v.trace.emit("spoken", "", msg)
-		v.trace.emit("turn-done", "", "")
 		// Urgent: it cuts through whatever she was mid-sentence on, which is the
 		// point — the user just asked her to stop and is waiting to hear it landed.
 		v.speak(context.Background(), voice.Urgent, msg)
@@ -760,7 +763,6 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 
 	res, err := a.Ask(turnCtx, transcript)
 	if err != nil {
-		v.trace.emit("turn-done", "", "")
 		if turnCtx.Err() != nil {
 			return // interrupted on purpose; the interrupter already spoke
 		}
@@ -770,9 +772,12 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	}
 	fmt.Printf("\n%s\n\n", res.Reply)
 	v.trace.emit("spoken", "", res.Reply)
-	_ = v.session.Speak(ctx, res.Reply)
+	// Through voiceState, never the session directly: the Speaker is the single
+	// audio gate, and it is what reports that she has started and stopped
+	// talking. Going round it left the window's speaking indicator dark for the
+	// entire spoken reply.
+	v.speak(ctx, voice.Reply, res.Reply)
 	_ = voice.ChimeDone()
-	v.trace.emit("turn-done", "", "")
 }
 
 // clipLine shortens an utterance for describing what is being worked on.
@@ -885,11 +890,13 @@ func (v *voiceState) speak(ctx context.Context, pri voice.Priority, text string)
 	if v.session.OnSpeaking != nil {
 		v.session.OnSpeaking(text)
 	}
-	// Published here rather than at the callers: this is the one path to the
-	// audio device, so it is the only place the indicator cannot be wrong.
-	v.trace.emit("speaking", "", text)
+	// The "speaking" trace is NOT emitted here. It was, and it was wrong: this
+	// method is one of several ways to reach the device, and the one the spoken
+	// reply does not use — pushToTalk speaks through session.Speak, so the
+	// indicator was dark for the whole of the exchange the window's microphone
+	// button exists for, and lit only for a typed turn with voice on. It is
+	// emitted from Speaker.OnSpeaking now, which every path passes through.
 	said, _ := v.speaker.Say(ctx, pri, text)
-	v.trace.emit("speaking", "", "")
 	return said
 }
 

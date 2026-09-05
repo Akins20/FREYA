@@ -51,6 +51,17 @@ func (p Priority) String() string {
 type Speaker struct {
 	synth Synthesizer
 
+	// OnSpeaking reports when audio starts and stops, with the text at the start
+	// and empty at the end. Optional; set once before anything speaks.
+	//
+	// It lives here rather than on Session because this is the one place every
+	// utterance passes through. Session.Speak has its own OnSpeaking hook, and
+	// wiring that one covers only the callers that hold a Session — not the
+	// notifier, not the interim narration, not a background report. Worse, it
+	// fires once at the start and has no way to say "and now she has stopped",
+	// which is exactly half of what an indicator needs.
+	OnSpeaking func(speaking bool, text string)
+
 	mu   sync.Mutex
 	free *sync.Cond
 	// speaking is what is being said right now, and how to cut it off.
@@ -113,8 +124,15 @@ func (s *Speaker) Say(ctx context.Context, pri Priority, text string) (bool, err
 
 	sayCtx, cancel := context.WithCancel(ctx)
 	s.speaking, s.priority, s.stop = true, pri, cancel
+	notify := s.OnSpeaking
 	s.mu.Unlock()
 
+	// Outside the lock: a subscriber that emitted into a channel while holding
+	// the audio device would let a slow reader stall everything else waiting to
+	// speak.
+	if notify != nil {
+		notify(true, text)
+	}
 	err := s.synth.Say(sayCtx, text)
 	preempted := sayCtx.Err() != nil && ctx.Err() == nil
 	cancel()
@@ -123,6 +141,9 @@ func (s *Speaker) Say(ctx context.Context, pri Priority, text string) (bool, err
 	s.speaking, s.stop = false, nil
 	s.free.Broadcast()
 	s.mu.Unlock()
+	if notify != nil {
+		notify(false, "")
+	}
 
 	if preempted {
 		return false, nil
