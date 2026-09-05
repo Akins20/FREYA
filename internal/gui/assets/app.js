@@ -237,9 +237,112 @@ function connect() {
       case 'reply':    renderReply(e.text); break;
       case 'error':    renderError(e.text); break;
       case 'done':     finish(); break;
+      case 'confirm':         askPermission(e.text); break;
+      case 'confirm-timeout': closePermission(e.text); break;
     }
   };
 }
+
+
+// ---- asking permission ----------------------------------------------------
+//
+// The guard stops before anything destructive and asks. In a terminal that is a
+// prompt; here it is this. Three things are carried over from the terminal
+// version deliberately, because each of them was a decision:
+//
+//   - The preview is the safety feature. "Delete 4,312 files totalling 8.2 GB"
+//     is a decision; "Are you sure?" is a reflex. So the effect gets the most
+//     visual weight, not the buttons.
+//   - A destructive action needs the word "yes" typed in full. Muscle memory
+//     clicks the primary button before the eyes have finished reading, and that
+//     is exactly the moment this exists to catch.
+//   - Silence is a no, and the countdown says so out loud. A timeout that looks
+//     identical to a refusal is how she learns the window always says no.
+
+let permission = null;   // the question on screen
+let permissionTick = 0;  // its countdown timer
+
+function askPermission(raw) {
+  let p;
+  try { p = JSON.parse(raw); } catch { return; }
+
+  // One at a time. A second question while one is up would replace it and the
+  // first would time out unanswered, which is a silent refusal.
+  if (permission) return;
+  permission = p;
+
+  $('confirm-risk').textContent = p.risk || 'risk';
+  $('confirm-risk').className = 'risk ' + (p.risk === 'destructive' ? 'high' : 'mid');
+  $('confirm-cmd').textContent = p.command || '';
+  const why = $('confirm-why');
+  why.textContent = p.reason ? 'She says: ' + p.reason : '';
+  why.hidden = !p.reason;
+  const effect = $('confirm-effect');
+  effect.textContent = p.preview || '';
+  effect.hidden = !p.preview;
+
+  const destructive = p.risk === 'destructive';
+  const typed = $('confirm-typed');
+  const word = $('confirm-word');
+  typed.hidden = !destructive;
+  word.value = '';
+  $('confirm-yes').disabled = destructive;
+  $('confirm-yes').textContent = destructive ? 'Allow anyway' : 'Allow';
+
+  $('confirm-veil').hidden = false;
+  (destructive ? word : $('confirm-no')).focus();
+
+  let left = p.seconds || 0;
+  const clock = $('confirm-clock');
+  const show = () => {
+    if (left <= 0) { clock.textContent = ''; return; }
+    const m = Math.floor(left / 60), sec = String(left % 60).padStart(2, '0');
+    clock.textContent = m + ':' + sec + ' left';
+  };
+  show();
+  clearInterval(permissionTick);
+  permissionTick = setInterval(() => { left -= 1; show(); if (left <= 0) clearInterval(permissionTick); }, 1000);
+}
+
+function closePermission(id) {
+  // Guarded by id: a timeout for a question already answered must not tear down
+  // the one now on screen.
+  if (!permission || (id && id !== permission.id)) return;
+  clearInterval(permissionTick);
+  permission = null;
+  $('confirm-veil').hidden = true;
+  input.focus();
+}
+
+async function decide(ok) {
+  if (!permission) return;
+  const id = permission.id;
+  closePermission(id);
+  try {
+    await fetch('/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ok }),
+    });
+  } catch (err) {
+    renderError('could not send that answer: ' + String(err));
+  }
+}
+
+$('confirm-no').addEventListener('click', () => decide(false));
+$('confirm-yes').addEventListener('click', () => decide(true));
+$('confirm-word').addEventListener('input', (ev) => {
+  $('confirm-yes').disabled = ev.target.value.trim().toLowerCase() !== 'yes';
+});
+$('confirm-word').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && !$('confirm-yes').disabled) { ev.preventDefault(); decide(true); }
+});
+// Escape declines. Anything unparsed is a no, in the window as at the prompt —
+// a dialog that treats ambiguity as consent is worse than no dialog, because it
+// looks like a safeguard.
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && permission) { ev.preventDefault(); decide(false); }
+});
 
 function finish() {
   busy = false;

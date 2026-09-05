@@ -96,6 +96,34 @@ func main() {
 		return
 	}
 
+	// -gui is a launcher, not a session. It asks the process that already owns
+	// the archive where its window is and opens that — see attachWindow for why
+	// serving one from here would take her memory off the daemon.
+	//
+	// With -daemon it means the other thing: serve the window from this process.
+	// That combination falls through to run().
+	if *window && !*daemonize {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		if *provider != "" || *model != "" {
+			// Worth saying rather than silently ignoring: these configure an agent,
+			// and the agent behind the window is the daemon's, started with its own
+			// environment. FREYA_PROVIDER in the environment does reach it.
+			fmt.Fprintf(os.Stderr, "%sfreya: -provider/-model do not reach the window; "+
+				"the daemon's own settings apply%s\n", cYellow, cReset)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := attachWindow(ctx, cfg.DataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize, *autonomy, *window); err != nil {
 		fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
 		os.Exit(1)
@@ -171,10 +199,21 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	defer auditLog.Close()
 
-	g := guard.New(confirmPrompt(stdin), auditLog)
-	// A piped or headless session has nobody to ask. It must still refuse — but
-	// as "nobody could be asked", not as a refusal somebody made.
-	attend(g, isTerminal())
+	g := guard.New(nil, auditLog)
+	// One router, installed once, before anything can run an action. Voice and
+	// the window register with it as they come up; nothing after this point
+	// assigns g.Confirm or g.Attended, which the guard reads without a lock.
+	//
+	// A piped or headless session with no window and no microphone has nobody to
+	// ask. It must still refuse — but as "nobody could be asked", not as a
+	// refusal somebody made.
+	var terminalConfirm guard.ConfirmFunc
+	if isTerminal() {
+		// One stdin reader shared with the REPL, so the prompt and the input line
+		// never race for the same bytes.
+		terminalConfirm = confirmPrompt(stdin)
+	}
+	confirms := newConfirmRoutes(g, terminalConfirm)
 	g.DryRun = cfg.DryRun
 	g.ProtectedPaths = []string{cfg.DataDir}
 	// The directory she was given as her own. A write confined to it is low risk;
@@ -517,8 +556,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 				// There is a channel to a human after all — she asks aloud and
 				// listens. Attendance is about whether anyone can be reached, not
 				// about stdin, so it is cleared along with the prompt.
-				g.Confirm = voiceConfirm(vs)
-				g.Attended = nil
+				confirms.setVoice(voiceConfirm(vs))
 			}
 			d.Speak = func(text string) {
 				go func() { _ = vs.session.Speak(context.Background(), text) }()
@@ -758,6 +796,37 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		fmt.Printf("%sFreya daemon: %d watchers, chattiness %s, %s, socket %s%s\n",
 			cDim, len(sen.Watchers()), sen.Chattiness, listening,
 			daemon.SocketPath(cfg.DataDir), cReset)
+		// The window, served by the process that owns the archive. It is started
+		// unconditionally rather than behind -gui, because `freya -gui` from another
+		// shell asks this daemon for the address — and a daemon that only serves one
+		// when it happened to be started with the flag makes that a coin toss. The
+		// cost of having it up is one loopback listener; nothing is opened until
+		// somebody asks.
+		src := &guiSources{
+			cfg: cfg, agent: a, notes: notebook, tasks: selfTasks,
+			sentinel: sen, tabs: browserTabs, terminals: terminals, voice: vs,
+		}
+		srv, url, gerr := serveGUI(ctx, a, store, src)
+		if gerr != nil {
+			// Not fatal: the daemon's real job is the watchers, and losing a port
+			// must not stop them.
+			fmt.Fprintf(os.Stderr, "%swindow: %v%s\n", cYellow, gerr, cReset)
+		} else {
+			d.Window = func() (string, error) { return url, nil }
+			// And the window becomes a place a question can be asked. Without this
+			// every destructive action in a daemon session came back refused with
+			// the user sitting in front of her, because the guard was deciding
+			// attendance by whether stdin is a terminal.
+			confirms.setWindow(srv)
+			fmt.Printf("%s  %s%s\n", cDim, guiBanner(url), cReset)
+			if window {
+				if oerr := openWindow(ctx, url, cfg.DataDir); oerr != nil {
+					fmt.Fprintf(os.Stderr, "%s  could not open a window (%v) — the address "+
+						"above still works%s\n", cYellow, oerr, cReset)
+				}
+			}
+		}
+
 		return d.Run(ctx)
 	}
 
@@ -823,20 +892,6 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	defer ind.close()
 	if vs != nil {
 		vs.indicator = ind
-	}
-
-	// The window, when asked for. It runs alongside the REPL rather than instead
-	// of it: the same agent answers both, and the terminal stays where the tool
-	// trace and any confirmation still go — so nothing is lost by preferring the
-	// window, and a turn started in one is visible in the other.
-	if window {
-		src := &guiSources{
-			cfg: cfg, agent: a, notes: notebook, tasks: selfTasks,
-			sentinel: sen, tabs: browserTabs, terminals: terminals, voice: vs,
-		}
-		if err := startGUI(ctx, a, store, src, cfg.DataDir); err != nil {
-			return err
-		}
 	}
 
 	return repl(ctx, a, cfg, store, index, persona, vs, stdin, sen, ind)

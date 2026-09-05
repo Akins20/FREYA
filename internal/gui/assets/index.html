@@ -61,6 +61,29 @@
     <div id="hint">Enter to send · Shift+Enter for a new line</div>
   </main>
 
+  <div id="confirm-veil" class="veil" hidden>
+    <div id="confirm" class="sheet" role="alertdialog" aria-modal="true"
+         aria-labelledby="confirm-head">
+      <div class="sheet-head">
+        <span id="confirm-risk" class="risk"></span>
+        <span id="confirm-head">She wants to do this</span>
+        <span id="confirm-clock" class="clock"></span>
+      </div>
+      <pre id="confirm-cmd" class="cmd"></pre>
+      <div id="confirm-why" class="why"></div>
+      <div id="confirm-effect" class="effect"></div>
+      <label id="confirm-typed" class="typed" hidden>
+        This cannot be undone. Type <b>yes</b> to allow it.
+        <input id="confirm-word" type="text" autocomplete="off" spellcheck="false"
+               aria-label="Type yes to allow">
+      </label>
+      <div class="sheet-foot">
+        <button id="confirm-no" class="ghost" type="button">Don't</button>
+        <button id="confirm-yes" class="danger" type="button">Allow</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 <script src="app.js"></script>
 </body>

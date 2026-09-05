@@ -474,12 +474,31 @@ func writeJSON(w http.ResponseWriter, v any) {
 // ---- asking permission in the window -------------------------------------
 
 // Pending is a confirmation waiting on the person in front of the window.
+//
+// Seconds carries how long is left rather than an absolute time: the window's
+// clock and this process's clock are the same clock, but the event may sit in a
+// buffered channel for a moment, and a countdown that starts from "now, when I
+// received it" is only ever generous by that moment. An absolute timestamp
+// crossing JSON invites a timezone bug for nothing.
 type Pending struct {
 	ID      string `json:"id"`
 	Command string `json:"command"`
 	Reason  string `json:"reason"`
 	Risk    string `json:"risk"`
 	Preview string `json:"preview"`
+	Seconds int    `json:"seconds"`
+}
+
+// HasWindow reports whether anyone is looking.
+//
+// The guard needs this separately from Confirm, for the reason attend() in
+// cmd/freya/confirm.go was written down: "nobody could be asked" and "somebody
+// said no" are different answers, and collapsing them makes her report a refusal
+// for an action no person ever saw.
+func (s *Server) HasWindow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.subs) > 0
 }
 
 // Confirm asks the window and blocks until it answers.
@@ -498,12 +517,18 @@ type Pending struct {
 // turn blocked forever on a question nobody will see is worse than a refusal:
 // the refusal at least says so. Silence after a minute is read as no, which is
 // the safe direction and the one the guard already takes when it cannot ask.
-func (s *Server) Confirm(ctx context.Context, command, reason, risk, preview string) bool {
+// The second return value is the one that matters: false means the question was
+// never put, so the caller should try another channel rather than treat this as
+// a refusal.
+func (s *Server) Confirm(ctx context.Context, command, reason, risk, preview string) (ok, asked bool) {
 	s.mu.Lock()
 	if len(s.subs) == 0 {
-		// No window open. Not this channel's question to answer.
+		// No window open. Not this channel's question to answer — and saying so
+		// is the whole point of the second return value. Returning a bare false
+		// here made a closed window indistinguishable from a person clicking
+		// "no", so a daemon with voice available never got to ask aloud.
 		s.mu.Unlock()
-		return false
+		return false, false
 	}
 	s.confirmSeq++
 	id := fmt.Sprintf("c%d", s.confirmSeq)
@@ -520,26 +545,35 @@ func (s *Server) Confirm(ctx context.Context, command, reason, risk, preview str
 		s.mu.Unlock()
 	}()
 
-	body, _ := json.Marshal(Pending{ID: id, Command: command, Reason: reason, Risk: risk, Preview: preview})
+	body, _ := json.Marshal(Pending{ID: id, Command: command, Reason: reason,
+		Risk: risk, Preview: preview, Seconds: int(confirmWait / time.Second)})
 	s.Emit(Event{Kind: "confirm", Text: string(body)})
 
 	select {
-	case ok := <-answer:
-		return ok
+	case answered := <-answer:
+		return answered, true
 	case <-ctx.Done():
-		return false
+		// The turn was called off, not refused — but the caller is going away
+		// either way, so there is nothing left to route to.
+		return false, true
 	case <-time.After(confirmWait):
 		s.Emit(Event{Kind: "confirm-timeout", Text: id})
-		return false
+		// Asked, and not answered. A window that is open but unattended is a
+		// person who walked away, which is a no — not a reason to go and ask the
+		// same question again over the speakers.
+		return false, true
 	}
 }
 
 // confirmWait is how long a question waits for a person.
 //
-// Long enough to read a preview and think; short enough that a turn does not
-// hang until someone notices. The guard's answer when nobody replies is the same
-// as its answer when nobody can be asked, which is no.
-const confirmWait = 90 * time.Second
+// Five minutes, not the ninety seconds this started at. Ninety is less time than
+// it takes to read a preview of four thousand files, decide, and click — and a
+// timeout is indistinguishable from a refusal to the model, so the too-short
+// version quietly taught her that the window says no. The countdown is sent with
+// the question (Pending.Seconds) so the silence at least has a visible clock on
+// it.
+const confirmWait = 5 * time.Minute
 
 // answer takes the window's yes or no.
 func (s *Server) answer(w http.ResponseWriter, r *http.Request) {

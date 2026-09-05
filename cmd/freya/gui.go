@@ -12,6 +12,7 @@ import (
 
 	"github.com/Akins20/FREYA/internal/agent"
 	"github.com/Akins20/FREYA/internal/browser"
+	"github.com/Akins20/FREYA/internal/daemon"
 	"github.com/Akins20/FREYA/internal/gui"
 	"github.com/Akins20/FREYA/internal/memory"
 	"github.com/Akins20/FREYA/internal/voice"
@@ -61,15 +62,25 @@ func (a archiveReader) Turns() []gui.Turn {
 // agents on one archive interleave their turns and corrupt the transcript and
 // the cached prefix together.
 type guiAsker struct {
-	a  *agent.Agent
-	s  *gui.Server
-	vs *voiceState
-	mu sync.Mutex
+	a     *agent.Agent
+	s     *gui.Server
+	vs    *voiceState
+	store *memory.Store
+	mu    sync.Mutex
 }
 
 func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// The daemon serves this window, and a terminal session takes the archive off
+	// the daemon while it runs (Store.Suspend). Asked at the top rather than
+	// discovered at the bottom: without this the turn does all its work and then
+	// loses the reply to ErrSuspended on the final append.
+	if g.store != nil && !g.store.Writing() {
+		return "", fmt.Errorf("a terminal session has her memory at the moment — " +
+			"close it and this window picks straight back up")
+	}
 
 	// Registered like every other exchange, so that a turn started in the window
 	// is one the rest of her can see: Ctrl-C reaches it, the spoken "stop"
@@ -99,34 +110,76 @@ func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
 	return res.Reply, nil
 }
 
-// startGUI serves the window and opens it.
-func startGUI(ctx context.Context, a *agent.Agent, store *memory.Store, src *guiSources, dataDir string) error {
+// serveGUI starts the window server on the agent that already owns the archive
+// and returns its address, token and all. It opens nothing: who does the opening
+// differs between the daemon (which serves it and may be asked to) and the
+// launcher (which only opens), and folding the two together is what produced a
+// second agent on the same store.
+func serveGUI(ctx context.Context, a *agent.Agent, store *memory.Store, src *guiSources) (*gui.Server, string, error) {
 	srv, err := gui.New(nil)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	srv.SetAsker(&guiAsker{a: a, s: srv, vs: src.voice})
+	srv.SetAsker(&guiAsker{a: a, s: srv, vs: src.voice, store: store})
 	srv.SetReader(archiveReader{store: store})
 	srv.SetState(src.state)
 
 	url, err := srv.Listen()
 	if err != nil {
-		return fmt.Errorf("the window could not take a port: %w", err)
+		return nil, "", fmt.Errorf("the window could not take a port: %w", err)
 	}
 	go func() {
 		if err := srv.Serve(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "%swindow: %v%s\n", cRed, err, cReset)
 		}
 	}()
+	return srv, url, nil
+}
 
-	fmt.Printf("%s  window at %s%s\n", cDim, url, cReset)
-	if err := openWindow(ctx, url, dataDir); err != nil {
-		// Not fatal. The server is up and the address is printed, so a browser
-		// opened by hand still reaches it — which is a worse experience and not a
-		// failure of the thing that matters.
-		fmt.Fprintf(os.Stderr, "%s  could not open a window (%v) — paste the address above "+
-			"into a browser%s\n", cYellow, err, cReset)
+// attachWindow is what `freya -gui` does, and it is deliberately almost nothing:
+// find the process that owns the archive, ask it where its window is, open that,
+// and exit.
+//
+// # Why the launcher is not the program
+//
+// The obvious shape — -gui builds an agent and serves a window — is the bug
+// internal/memory/journal.go warns about. Starting a session while the daemon is
+// up makes the daemon yield the store (main.go's d.Yield), so the window you
+// just opened is served by a process that took her memory away from the one that
+// was already running her. Two windows would be two agents on one append-only
+// archive, interleaving turns and collapsing each other's prompt cache.
+//
+// So the window belongs to the daemon, and this is a remote control for it. It
+// builds no agent, loads no provider, and touches no store — which is also why
+// it opens in well under a second rather than the several a full startup takes.
+func attachWindow(ctx context.Context, dataDir string) error {
+	if !daemon.Running(dataDir) {
+		fmt.Printf("%s  no daemon running — starting one%s\n", cDim, cReset)
+		if err := daemon.Spawn(ctx, dataDir, 20*time.Second); err != nil {
+			return err
+		}
 	}
+
+	reply, err := daemon.Ask(dataDir, "window")
+	if err != nil {
+		return fmt.Errorf("ask the daemon for its window: %w", err)
+	}
+	if !reply.OK || reply.Window == nil {
+		msg := reply.Message
+		if msg == "" {
+			msg = "the daemon gave no address"
+		}
+		return fmt.Errorf("%s", msg)
+	}
+
+	if err := openWindow(ctx, reply.Window.URL, dataDir); err != nil {
+		// The server is up regardless, so an address is still worth something:
+		// a browser opened by hand reaches the same window.
+		fmt.Fprintf(os.Stderr, "%s  could not open a window (%v) — paste this into a "+
+			"browser:%s\n  %s\n", cYellow, err, cReset, reply.Window.URL)
+		return nil
+	}
+	fmt.Printf("%s  %s (daemon pid %d)%s\n", cDim, guiBanner(reply.Window.URL), reply.Window.PID, cReset)
 	return nil
 }
 
@@ -186,5 +239,5 @@ func guiBanner(url string) string {
 	if i := strings.Index(at, "/?t="); i > 0 {
 		at = at[:i]
 	}
-	return fmt.Sprintf("window on %s — this terminal stays live for tracing", at)
+	return fmt.Sprintf("window on %s", at)
 }

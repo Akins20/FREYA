@@ -162,6 +162,11 @@ func (s *Store) Resume() error {
 }
 
 // Writing reports whether this process currently holds the write handle.
+//
+// The window asks before starting a turn. Without it, a turn begun while the
+// daemon has yielded the store runs the whole way — the model call, every tool,
+// the reply — and then fails on the final AppendTurn, which is the most
+// expensive possible place to discover that somebody opened a terminal.
 func (s *Store) Writing() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

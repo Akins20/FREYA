@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -116,5 +117,126 @@ func TestOnlyCriticalObservationsAreSpoken(t *testing.T) {
 
 	if len(said) != 1 || said[0] != "something is due in 10 minutes" {
 		t.Errorf("spoke %v, want only the critical one", said)
+	}
+}
+
+// runDaemon starts one on a temp data dir and waits for its socket to answer.
+func runDaemon(t *testing.T, d *Daemon) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("daemon did not stop")
+		}
+	})
+	for i := 0; i < 100; i++ {
+		if Running(d.DataDir) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("daemon never answered its socket")
+}
+
+// The window belongs to whoever owns the archive, so `freya -gui` gets the
+// address by asking rather than by serving one itself. If this command does not
+// answer, the launcher's only remaining option is to build its own agent — which
+// is the two-writers-on-one-archive bug internal/memory/journal.go warns about.
+func TestTheSocketHandsOutTheWindowAddress(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	d := New(dir, sentinel.New(sentinel.ChattyQuiet, nil))
+	d.Quiet = true
+	d.Window = func() (string, error) { return "http://127.0.0.1:41234/?t=abc123", nil }
+	runDaemon(t, d)
+
+	reply, err := Ask(dir, "window")
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !reply.OK {
+		t.Fatalf("refused: %s", reply.Message)
+	}
+	if reply.Window == nil {
+		t.Fatal("no window in the reply; the launcher has nothing to open")
+	}
+	if reply.Window.URL != "http://127.0.0.1:41234/?t=abc123" {
+		t.Errorf("url = %q", reply.Window.URL)
+	}
+	// The token is what makes the address usable, so it must survive the round
+	// trip intact — a truncated one opens a window that 403s on every request.
+	if !strings.Contains(reply.Window.URL, "?t=abc123") {
+		t.Error("the token did not survive the socket")
+	}
+	if reply.Window.PID != os.Getpid() {
+		t.Errorf("pid = %d, want this process %d", reply.Window.PID, os.Getpid())
+	}
+}
+
+// A daemon with no window must say so rather than answer OK with an empty
+// address: the launcher would then open Chrome on "" and the user gets a blank
+// application window with no clue why.
+func TestADaemonWithoutAWindowSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	d := New(dir, sentinel.New(sentinel.ChattyQuiet, nil))
+	d.Quiet = true
+	runDaemon(t, d)
+
+	reply, err := Ask(dir, "window")
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if reply.OK {
+		t.Error("claimed to serve a window with no Window func set")
+	}
+	if reply.Window != nil {
+		t.Errorf("handed out an address anyway: %+v", reply.Window)
+	}
+	if reply.Message == "" {
+		t.Error("refused without saying why")
+	}
+}
+
+// Spawn is what turns `freya -gui` on a cold machine into a running assistant.
+// The failure it must not have is the silent one: reporting success on a daemon
+// that never came up, so the launcher goes on to ask an absent socket for an
+// address and reports that instead.
+func TestSpawnReportsADaemonThatNeverAnswers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	// os.Executable() here is the test binary, which ignores -daemon and exits.
+	// That is exactly the shape being tested: something started, nothing listened.
+	err := Spawn(context.Background(), dir, 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("reported success for a daemon that never answered its socket")
+	}
+	if !strings.Contains(err.Error(), "daemon.log") {
+		t.Errorf("the error does not say where to look: %v", err)
+	}
+}
+
+// And the other half: with one already up, Spawn must not start a second. Two
+// daemons on one data dir race for the socket and for the archive.
+func TestSpawnDoesNothingWhenSheIsAlreadyRunning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	d := New(dir, sentinel.New(sentinel.ChattyQuiet, nil))
+	d.Quiet = true
+	runDaemon(t, d)
+
+	// A zero deadline: reaching the poll loop at all would fail here, so this
+	// also pins that the check happens before anything is started.
+	if err := Spawn(context.Background(), dir, 0); err != nil {
+		t.Fatalf("refused to accept the daemon that is already up: %v", err)
 	}
 }

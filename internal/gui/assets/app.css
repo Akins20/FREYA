@@ -19,6 +19,10 @@
   --text:    var(--warm);
   --text-2:  var(--warm-2);
   --edge:    var(--line);
+  /* Danger has a name now. The tool trace and the failure block each carried
+     their own hex before there was anything that had to agree with them; the
+     confirmation sheet is that thing. */
+  --bad:     #d2694f;
   --radius:  10px;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
@@ -33,6 +37,7 @@
   --mute:   #857c70;
   --edge:   #ded5c7;
   --amber:  #b8791a;
+  --bad:    #b8452a;
 }
 
 * { box-sizing: border-box; }
@@ -249,7 +254,7 @@ details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
 .step .name { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
 .step .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mute); flex: none; }
 .step.ok  .dot { background: var(--amber); }
-.step.bad .dot { background: #d2694f; }
+.step.bad .dot { background: var(--bad); }
 
 .working { display: flex; align-items: center; gap: 9px; color: var(--mute); font-size: 13px; }
 .working .pulse {
@@ -321,3 +326,118 @@ details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
 @media (max-width: 720px) {
   #sidebar { display: none; }
 }
+
+/* ---- asking permission --------------------------------------------------- */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(2px);
+  z-index: 40;
+}
+.veil[hidden] { display: none; }
+
+.sheet {
+  width: min(560px, 100%);
+  max-height: 84vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+  padding: 18px 20px 16px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.sheet-head .clock {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.risk {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.risk.mid  { color: var(--amber); }
+.risk.high { color: var(--bad); }
+
+/* The command, verbatim and wrapped — never truncated. A confirmation that
+   hides the tail of what it is confirming is worse than none. */
+.sheet .cmd {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sheet .why { color: var(--mute); font-size: 13px; margin-bottom: 8px; }
+.sheet .why[hidden], .sheet .effect[hidden] { display: none; }
+
+/* The preview carries the weight, because it is the thing being decided. */
+.sheet .effect {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--amber);
+  background: var(--raised);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.sheet .typed {
+  display: block;
+  font-size: 13px;
+  color: var(--bad);
+  margin-bottom: 14px;
+}
+.sheet .typed[hidden] { display: none; }
+.sheet .typed input {
+  display: block;
+  margin-top: 8px;
+  width: 140px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.sheet-foot { display: flex; justify-content: flex-end; gap: 10px; }
+
+.sheet-foot .danger {
+  padding: 8px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--bad);
+  background: var(--bad);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sheet-foot .danger:disabled { opacity: .4; cursor: not-allowed; }
+.sheet-foot .ghost { padding: 8px 16px; }

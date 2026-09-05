@@ -83,8 +83,15 @@ type Request struct {
 }
 
 // Reply is the daemon's answer.
+// Window is where the daemon's window is served.
+type Window struct {
+	URL string `json:"url"`
+	PID int    `json:"pid"`
+}
+
 type Reply struct {
 	OK           bool                   `json:"ok"`
+	Window       *Window                `json:"window,omitempty"`
 	Message      string                 `json:"message,omitempty"`
 	Observations []sentinel.Observation `json:"observations,omitempty"`
 	Status       *Status                `json:"status,omitempty"`
@@ -119,6 +126,15 @@ type Daemon struct {
 	// Talk starts one push-to-talk exchange, triggered through the socket by a
 	// desktop keybinding. Nil when voice is unavailable.
 	Talk func()
+	// Window returns the address of the window this daemon serves, token and
+	// all. Nil when no window server started.
+	//
+	// A function rather than a *gui.Server, for the same reason Speak and Talk
+	// are functions: this package is the lifecycle layer and imports only
+	// sentinel. Depending on internal/gui would drag an HTTP server and the
+	// embedded page into every daemon build, and point the dependency the wrong
+	// way round.
+	Window func() (string, error)
 
 	// yielded tracks whether a session currently holds the store, so that two
 	// sessions opening in succession do not resume the daemon between them.
@@ -344,6 +360,22 @@ func (d *Daemon) serve(conn net.Conn) {
 			d.Resume()
 		}
 		writeReply(conn, Reply{OK: true, Message: "resumed"})
+
+	case "window":
+		// The window is served by whoever owns the archive, which is this process.
+		// A second process opening its own would take the store away — see the
+		// yield handling above and internal/memory/journal.go.
+		if d.Window == nil {
+			writeReply(conn, Reply{OK: false,
+				Message: "this daemon serves no window"})
+			return
+		}
+		url, err := d.Window()
+		if err != nil {
+			writeReply(conn, Reply{OK: false, Message: err.Error()})
+			return
+		}
+		writeReply(conn, Reply{OK: true, Window: &Window{URL: url, PID: os.Getpid()}})
 
 	case "talk":
 		// Push-to-talk, triggered from outside. The X server on this hardware
