@@ -417,6 +417,11 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// the window swapped them per turn, writing fields another goroutine was
 	// reading. See trace.go.
 	trace := newTraceHub()
+	if vs != nil {
+		// So a spoken exchange reaches whoever is watching one. Set here rather
+		// than in setupVoice because the hub does not exist that early.
+		vs.trace = trace
+	}
 	a.OnThought = func(text string) { trace.emit("thought", "", text) }
 	a.OnInterim = func(text string) { trace.emit("interim", "", text) }
 	a.OnTool = func(event, name, detail string) {
@@ -806,7 +811,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			cfg: cfg, agent: a, notes: notebook, tasks: selfTasks,
 			sentinel: sen, tabs: browserTabs, terminals: terminals, voice: vs,
 		}
-		srv, url, gerr := serveGUI(ctx, a, store, src)
+		srv, url, gerr := serveGUI(ctx, a, store, src, trace)
 		if gerr != nil {
 			// Not fatal: the daemon's real job is the watchers, and losing a port
 			// must not stop them.

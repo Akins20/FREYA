@@ -40,6 +40,20 @@ type traceHub struct {
 //	tool-start   a tool was called; name is set, text is the arguments
 //	tool-ok      it succeeded
 //	tool-error   it failed; text is why
+//
+// A spoken exchange publishes the same way, because from the window's side a
+// voice turn and a typed one are the same turn arriving through a different
+// door — and if they did not share a channel, pressing the microphone would
+// leave the thread blank while she worked:
+//
+//	listening    the microphone is open
+//	heard        what she heard; this is the user's turn
+//	speaking     she has started saying this out loud
+//	spoken       the reply that ended the exchange
+//	turn-done    the exchange finished, however it finished
+//
+// The terminal subscriber ignores the voice kinds — it prints them itself, on
+// the path that produced them, and printing twice is worse than not at all.
 type TraceFunc func(kind, name, text string)
 
 func newTraceHub() *traceHub { return &traceHub{subs: map[int]TraceFunc{}} }
@@ -76,6 +90,12 @@ func (h *traceHub) Add(fn TraceFunc) (remove func()) {
 // blocks is a subscriber that is wrong. The window's subscriber hands off to a
 // non-blocking channel of its own; that is where the decoupling belongs.
 func (h *traceHub) emit(kind, name, text string) {
+	// Nil-safe: voiceState carries a hub that is only set once one exists, and a
+	// spoken exchange in a session that never built one must still work rather
+	// than take the process down.
+	if h == nil {
+		return
+	}
 	h.mu.RLock()
 	subs := make([]TraceFunc, 0, len(h.subs))
 	for _, fn := range h.subs {

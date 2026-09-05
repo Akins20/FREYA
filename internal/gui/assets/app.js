@@ -5,7 +5,17 @@
 // side, because a second copy of that in here would be a second answer.
 'use strict';
 
-const $ = (id) => document.getElementById(id);
+// A missing element is a null dereference, and inside an async handler the
+// rejection goes nowhere — which is how the whole activity panel once shipped
+// absent with no error anywhere. Say so instead.
+const $ = (id) => {
+  const el = document.getElementById(id);
+  if (!el) console.error('freya: the page has no #' + id);
+  return el;
+};
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('freya: unhandled', e.reason);
+});
 const thread = $('thread');
 const input = $('input');
 const send = $('send');
@@ -222,10 +232,22 @@ function connect() {
   const conn = $('conn');
   const src = new EventSource('/events');
 
-  src.onopen = () => { conn.textContent = 'connected'; conn.className = 'conn live'; };
+  src.onopen = () => {
+    conn.textContent = 'connected';
+    conn.className = 'conn live';
+    document.body.classList.remove('offline');
+    pollState();
+  };
   src.onerror = () => {
-    conn.textContent = 'reconnecting'; conn.className = 'conn gone';
+    conn.textContent = 'reconnecting';
+    conn.className = 'conn gone';
     // EventSource retries on its own; saying so is the whole job here.
+    //
+    // The panels are marked stale as well. They keep showing whatever they last
+    // read, which is right — throwing the numbers away would be worse — but a
+    // status display that goes on looking live while its source is gone is the
+    // exact failure it exists to prevent.
+    document.body.classList.add('offline');
   };
   src.onmessage = (m) => {
     let e;
@@ -239,10 +261,248 @@ function connect() {
       case 'done':     finish(); break;
       case 'confirm':         askPermission(e.text); break;
       case 'confirm-timeout': closePermission(e.text); break;
+      case 'listening':       micState('listening'); break;
+      case 'heard':           spokenTurn(e.text); break;
+      case 'speaking':        micState(e.text ? 'speaking' : ''); break;
     }
   };
 }
 
+
+
+
+// ---- talking to her -------------------------------------------------------
+//
+// The window has no microphone of its own. It presses a button and the process
+// that owns the archive does the recording, the transcription, the speaker
+// verification and the speaking — the same pipeline the Ctrl+Space hotkey uses.
+// A microphone opened in here would be a second recorder fighting the first for
+// one device, and audio arriving from a web page skips the voiceprint that
+// decides whose instructions she takes.
+//
+// It is tap-to-talk, not hold-to-talk: the recorder stops when you stop, so the
+// button is pressed once and then spoken at. The label says so.
+
+let voiceOn = false;
+
+function micState(state) {
+  const mic = $('mic');
+  mic.classList.toggle('listening', state === 'listening');
+  mic.classList.toggle('speaking', state === 'speaking');
+  if (state === 'listening') $('status').textContent = 'listening';
+  else if (state === 'speaking') $('status').textContent = 'speaking';
+  else if (!busy) $('status').textContent = '';
+}
+
+// What she heard, arriving as the user's turn — because that is what it is. It
+// also puts a mis-transcription in front of the person who can see it is wrong,
+// beside the answer it produced.
+function spokenTurn(text) {
+  if (!text) return;
+  micState('');
+  busy = true;
+  send.disabled = true;
+  $('stop').hidden = false;
+  $('status').textContent = 'working';
+  userTurn(text);
+  beginFreyaTurn();
+  pollState();
+}
+
+async function control(path) {
+  try {
+    const r = await fetch('/voice/' + path, { method: 'POST' });
+    if (!r.ok) {
+      $('status').textContent = (await r.text()).trim() || 'that did not work';
+      setTimeout(() => { if (!busy) $('status').textContent = ''; }, 4000);
+      return null;
+    }
+    return await r.json();
+  } catch (err) {
+    renderError(String(err));
+    return null;
+  }
+}
+
+$('mic').addEventListener('click', async () => {
+  micState('listening');
+  const r = await control('talk');
+  if (!r) micState('');
+});
+
+$('voice').addEventListener('click', async () => {
+  const r = await control(voiceOn ? 'off' : 'on');
+  if (r) setVoiceButton(!!r.voice);
+});
+
+function setVoiceButton(on) {
+  voiceOn = on;
+  $('voice').setAttribute('aria-pressed', String(on));
+  $('voice').classList.toggle('on', on);
+}
+
+$('stop').addEventListener('click', async () => {
+  const r = await control('stop');
+  if (r && r.stopped) renderError(r.stopped);
+  finish();
+});
+
+// ---- what she has on ------------------------------------------------------
+//
+// One poll, one struct, one render. Six endpoints drawing six panels is six
+// chances for them to disagree about what she is doing, and this is a status
+// display — the whole value of it is that it is consistent with itself.
+//
+// Polled rather than streamed on purpose. The event stream carries what happens
+// during a turn; this is what is *true* between them, and a panel that only
+// updated when a turn happened to emit something would go stale exactly when
+// nothing is going on, which is when someone looks at it.
+
+const NOTICED_SHOWN = 5;   // beyond this the panel is noise, not news
+const INSPECT_IDLE = 6000;  // nothing running: slow enough to be free
+const INSPECT_BUSY = 1500;  // mid-turn: fast enough that the plan ticks over
+
+let inspectTimer = 0;
+let inspectOn = localStorage.getItem('freya.inspect') !== 'off';
+
+function panel(title, count) {
+  const sec = document.createElement('section');
+  sec.className = 'panel';
+  const h = document.createElement('h4');
+  h.textContent = title;
+  if (count) {
+    const n = document.createElement('span');
+    n.className = 'count';
+    n.textContent = count;
+    h.appendChild(n);
+  }
+  sec.appendChild(h);
+  const body = document.createElement('div');
+  body.className = 'panel-body';
+  sec.appendChild(body);
+  return { sec, body };
+}
+
+function row(body, text, sub, cls) {
+  const d = document.createElement('div');
+  d.className = 'row' + (cls ? ' ' + cls : '');
+  const t = document.createElement('div');
+  t.className = 'row-main';
+  t.textContent = text;
+  d.appendChild(t);
+  if (sub) {
+    const s = document.createElement('div');
+    s.className = 'row-sub';
+    s.textContent = sub;
+    d.appendChild(s);
+  }
+  body.appendChild(d);
+  return d;
+}
+
+function renderState(st) {
+  $('ins-voice').textContent = st.voice || 'off';
+  $('ins-voice').className = 'pill voice-' + (st.voice || 'off');
+  // The button follows her, not the other way round: voice can be turned on from
+  // the terminal, from a tool call, or by /voice on, and a toggle that only ever
+  // reflected its own clicks would be wrong the moment any of those happened.
+  setVoiceButton(st.voice && st.voice !== 'off');
+  $('ins-cost').textContent = st.costToday
+    ? '$' + st.costToday.toFixed(2) + ' · ' + (st.callsToday || 0) + ' calls'
+    : 'nothing spent yet';
+  // The provider already names the model it is configured with, so printing both
+  // reads "gemini/gemini-3.5-flash-lite · gemini-3.5-flash-lite".
+  const provider = st.provider || '';
+  $('ins-model').textContent = st.model && !provider.includes(st.model)
+    ? [provider, st.model].filter(Boolean).join(' · ')
+    : provider || st.model || '';
+
+  const panels = $('panels');
+  panels.textContent = '';
+
+  // The plan first and always, when there is one. It is the answer to "what is
+  // she doing", and everything below it is the answer to "what else is there".
+  if (st.plan && st.plan.length) {
+    const done = st.plan.filter((s) => s.state === 'done').length;
+    const p = panel('Plan', done + '/' + st.plan.length);
+    st.plan.forEach((step) => {
+      const r = row(p.body, step.text, step.note, 'step-' + step.state);
+      const dot = document.createElement('span');
+      dot.className = 'sdot';
+      r.prepend(dot);
+    });
+    panels.appendChild(p.sec);
+  }
+
+  if (st.jobs && st.jobs.length) {
+    const p = panel('Background', String(st.jobs.length));
+    st.jobs.forEach((j) => row(p.body, j.goal, j.state + (j.for ? ' · ' + j.for : ''), 'job-' + j.state));
+    panels.appendChild(p.sec);
+  }
+
+  if (st.reminders && st.reminders.length) {
+    const late = st.reminders.filter((r) => r.late).length;
+    const p = panel('Reminders', late ? late + ' late' : String(st.reminders.length));
+    st.reminders.forEach((r) => row(p.body, r.text, r.due, r.late ? 'late' : ''));
+    panels.appendChild(p.sec);
+  }
+
+  // Capped. She notices a great deal that is true and not interesting — a repo
+  // untouched for a year, every time — and an uncapped list buries the disk
+  // filling up under twelve of them. The server sends them most-urgent first.
+  if (st.watching && st.watching.length) {
+    const p = panel('Noticed', String(st.watching.length));
+    st.watching.slice(0, NOTICED_SHOWN).forEach((w) =>
+      row(p.body, w.summary, [w.source, w.urgency].filter(Boolean).join(' · ')));
+    if (st.watching.length > NOTICED_SHOWN) {
+      row(p.body, 'and ' + (st.watching.length - NOTICED_SHOWN) + ' more', '', 'quiet');
+    }
+    panels.appendChild(p.sec);
+  }
+
+  if (st.servers && st.servers.length) {
+    const p = panel('Serving', String(st.servers.length));
+    st.servers.forEach((sv) => row(p.body, sv.url, sv.dir, sv.alive ? '' : 'dead'));
+    panels.appendChild(p.sec);
+  }
+
+  if (st.tabs && st.tabs.length) {
+    const p = panel('Tabs', String(st.tabs.length));
+    st.tabs.forEach((t) => row(p.body, t));
+    panels.appendChild(p.sec);
+  }
+
+  if (!panels.childElementCount) {
+    const quiet = document.createElement('div');
+    quiet.className = 'panel-quiet';
+    quiet.textContent = st.watchers
+      ? 'Nothing on. ' + st.watchers + ' watcher' + (st.watchers === 1 ? '' : 's') + ' running.'
+      : 'Nothing on.';
+    panels.appendChild(quiet);
+  }
+}
+
+async function pollState() {
+  clearTimeout(inspectTimer);
+  if (!inspectOn) return;
+  let st = null;
+  try {
+    const r = await fetch('/state');
+    if (r.ok) st = await r.json();
+  } catch { /* she may be restarting; the stream indicator already says so */ }
+  if (st) renderState(st);
+  inspectTimer = setTimeout(pollState, st && st.busy ? INSPECT_BUSY : INSPECT_IDLE);
+}
+
+function showInspector(on) {
+  inspectOn = on;
+  localStorage.setItem('freya.inspect', on ? 'on' : 'off');
+  document.body.classList.toggle('no-inspector', !on);
+  $('inspect').setAttribute('aria-pressed', String(on));
+  if (on) pollState(); else clearTimeout(inspectTimer);
+}
+
+$('inspect').addEventListener('click', () => showInspector(!inspectOn));
 
 // ---- asking permission ----------------------------------------------------
 //
@@ -347,12 +607,15 @@ document.addEventListener('keydown', (ev) => {
 function finish() {
   busy = false;
   send.disabled = false;
+  micState('');
+  $('stop').hidden = true;
   $('status').textContent = '';
   turnEl?.querySelector('.working')?.remove();
   turnEl = null;
   traceEl = null;
   input.focus();
   loadHistory();
+  pollState();
 }
 
 // ---- sending --------------------------------------------------------------
@@ -360,9 +623,11 @@ function finish() {
 async function ask(text) {
   busy = true;
   send.disabled = true;
+  $('stop').hidden = false;
   $('status').textContent = 'working';
   userTurn(text);
   beginFreyaTurn();
+  pollState();
   try {
     const r = await fetch('/ask', {
       method: 'POST',
@@ -458,7 +723,25 @@ async function openConversation(id, title) {
   loadHistory();
 }
 
-$('new-chat').addEventListener('click', () => location.reload());
+// A new conversation cuts the archive here, so the rail gets a new row. It does
+// not make her forget: the archive is unbroken and she still knows what you were
+// just doing. A button that silently threw that away would be worse.
+$('new-chat').addEventListener('click', async () => {
+  if (busy) return;
+  try { await fetch('/session', { method: 'POST' }); } catch { /* say it below */ }
+  thread.textContent = '';
+  const empty = document.createElement('div');
+  empty.className = 'empty';
+  const p = document.createElement('p');
+  p.textContent = 'New conversation. She still remembers the last one.';
+  empty.appendChild(p);
+  thread.appendChild(empty);
+  turnEl = null;
+  traceEl = null;
+  $('title').textContent = 'New conversation';
+  input.focus();
+  loadHistory();
+});
 
 try {
   const saved = localStorage.getItem('freya-theme');
@@ -467,4 +750,5 @@ try {
 
 connect();
 loadHistory();
+showInspector(inspectOn);
 input.focus();

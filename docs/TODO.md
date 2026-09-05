@@ -1712,3 +1712,72 @@ They are tied to her process, which is right — but every localhost URL she has
 handed over dies silently when she restarts, and nothing told her. `serve_list`
 now reports what is running, what folder it serves, and whether the port still
 ANSWERS, asked of the port rather than inferred from the session record.
+
+## Her window
+
+A desktop window, in the same terms as everything else here: a page served over
+loopback in a Chrome `--app=` frame, `net/http` and `embed` and a hand-written
+front end. Zero dependencies survives contact with a GUI.
+
+- [x] The chat itself: rail from the archive, streaming thought and tool trace,
+      markdown, light and dark in her palette.
+- [x] **`freya -gui` builds no agent.** It asks the process that already owns the
+      archive where its window is, opens that, and exits. Cold start spawns a
+      daemon and waits for the socket; warm is 0.33s. A launcher that served its
+      own window would take her memory off the running daemon, and two agents on
+      one append-only archive corrupt the transcript and the prompt cache
+      together — `internal/memory/journal.go` says so at length.
+- [x] **One owner for the trace.** OnThought/OnInterim/OnTool are set once at
+      startup and published to a hub; the terminal, the daemon's speaker and the
+      window subscribe. They used to be swapped per turn by the window, which is
+      a data race by construction and silently took the trace off the terminal.
+- [x] **Every turn is registered.** The window's turn runs under `beginTurn`, so
+      Ctrl-C, the spoken "stop", `stopEverything` and the daemon's yield grace
+      loop can all see it. It ran on `context.Background()` and was invisible to
+      all four.
+- [x] **Permission is asked in the window.** The guard decided attendance by
+      whether stdin is a TTY, so with the window open every destructive action
+      came back "declined by user" for a question nobody was shown.
+      `gui.Server.Confirm` now reports whether it ASKED, separately from the
+      answer, and one router picks the first channel that can carry the
+      question — window, terminal, then speech. Speech last: a typed answer is
+      the word the person meant, a spoken one survives a recorder, a
+      transcription and a yes/no parse first.
+- [x] Five minutes, not ninety seconds, with the countdown sent alongside the
+      question. A timeout is indistinguishable from a refusal to the model, so a
+      too-short one was quietly teaching her that the window says no.
+- [x] The inspector: plan, background jobs, reminders, what the watchers have
+      noticed (most urgent first, capped — she notices a great deal that is true
+      and not interesting), servers, tabs, and the day's spend.
+- [x] **The window is a voice client.** Tap the microphone and the daemon
+      records, transcribes, verifies the speaker, answers and speaks — the same
+      `pushToTalk` the hotkey and the socket call. Not `getUserMedia`: a second
+      recorder fighting the first for one device, and audio arriving from a web
+      page walks around the voiceprint that decides whose instructions she takes.
+      The exchange publishes to the same hub, so a spoken turn appears in the
+      thread as a typed one does.
+- [x] New conversation cuts the archive rather than reloading the page. The
+      session number advanced only at `Open`, so every conversation a daemon
+      held over days collapsed into one row in the rail.
+
+### Three bugs this found, and what they have in common
+
+Each was invisible until the window was driven by hand and looked at.
+
+- **The inspector shipped absent.** Its markup went in via a replacement whose
+  anchor had moved; the replacement silently did nothing; `$('ins-voice')`
+  returned null inside an async poll and the rejection went nowhere. There is now
+  a test that every id `app.js` names exists in `index.html`, and `$` complains.
+- **The trace reached nobody.** Removing the per-turn hook swap in favour of the
+  hub left the window with no subscription at all. Thought bubbles, tool steps
+  and the whole spoken path went to no one and nothing errored.
+- **New conversation deadlocked the store.** `NewSession` held the lock and then
+  called `saveJSON`, which takes the same non-reentrant lock — wedging not just
+  that call but every later write to the archive. The test fails in three
+  seconds rather than timing out in ten minutes, deliberately.
+
+All three are the same shape as the ones already recorded here: **built, wired to
+nothing, and silent about it.** The pattern is not "the code was wrong"; it is
+"nothing would ever have said so". The fix each time is a test that names the
+failure, and — this is the part that keeps being worth the time — running the
+real thing and looking at it.

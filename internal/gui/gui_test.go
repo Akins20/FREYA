@@ -3,10 +3,13 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -391,5 +394,222 @@ func TestNoArchiveMeansAnEmptyRailNotAFailure(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Errorf("got %d conversations from no archive", len(list))
+	}
+}
+
+// ---- speaking and listening ----------------------------------------------
+
+type stubControls struct {
+	talkErr error
+	talked  int
+	voice   bool
+	stopped int
+}
+
+func (c *stubControls) Talk() error { c.talked++; return c.talkErr }
+func (c *stubControls) Voice(on bool) bool {
+	c.voice = on
+	return c.voice
+}
+func (c *stubControls) Stop() string { c.stopped++; return "stopped what she was doing" }
+
+func post(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path+"?t="+s.token, nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	s.guard(http.HandlerFunc(s.voiceHandler)).ServeHTTP(w, req)
+	return w
+}
+
+// The microphone button presses HER pipeline. The alternative — getUserMedia in
+// the page — is a second recorder fighting the first for one device, and audio
+// from a web page has walked around the voiceprint that decides whose
+// instructions she takes.
+func TestTheWindowPressesHerMicrophoneRatherThanItsOwn(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	c := &stubControls{}
+	s.SetControls(c)
+
+	if w := post(t, s, "/voice/talk"); w.Code != http.StatusOK {
+		t.Fatalf("talk returned %d: %s", w.Code, w.Body.String())
+	}
+	if c.talked != 1 {
+		t.Errorf("Talk called %d times", c.talked)
+	}
+}
+
+// A second press while the first is still recording is a refusal with a reason,
+// not a silent nothing. Silence here is how a button gets pressed four more
+// times.
+func TestASecondPressIsRefusedWithAReason(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	s.SetControls(&stubControls{talkErr: errors.New("the microphone is in use by the push-to-talk")})
+
+	w := post(t, s, "/voice/talk")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "microphone") {
+		t.Errorf("the refusal does not say why: %q", w.Body.String())
+	}
+}
+
+// Voice reports what it IS afterwards, not what was asked for. Echoing the
+// request would make the button claim voice is on in a session that has no
+// synthesiser.
+func TestTheVoiceToggleReportsTheStateNotTheRequest(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	s.SetControls(&stubControls{})
+
+	var got struct {
+		Voice bool `json:"voice"`
+	}
+	w := post(t, s, "/voice/on")
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Voice {
+		t.Error("turning voice on reported it off")
+	}
+	w = post(t, s, "/voice/off")
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Voice {
+		t.Error("turning voice off reported it on")
+	}
+}
+
+func TestStopGoesThroughToHerInterrupt(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	c := &stubControls{}
+	s.SetControls(c)
+
+	w := post(t, s, "/voice/stop")
+	if w.Code != http.StatusOK || c.stopped != 1 {
+		t.Fatalf("code=%d stopped=%d", w.Code, c.stopped)
+	}
+	if !strings.Contains(w.Body.String(), "stopped what she was doing") {
+		t.Errorf("the window was not told what was stopped: %s", w.Body.String())
+	}
+}
+
+// A session with no voice must say so rather than accept the press and do
+// nothing, which is the same failure as the silent second press one level up.
+func TestNoVoiceSaysSoRatherThanSwallowingThePress(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+
+	w := post(t, s, "/voice/talk")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("got %d, want 503", w.Code)
+	}
+}
+
+// GET must not reach any of this. These endpoints start a recording and cancel
+// running work; a page elsewhere that can make the browser issue a GET at
+// 127.0.0.1 must not be able to trigger either.
+func TestVoiceControlsRefuseGET(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	c := &stubControls{}
+	s.SetControls(c)
+
+	for _, path := range []string{"/voice/talk", "/voice/on", "/voice/stop"} {
+		req := httptest.NewRequest(http.MethodGet, path+"?t="+s.token, nil)
+		req.RemoteAddr = "127.0.0.1:5000"
+		w := httptest.NewRecorder()
+		s.guard(http.HandlerFunc(s.voiceHandler)).ServeHTTP(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s returned %d, want 405", path, w.Code)
+		}
+	}
+	if c.talked != 0 || c.stopped != 0 {
+		t.Error("a GET reached the microphone or the interrupt")
+	}
+}
+
+// And the token still gates them, like everything else. Worth pinning
+// separately: these were added after the guard was written and a new mux entry
+// that forgets s.guard is invisible until somebody looks.
+func TestVoiceControlsAreBehindTheToken(t *testing.T) {
+	s := newTestServer(t, &stubAsker{})
+	c := &stubControls{}
+	s.SetControls(c)
+
+	req := httptest.NewRequest(http.MethodPost, "/voice/talk", nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	s.guard(http.HandlerFunc(s.voiceHandler)).ServeHTTP(w, req)
+	if w.Code == http.StatusOK {
+		t.Error("the microphone was reachable without the token")
+	}
+	if c.talked != 0 {
+		t.Error("Talk ran for an untokened request")
+	}
+}
+
+// Every id the script reaches for must exist in the page.
+//
+// This is a real bug, found by looking at the window rather than at the code:
+// the inspector's markup was inserted by a replacement whose anchor had moved,
+// the replacement silently did nothing, and the page shipped without it. The
+// script then called $('ins-voice') on null inside an async poll, the rejection
+// went nowhere, and the whole activity panel was simply absent — no error, no
+// blank panel, nothing to notice.
+//
+// The rule this pins is narrow and mechanical: if app.js names an id, index.html
+// has to have it.
+func TestTheScriptOnlyReachesForElementsThePageHas(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(html)
+
+	// $('x') and getElementById('x'), single or double quoted.
+	re := regexp.MustCompile(`(?:\$|getElementById)\(\s*['"]([A-Za-z0-9_-]+)['"]\s*\)`)
+	seen := map[string]bool{}
+	var missing []string
+	for _, m := range re.FindAllStringSubmatch(string(js), -1) {
+		id := m[1]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if !strings.Contains(page, `id="`+id+`"`) {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("app.js reaches for %d ids the page does not have: %s\n"+
+			"Each one is a null dereference in whatever function touches it, and in an "+
+			"async handler that failure is silent — the feature is simply not there.",
+			len(missing), strings.Join(missing, ", "))
+	}
+	if len(seen) < 10 {
+		t.Errorf("only found %d ids; the pattern has stopped matching the script", len(seen))
+	}
+}
+
+// And the other direction for the handful that carry behaviour: a control the
+// page shows but the script never wires up is a button that does nothing.
+func TestEveryControlInThePageIsWiredUp(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(js)
+	for _, id := range []string{
+		"new-chat", "theme", "inspect", "voice", "mic", "stop",
+		"confirm-yes", "confirm-no", "confirm-word", "composer", "input",
+	} {
+		if !strings.Contains(script, `'`+id+`'`) {
+			t.Errorf("#%s is in the page and the script never mentions it", id)
+		}
 	}
 }

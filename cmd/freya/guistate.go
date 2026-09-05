@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -77,7 +78,14 @@ func (s *guiSources) state() gui.State {
 	// it aloud, and the user would never hear a single one.
 	if s.sentinel != nil {
 		st.Watchers = len(s.sentinel.Watchers())
-		for _, o := range s.sentinel.Peek() {
+		pending := s.sentinel.Peek()
+		// Most urgent first. Unsorted, a real observation — a disk about to fill,
+		// a runaway process — sits underneath a dozen ambient notes about repos
+		// nobody has touched in a year, which is the panel telling you nothing.
+		sort.SliceStable(pending, func(i, j int) bool {
+			return pending[i].Urgency > pending[j].Urgency
+		})
+		for _, o := range pending {
 			st.Watching = append(st.Watching, gui.Watch{
 				Summary: o.Summary, Urgency: o.Urgency.String(), Source: o.Source,
 			})

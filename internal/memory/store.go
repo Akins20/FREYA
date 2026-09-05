@@ -192,6 +192,35 @@ func (s *Store) SessionID() string {
 	return fmt.Sprintf("s%04d", s.st.Sessions)
 }
 
+// NewSession starts a new conversation without ending the process.
+//
+// The session number is stamped on each turn and is how the archive is grouped
+// back into conversations. It used to advance only at Open, which is right for a
+// terminal — one run, one conversation — and wrong for a daemon that stays up
+// for days: every window conversation, every spoken exchange and every follow-up
+// collapsed into one enormous row.
+//
+// What this does NOT do is make her forget. The archive is unbroken and the
+// working set is untouched, so a new conversation still starts with her knowing
+// what you were just doing. That is deliberate: the alternative is a button that
+// silently throws away the context you were relying on, and this is an assistant
+// rather than a series of strangers.
+func (s *Store) NewSession() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.st.Sessions++
+	// saveJSONLocked, not saveJSON: the lock is already held and it is not
+	// reentrant. Calling the wrong one deadlocks the whole store — not just this
+	// call, the archive with it — and it did, in the live window, until the
+	// daemon had to be killed.
+	//
+	// Best effort. Losing the increment costs a grouping in the rail on the next
+	// restart; failing the call would cost the conversation the user just asked
+	// for, which is worse.
+	_ = s.saveJSONLocked(stateFile, s.st)
+	return fmt.Sprintf("s%04d", s.st.Sessions)
+}
+
 // --- turns ------------------------------------------------------------------
 
 // AppendTurn records a turn in the archive. Tokens are computed if unset.

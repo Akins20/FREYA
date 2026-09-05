@@ -20,12 +20,15 @@
       <span class="wordmark">FREYA</span>
     </div>
 
-    <button id="new-chat" class="ghost wide">New conversation</button>
+    <button id="new-chat" class="ghost wide" type="button"
+            title="Start a new thread. She keeps what she already knows.">New conversation</button>
 
     <div class="rail-label">Recent</div>
     <div id="history" class="history"></div>
 
     <div class="rail-foot">
+      <button id="voice" class="ghost" type="button" aria-pressed="false"
+              title="Whether she reads her replies out loud">Voice</button>
       <button id="theme" class="ghost" title="Light or dark">Theme</button>
       <span id="conn" class="conn" title="Connection to Freya">connecting</span>
     </div>
@@ -35,6 +38,10 @@
     <header id="topbar">
       <div id="title">New conversation</div>
       <div id="status"></div>
+      <button id="stop" class="ghost stop" type="button" hidden
+              title="Cancel what she is doing">Stop</button>
+      <button id="inspect" class="ghost" type="button" aria-pressed="true"
+              title="What she has on">Activity</button>
     </header>
 
     <div id="thread" class="thread">
@@ -50,6 +57,14 @@
     </div>
 
     <form id="composer" autocomplete="off">
+      <button id="mic" type="button" class="round" aria-label="Talk to her"
+              title="Tap and speak — she stops recording when you stop">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
       <textarea id="input" rows="1" placeholder="Message Freya…"
                 aria-label="Message Freya"></textarea>
       <button id="send" type="submit" aria-label="Send">
@@ -58,8 +73,19 @@
         </svg>
       </button>
     </form>
-    <div id="hint">Enter to send · Shift+Enter for a new line</div>
+    <div id="hint">Enter to send · Shift+Enter for a new line · tap the mic and speak</div>
   </main>
+
+  <!-- What she has on. Every panel here is read from the thing that already
+       owns it; the window holds no state of its own about any of them. -->
+  <aside id="inspector">
+    <div class="ins-head">
+      <span id="ins-voice" class="pill" title="Microphone and speaker">off</span>
+      <span id="ins-cost" class="pill num" title="Spent today"></span>
+    </div>
+    <div id="ins-model" class="ins-model"></div>
+    <div id="panels"></div>
+  </aside>
 
   <div id="confirm-veil" class="veil" hidden>
     <div id="confirm" class="sheet" role="alertdialog" aria-modal="true"

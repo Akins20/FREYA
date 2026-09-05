@@ -53,7 +53,7 @@ variables always win.
 | `FREYA_WORK_DIR` | Fixed working dir she anchors to at startup (file + shell tools share it). Empty leaves her where launched — the benchmark relies on this. The daemon sets it to `~/freya-workspace`. She moves within it via the `change_dir` tool. |
 | `FREYA_TTS` | `gemini` (default) \| `espeak` \| `piper` \| `none`. |
 | `FREYA_STT` | `gemini` (default) \| `whisper` (offline). |
-| `FREYA_TOOL_ROUTING` | Narrows the tools she is **shown** to those a request calls for. The 96-down-to-27-53 figure was measured at 96 registered tools; there are now 136, so the range is stale and the ratio is the point. `off` disables it. Everything stays **executable** either way: a tool she names that was not offered still runs and the miss is counted (`/tools`). See `internal/skills/kits.go` — narrowing is the one change here that fails silently, so the valve and the counter are the design, not extras. |
+| `FREYA_TOOL_ROUTING` | Narrows the tools she is **shown** to those a request calls for. The 96-down-to-27-53 figure was measured at 96 registered tools and the ratio is the point, not the range. `/tools` prints the live count; this line deliberately does not, having been wrong about it three times. `off` disables it. Everything stays **executable** either way: a tool she names that was not offered still runs and the miss is counted (`/tools`). See `internal/skills/kits.go` — narrowing is the one change here that fails silently, so the valve and the counter are the design, not extras. |
 | `FREYA_DOWNLOAD_DIR` | Where browser downloads land. Set explicitly on every tab so the OS "Save as" window never opens — that window is not page content, so nothing can drive it and she cannot even tell it is there. Defaults to `~/Downloads`. |
 | `FREYA_WAKE` | Always-on wake-word listening. **Off unless you set it** — `on` enables it, a duration like `2h` enables it with a timeout. There is no local wake-word model, so while it is on, speech near the mic is recorded and sent for transcription whether or not it was meant for her; that is opt-in only. It had no off switch at first, and was quiet only because starting the listener happened to fail — then the switch landed with the default still on, because an empty string fell through to `forever`, and the mic came on for a user who had set nothing. Push-to-talk needs none of this and is unaffected. |
 | `FREYA_VOICE_POLICY` | `off` \| `warn` (default) \| `enforce`. Never default to enforce. |
@@ -78,7 +78,8 @@ State lives in `$FREYA_DATA_DIR`, never in the repo: `archive.jsonl`, `defects.j
 Four layers, each depending only on those above it:
 
 ```
-cmd/freya         REPL, slash commands, ANSI output
+cmd/freya         REPL, slash commands, ANSI output, the window's wiring
+internal/gui      the desktop window: served page, SSE, permission, voice
 internal/agent    think-act loop + persona
 internal/work     background jobs: bounded pool, cancellation
 internal/memory   tiered memory, context assembly, BM25 retrieval
@@ -155,6 +156,32 @@ Three consequences worth keeping:
 right-click, double-click, ctrl/shift-click, drag. They share one dispatcher on
 purpose: written separately they drift, and the hover-first and press-duration
 fixes then exist on some gestures and not others.
+
+### The window is served by whoever owns the archive
+
+`freya -gui` builds no agent. It finds the daemon that already holds the store,
+asks it where its window is (`daemon.Ask(dir, "window")`), opens Chrome on that
+and exits. Serving a window from a second process would make the daemon yield the
+store to it — two agents on one append-only archive, which
+`internal/memory/journal.go` explains corrupts the transcript and the cached
+prefix together. If nothing is running, `daemon.Spawn` starts one and waits.
+
+Three constraints hold this together and each has a test:
+
+- **One owner for the trace.** `OnThought`/`OnInterim`/`OnTool` are assigned once
+  at startup and published to `cmd/freya/trace.go`'s hub; the terminal, the
+  daemon's speaker and the window are subscribers. Swapping the fields per turn
+  is a data race and silently steals the trace from whoever assigned first.
+- **Every turn is registered.** Window turns go through `beginTurn`, so Ctrl-C,
+  the spoken "stop" and the daemon's yield loop can see them.
+- **"Nobody answered" is not "the user said no."** `gui.Server.Confirm` returns
+  `(answer, asked)`, and `cmd/freya/confirm.go`'s router tries window, terminal,
+  then speech. Speech is last because a typed answer is the word the person
+  meant. `guard.Attended` is set once, from the router, never reassigned.
+
+Voice in the window presses `pushToTalk` — her existing pipeline, verification
+included. Do not add `getUserMedia`: it is a second recorder on one device, and
+audio from a web page has walked around the voiceprint.
 
 ### Provider abstraction
 

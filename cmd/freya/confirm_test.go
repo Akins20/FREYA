@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Akins20/FREYA/internal/gui"
 	"github.com/Akins20/FREYA/internal/guard"
+	"github.com/Akins20/FREYA/internal/gui"
 )
 
 // A window driven the way the real one is: over HTTP, through the token, on the
@@ -22,6 +22,7 @@ type testWindow struct {
 	base    string
 	token   string
 	pending chan gui.Pending
+	events  chan gui.Event
 }
 
 func openTestWindow(t *testing.T) *testWindow {
@@ -43,7 +44,7 @@ func openTestWindow(t *testing.T) *testWindow {
 	// http://127.0.0.1:PORT/?t=TOKEN
 	cut := strings.Index(url, "/?t=")
 	w := &testWindow{srv: srv, base: url[:cut], token: url[cut+4:],
-		pending: make(chan gui.Pending, 4)}
+		pending: make(chan gui.Pending, 4), events: make(chan gui.Event, 64)}
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, w.base+"/events?t="+w.token, nil)
 	resp, err := http.DefaultClient.Do(req)
@@ -61,8 +62,15 @@ func openTestWindow(t *testing.T) *testWindow {
 			if !strings.HasPrefix(line, "data: ") {
 				continue
 			}
-			var e struct{ Kind, Text string }
-			if json.Unmarshal([]byte(line[6:]), &e) != nil || e.Kind != "confirm" {
+			var e gui.Event
+			if json.Unmarshal([]byte(line[6:]), &e) != nil {
+				continue
+			}
+			select {
+			case w.events <- e:
+			default:
+			}
+			if e.Kind != "confirm" {
 				continue
 			}
 			var p gui.Pending
@@ -291,5 +299,71 @@ func TestTheGuardIsWiredOnceAndOnlyOnce(t *testing.T) {
 	}
 	if !g.Confirm(context.Background(), rmAction(), highRisk()) {
 		t.Error("the guard did not route to a channel registered after wiring")
+	}
+}
+
+// A spoken exchange has to reach the window, or pressing the microphone leaves
+// the thread blank through the whole of it and the answer never lands in it at
+// all — a voice turn never goes through /ask, so nothing else would put it there.
+//
+// This is the failure mode the hub introduced and nothing caught: taking the
+// per-turn hook swap out left the window with no subscription, every kind was
+// dropped, and nothing errored.
+func TestASpokenExchangeReachesTheWindow(t *testing.T) {
+	w := openTestWindow(t)
+	events := make(chan struct{ kind, text string }, 32)
+	// A second listener on the same server, so this test reads events without
+	// re-implementing the SSE parse in openTestWindow.
+	hub := newTraceHub()
+	hub.Add(windowTrace(w.srv))
+	hub.Add(func(kind, _, text string) { events <- struct{ kind, text string }{kind, text} })
+
+	for _, e := range []struct{ kind, name, text string }{
+		{"listening", "", ""},
+		{"heard", "", "open my portal"},
+		{"thought", "", "she needs the portal"},
+		{"tool-start", "browser_open", "portal"},
+		{"tool-ok", "browser_open", ""},
+		{"speaking", "", "opening it now"},
+		{"spoken", "", "Done — it's open."},
+		{"turn-done", "", ""},
+	} {
+		hub.emit(e.kind, e.name, e.text)
+	}
+
+	// Everything published must be delivered; the mapping is allowed to rename a
+	// kind but never to drop one.
+	got := map[string]bool{}
+	for len(events) > 0 {
+		e := <-events
+		got[e.kind] = true
+	}
+	for _, kind := range []string{"listening", "heard", "thought", "tool-start",
+		"tool-ok", "speaking", "spoken", "turn-done"} {
+		if !got[kind] {
+			t.Errorf("%s never left the hub", kind)
+		}
+	}
+
+	// And the window's side of the rename: the transcript arrives as its own kind
+	// so the front end can render it as the user's turn, and the spoken reply
+	// arrives as a reply so it lands in the thread.
+	deadline := time.After(5 * time.Second)
+	want := map[string]string{"heard": "open my portal", "reply": "Done — it's open.", "done": ""}
+	seen := map[string]string{}
+	for len(seen) < len(want) {
+		select {
+		case e := <-w.events:
+			if _, ok := want[e.Kind]; ok {
+				seen[e.Kind] = e.Text
+			}
+		case <-deadline:
+			t.Fatalf("the window only ever saw %v", seen)
+		}
+	}
+	for kind, text := range want {
+		if seen[kind] != text {
+			t.Errorf("the window saw %s=%q, want %q", kind, seen[kind], text)
+		}
 	}
 }

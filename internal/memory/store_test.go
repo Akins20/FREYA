@@ -3,6 +3,7 @@ package memory
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSuspendResumeHandsOffWriting(t *testing.T) {
@@ -70,5 +71,66 @@ func TestDoubleResumeIsSafe(t *testing.T) {
 	}
 	if _, err := s.AppendTurn(Turn{Role: "user", Text: "ok"}); err != nil {
 		t.Errorf("append after redundant resume: %v", err)
+	}
+}
+
+// NewSession must return.
+//
+// It deadlocked: it takes the store lock and then called saveJSON, which takes
+// the same non-reentrant lock. Nothing crashed and nothing logged — the request
+// hung, and with it every later write to the archive, because the lock was never
+// released. The window's "New conversation" button wedged the daemon.
+//
+// Timed rather than plain, so the failure is a message in a second instead of a
+// ten-minute test timeout with a goroutine dump.
+func TestNewSessionDoesNotDeadlockTheStore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately NOT deferred. Close takes the same lock, so on the failure this
+	// test exists to catch it would block forever and turn a one-second failure
+	// into a ten-minute timeout with a goroutine dump.
+	first := s.SessionID()
+	done := make(chan string, 1)
+	go func() { done <- s.NewSession() }()
+
+	select {
+	case got := <-done:
+		if got == first {
+			t.Errorf("the session id did not advance: still %s", got)
+		}
+		if s.SessionID() != got {
+			t.Errorf("SessionID says %s, NewSession returned %s", s.SessionID(), got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("NewSession never returned — the store lock is held by something " +
+			"NewSession itself is waiting on, which wedges every later write too")
+	}
+
+	// And the increment survives a reopen, or the rail regroups everything into
+	// one row on the next restart.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	// Open advances the count too, so the reopened store must be past what
+	// NewSession left behind rather than back at the start.
+	if again.SessionID() <= first {
+		t.Errorf("after a reopen the session is %s, no later than %s", again.SessionID(), first)
+	}
+
+	// A turn written after the roll carries the new id, which is the whole point.
+	turn, err := again.AppendTurn(Turn{Role: "user", Text: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.SessionID != again.SessionID() {
+		t.Errorf("the turn was stamped %s, not %s", turn.SessionID, again.SessionID())
 	}
 }

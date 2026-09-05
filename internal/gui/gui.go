@@ -53,7 +53,9 @@ var assets embed.FS
 // the front end has to understand deeply is a shape that has to change whenever
 // she does.
 type Event struct {
-	Kind string `json:"kind"` // thought | tool | interim | reply | error | done | state
+	// thought | interim | tool | reply | error | done | confirm | confirm-timeout
+	// | heard | speaking | listening
+	Kind string `json:"kind"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name, for kind=tool
 	OK   *bool  `json:"ok,omitempty"`   // tool outcome, once known
@@ -90,6 +92,7 @@ type Server struct {
 	confirmSeq int
 	waiting    map[string]chan bool
 	state      StateFunc
+	controls   Controls
 }
 
 // New builds a server with a fresh token.
@@ -151,6 +154,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.Handle("/conversation", s.guard(http.HandlerFunc(s.conversation)))
 	mux.Handle("/answer", s.guard(http.HandlerFunc(s.answer)))
 	mux.Handle("/state", s.guard(http.HandlerFunc(s.stateHandler)))
+	mux.Handle("/voice/", s.guard(http.HandlerFunc(s.voiceHandler)))
+	mux.Handle("/session", s.guard(http.HandlerFunc(s.newSession)))
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -361,6 +366,10 @@ type Conversation struct {
 // Reader supplies past turns, newest last, exactly as the archive holds them.
 type Reader interface {
 	Turns() []Turn
+	// NewSession begins a new conversation and returns its id. It is on this
+	// interface rather than a setter of its own because it is the same concern:
+	// how the archive is cut into the rows the rail shows.
+	NewSession() string
 }
 
 // SetReader supplies the history the rail lists.
@@ -368,6 +377,26 @@ func (s *Server) SetReader(r Reader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reader = r
+}
+
+// newSession is what "New conversation" does.
+//
+// It used to be location.reload(), which reloaded a page whose session id is
+// fixed for the life of the process — so in a daemon that stays up for days,
+// every conversation ever held in the window was one row in the rail.
+func (s *Server) newSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "post", http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.Lock()
+	reader := s.reader
+	s.mu.Unlock()
+	if reader == nil {
+		http.Error(w, "no archive is wired up", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, map[string]any{"session": reader.NewSession()})
 }
 
 // conversations groups turns into sessions, newest first.
@@ -688,4 +717,79 @@ func (s *Server) stateHandler(w http.ResponseWriter, r *http.Request) {
 	st := f()
 	st.Busy = busy
 	writeJSON(w, st)
+}
+
+// ---- speaking and listening ----------------------------------------------
+
+// Controls is what the window can do besides type at her.
+//
+// # Why the window does not open a microphone of its own
+//
+// The browser has getUserMedia and it would have been less code. It would also
+// have been a second audio stack: a second recorder racing the wake listener for
+// one device, a second silence detector, a second encoder — and, the part that
+// actually decides it, no speaker verification. internal/voice/verify.go gates
+// who she obeys on a voiceprint of the owner; audio that arrives as a blob from
+// a web page has skipped that gate entirely.
+//
+// So the window presses the button and the daemon does what it already does:
+// takeMic, record until silence, transcribe, verify, answer, speak. One pipeline
+// whichever way it is triggered — a hotkey, the socket, or this.
+type Controls interface {
+	// Talk runs one tap-to-talk exchange and returns once it has STARTED, not
+	// once it has finished: recording plus a model call plus synthesis is far
+	// longer than an HTTP request should be held open, and the window follows the
+	// exchange on the event stream like any other turn.
+	Talk() error
+	// Voice turns spoken replies on or off and reports the state afterwards.
+	Voice(on bool) bool
+	// Stop calls off whatever is running and says, in her words, what it stopped.
+	Stop() string
+}
+
+// SetControls supplies them. Nil, or an unset field, means the window shows the
+// buttons as unavailable rather than hiding them — "voice is not set up here" is
+// a better answer than a control that silently is not there.
+func (s *Server) SetControls(c Controls) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.controls = c
+}
+
+func (s *Server) controlsOrNil() Controls {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.controls
+}
+
+// voiceHandler is the whole control surface: /voice/talk, /voice/on,
+// /voice/off, /voice/stop.
+func (s *Server) voiceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "post", http.StatusMethodNotAllowed)
+		return
+	}
+	c := s.controlsOrNil()
+	if c == nil {
+		http.Error(w, "voice is not available in this session", http.StatusServiceUnavailable)
+		return
+	}
+	switch strings.TrimPrefix(r.URL.Path, "/voice/") {
+	case "talk":
+		if err := c.Talk(); err != nil {
+			// A refusal, not a failure: the microphone is already held, which is
+			// what happens when the button is pressed twice.
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, map[string]any{"listening": true})
+	case "on":
+		writeJSON(w, map[string]any{"voice": c.Voice(true)})
+	case "off":
+		writeJSON(w, map[string]any{"voice": c.Voice(false)})
+	case "stop":
+		writeJSON(w, map[string]any{"stopped": c.Stop()})
+	default:
+		http.NotFound(w, r)
+	}
 }

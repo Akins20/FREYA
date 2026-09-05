@@ -25,6 +25,9 @@ import (
 // memory works. It reads, and that is all it can do.
 type archiveReader struct{ store *memory.Store }
 
+// NewSession cuts the archive here, so what follows is a new row in the rail.
+func (a archiveReader) NewSession() string { return a.store.NewSession() }
+
 func (a archiveReader) Turns() []gui.Turn {
 	src := a.store.Turns()
 	out := make([]gui.Turn, 0, len(src))
@@ -115,7 +118,7 @@ func (g *guiAsker) Ask(ctx context.Context, input string) (string, error) {
 // differs between the daemon (which serves it and may be asked to) and the
 // launcher (which only opens), and folding the two together is what produced a
 // second agent on the same store.
-func serveGUI(ctx context.Context, a *agent.Agent, store *memory.Store, src *guiSources) (*gui.Server, string, error) {
+func serveGUI(ctx context.Context, a *agent.Agent, store *memory.Store, src *guiSources, trace *traceHub) (*gui.Server, string, error) {
 	srv, err := gui.New(nil)
 	if err != nil {
 		return nil, "", err
@@ -123,6 +126,10 @@ func serveGUI(ctx context.Context, a *agent.Agent, store *memory.Store, src *gui
 	srv.SetAsker(&guiAsker{a: a, s: srv, vs: src.voice, store: store})
 	srv.SetReader(archiveReader{store: store})
 	srv.SetState(src.state)
+	srv.SetControls(&guiControls{ctx: ctx, a: a, vs: src.voice})
+
+	// Her trace, on the window's stream. See windowTrace.
+	trace.Add(windowTrace(srv))
 
 	url, err := srv.Listen()
 	if err != nil {
@@ -240,4 +247,39 @@ func guiBanner(url string) string {
 		at = at[:i]
 	}
 	return fmt.Sprintf("window on %s", at)
+}
+
+// windowTrace translates the hub's vocabulary into the window's.
+//
+// It is a named function rather than a closure inside serveGUI so that it can be
+// tested without building an agent — and it is worth testing, because the way it
+// fails is by dropping a kind silently. Taking the per-turn hook swap out in
+// favour of the hub left the window with no subscription at all for a while:
+// thought bubbles, tool steps and the whole spoken path went nowhere, nothing
+// errored, and the window simply sat there looking finished.
+func windowTrace(srv *gui.Server) TraceFunc {
+	return func(kind, name, text string) {
+		yes, no := true, false
+		switch kind {
+		case "thought", "interim":
+			srv.Emit(gui.Event{Kind: kind, Text: text})
+		case "tool-start":
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text})
+		case "tool-ok":
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &yes})
+		case "tool-error":
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &no})
+
+		// A spoken exchange, rendered as the turn it is. Without these the window
+		// sits blank from the moment the microphone opens until she answers out
+		// loud — and the answer never appears in the thread at all, because a
+		// voice turn never goes through /ask.
+		case "listening", "heard", "speaking":
+			srv.Emit(gui.Event{Kind: kind, Text: text})
+		case "spoken":
+			srv.Emit(gui.Event{Kind: "reply", Text: text})
+		case "turn-done":
+			srv.Emit(gui.Event{Kind: "done"})
+		}
+	}
 }

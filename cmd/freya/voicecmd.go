@@ -40,6 +40,10 @@ type voiceState struct {
 	speaker *voice.Speaker
 	// indicator is the screen light, if there is a display. Nil is safe.
 	indicator *indicator
+	// trace carries a spoken exchange to whoever is watching one — in practice
+	// the window, which otherwise sits blank through the whole of it. Nil is
+	// safe; emit is a no-op on a nil hub.
+	trace *traceHub
 }
 
 // voiceOn reports whether spoken mode is on.
@@ -685,7 +689,10 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	defer releaseNow()
 
 	// Acknowledge immediately, before anything slow, so the press feels heard.
+	// The window gets the same acknowledgement, for the same reason: a button
+	// that does nothing visible for four seconds gets pressed again.
 	_ = voice.Chime()
+	v.trace.emit("listening", "", "")
 	done := v.indicator.working()
 	defer done()
 
@@ -708,6 +715,7 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	// phantom "Freya". The energy gate stops it here, quietly: no chime, no
 	// hallucinated turn in memory.
 	if !voice.HasSpeechEnergy(ctx, path) {
+		v.trace.emit("turn-done", "", "")
 		return
 	}
 
@@ -715,12 +723,18 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	if err != nil {
 		_ = voice.ChimeError()
 		fmt.Fprintf(os.Stderr, "push-to-talk transcribe: %v\n", err)
+		v.trace.emit("turn-done", "", "")
 		return
 	}
 	if strings.TrimSpace(transcript) == "" {
+		v.trace.emit("turn-done", "", "")
 		return // pressed but said nothing; no chime, no fuss
 	}
 	fmt.Printf("%s  ▸ %s%s\n", cCyan, transcript, cReset)
+	// What she heard, as the user's turn. Published before the work starts, so
+	// the window shows the words that are being acted on — which is also the
+	// only place a mis-transcription is visible before it becomes a mistake.
+	v.trace.emit("heard", "", transcript)
 
 	// The microphone is free from here, so she can be interrupted again while she
 	// works on what was just said.
@@ -731,6 +745,8 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 	if isStopInstruction(transcript) {
 		msg := stopEverything()
 		fmt.Printf("%s  ⏹ %s%s\n", cYellow, msg, cReset)
+		v.trace.emit("spoken", "", msg)
+		v.trace.emit("turn-done", "", "")
 		// Urgent: it cuts through whatever she was mid-sentence on, which is the
 		// point — the user just asked her to stop and is waiting to hear it landed.
 		v.speak(context.Background(), voice.Urgent, msg)
@@ -744,6 +760,7 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 
 	res, err := a.Ask(turnCtx, transcript)
 	if err != nil {
+		v.trace.emit("turn-done", "", "")
 		if turnCtx.Err() != nil {
 			return // interrupted on purpose; the interrupter already spoke
 		}
@@ -752,8 +769,10 @@ func pushToTalk(ctx context.Context, a *agent.Agent, v *voiceState) {
 		return
 	}
 	fmt.Printf("\n%s\n\n", res.Reply)
+	v.trace.emit("spoken", "", res.Reply)
 	_ = v.session.Speak(ctx, res.Reply)
 	_ = voice.ChimeDone()
+	v.trace.emit("turn-done", "", "")
 }
 
 // clipLine shortens an utterance for describing what is being worked on.
@@ -866,7 +885,11 @@ func (v *voiceState) speak(ctx context.Context, pri voice.Priority, text string)
 	if v.session.OnSpeaking != nil {
 		v.session.OnSpeaking(text)
 	}
+	// Published here rather than at the callers: this is the one path to the
+	// audio device, so it is the only place the indicator cannot be wrong.
+	v.trace.emit("speaking", "", text)
 	said, _ := v.speaker.Say(ctx, pri, text)
+	v.trace.emit("speaking", "", "")
 	return said
 }
 

@@ -48,6 +48,36 @@ make offline             # rule-based stand-in model, no network
 Speak to her instead of typing: `/voice on`, or `freya -daemon` for the
 always-there version with a push-to-talk key.
 
+A window rather than a terminal:
+
+```bash
+freya -gui               # opens her window; starts the daemon if none is up
+```
+
+## Her window
+
+A desktop window, in the same zero-dependency terms as everything else: a page
+served over loopback and opened in a Chrome application frame. No Electron, no
+build step, no JavaScript framework — `net/http`, `embed`, and about a thousand
+lines of hand-written front end.
+
+It is a full client, not a viewer. Typed or spoken, the same agent answers; the
+thinking window and the tool trace stream as they happen; the rail is her actual
+archive; the right-hand panel is the plan she is working to, her background jobs,
+her reminders, what her watchers have noticed, what she is serving, which tabs
+are open, and what the day has cost. **Destructive actions ask in the window**,
+with the preview, a countdown, and the full word "yes" typed out for anything
+that cannot be undone. Tap the microphone and she records, transcribes, verifies
+who is speaking, answers and speaks — her existing pipeline, with the window as
+the button.
+
+The important structural decision: **`freya -gui` builds no agent**. It finds the
+process that already owns the archive, asks where its window is, opens that, and
+exits in under a third of a second. A launcher that served its own window would
+take her memory off the running daemon, and two agents appending to one
+append-only archive interleave their turns and collapse each other's prompt
+cache — see `internal/memory/journal.go`.
+
 ## What she does
 
 147 tools offline, 152 with a provider that can see and a microphone attached.
