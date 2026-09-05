@@ -495,3 +495,18 @@ func stepState(s string) (StepState, error) {
 		return "", fmt.Errorf("state is one of doing, done, dropped, todo — got %q", s)
 	}
 }
+
+// Snapshot is the plan as it stands, for anything that displays it.
+//
+// A copy, not the slice: the window polls this while she is working, and handing
+// out the live backing array would let a reader see a step half-written.
+func (p *Plan) Snapshot() []Step {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]Step, len(p.steps))
+	copy(out, p.steps)
+	return out
+}

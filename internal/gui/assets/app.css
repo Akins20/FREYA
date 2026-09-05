@@ -1,0 +1,323 @@
+/* Freya's window.
+   Her palette, taken from presentation/brand: amber on near-black, warm white
+   in light. Not a copy of anybody else's product — the layout is the one every
+   chat application converged on because it works, and the surface is hers. */
+
+:root {
+  --amber:   #f0a437;
+  --amber-d: #c9871f;
+  --ink:     #12100c;
+  --ink-2:   #1a1712;
+  --ink-3:   #241f18;
+  --line:    #322b22;
+  --warm:    #ece7df;
+  --warm-2:  #cdc5b8;
+  --mute:    #8b8378;
+  --bg:      var(--ink);
+  --panel:   var(--ink-2);
+  --raised:  var(--ink-3);
+  --text:    var(--warm);
+  --text-2:  var(--warm-2);
+  --edge:    var(--line);
+  --radius:  10px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root[data-theme="light"] {
+  --bg:     #faf7f2;
+  --panel:  #f2ede4;
+  --raised: #ffffff;
+  --text:   #241f18;
+  --text-2: #554e44;
+  --mute:   #857c70;
+  --edge:   #ded5c7;
+  --amber:  #b8791a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ---- the rail ---------------------------------------------------------- */
+
+#sidebar {
+  width: 264px;
+  flex: none;
+  background: var(--panel);
+  border-right: 1px solid var(--edge);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px;
+  gap: 12px;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 2px; }
+.mark { width: 26px; height: 26px; color: var(--amber); flex: none; }
+.mark.big { width: 54px; height: 54px; opacity: .35; }
+.wordmark {
+  font-weight: 600;
+  letter-spacing: .22em;
+  font-size: 13px;
+  color: var(--text);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+button.ghost:hover { color: var(--text); border-color: var(--amber); }
+button.wide { width: 100%; text-align: left; }
+
+.rail-label {
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--mute);
+  padding: 6px 6px 0;
+}
+
+.history { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.history .item {
+  /* Never shrink. A flex column with a fixed height squashes its children to
+     fit rather than overflowing, so sixty conversations became sixty 14-pixel
+     slivers with the text clipped through the middle — and the rail scrolls, so
+     there was nothing to fit them into in the first place. */
+  flex: none;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history .item:hover { background: var(--raised); color: var(--text); }
+.history .item.on { background: var(--raised); color: var(--amber); }
+.history .none { color: var(--mute); font-size: 12px; padding: 8px 10px; }
+
+.rail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--edge);
+  padding-top: 10px;
+}
+.conn { font-size: 11px; color: var(--mute); }
+.conn.live { color: var(--amber); }
+.conn.gone { color: #d2694f; }
+
+/* ---- the conversation --------------------------------------------------- */
+
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+#topbar {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--edge);
+  font-size: 13px;
+  color: var(--text-2);
+}
+#status { color: var(--amber); font-size: 12px; }
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 26px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.empty {
+  margin: auto;
+  text-align: center;
+  color: var(--mute);
+}
+.empty p { margin: 14px 0 0; font-size: 14px; }
+
+.turn { max-width: 800px; width: 100%; margin: 0 auto; }
+
+.turn.user .bubble {
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 11px 15px;
+  margin-left: auto;
+  max-width: 84%;
+  width: fit-content;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.turn.freya { display: flex; gap: 12px; align-items: flex-start; }
+.turn.freya .who {
+  width: 26px; height: 26px; flex: none;
+  border-radius: 7px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  color: var(--amber);
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700;
+}
+.turn.freya .body { min-width: 0; flex: 1; }
+.turn.freya .body p { margin: 0 0 10px; }
+.turn.freya .body p:last-child { margin-bottom: 0; }
+.turn.freya .body code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.turn.freya .body pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.turn.freya .body pre code { background: none; border: 0; padding: 0; }
+.turn.freya .body strong { font-weight: 640; color: var(--text); }
+.turn.freya .body em { font-style: italic; color: var(--text-2); }
+.turn.freya .body h3 {
+  font-size: 14px;
+  font-weight: 640;
+  letter-spacing: .01em;
+  margin: 16px 0 8px;
+}
+.turn.freya .body h3:first-child { margin-top: 0; }
+.turn.freya .body ul,
+.turn.freya .body ol { margin: 0 0 10px; padding-left: 22px; }
+.turn.freya .body li { margin: 3px 0; }
+.turn.freya .body li::marker { color: var(--amber); }
+
+/* ---- what happened on the way ------------------------------------------- */
+
+details.trace {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+details.trace > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  color: var(--text-2);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+details.trace > summary::-webkit-details-marker { display: none; }
+details.trace > summary::before {
+  content: "›";
+  color: var(--amber);
+  transition: transform .12s ease;
+}
+details.trace[open] > summary::before { transform: rotate(90deg); }
+details.trace .inner { padding: 0 12px 10px 30px; color: var(--mute); }
+details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
+
+.step { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+.step .name { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.step .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mute); flex: none; }
+.step.ok  .dot { background: var(--amber); }
+.step.bad .dot { background: #d2694f; }
+
+.working { display: flex; align-items: center; gap: 9px; color: var(--mute); font-size: 13px; }
+.working .pulse {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--amber);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity:.25 } 50% { opacity:1 } }
+
+.failed {
+  border: 1px solid #7d3a2b;
+  background: color-mix(in srgb, #d2694f 12%, transparent);
+  color: #e0a08f;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+/* ---- the composer ------------------------------------------------------- */
+
+#composer {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 10px 20px 0;
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+}
+#input {
+  flex: 1;
+  resize: none;
+  max-height: 200px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  font: inherit;
+  line-height: 1.5;
+}
+#input:focus { outline: none; border-color: var(--amber); }
+#input::placeholder { color: var(--mute); }
+
+#send {
+  flex: none;
+  width: 40px; height: 40px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--amber);
+  color: var(--ink);
+  cursor: pointer;
+  display: grid; place-items: center;
+}
+#send svg { width: 19px; height: 19px; }
+#send:hover { background: var(--amber-d); }
+#send:disabled { opacity: .4; cursor: default; }
+
+#hint {
+  flex: none;
+  text-align: center;
+  color: var(--mute);
+  font-size: 11px;
+  padding: 7px 0 12px;
+}
+
+/* Narrow enough that the rail is in the way rather than useful. */
+@media (max-width: 720px) {
+  #sidebar { display: none; }
+}

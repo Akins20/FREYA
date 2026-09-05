@@ -487,3 +487,10 @@ const ProfileMarker = "user-data-dir=" + profileRoot
 // profileRoot is the parent of her browser profiles, as it appears on the
 // command line. Kept in step with profileDir below.
 const profileRoot = ".config/freya-chrome"
+
+// ChromeBinary is the browser this machine has, or empty.
+//
+// Exported for the window, which needs a Chrome to open itself in but has
+// nothing to do with CDP — it is a plain page, not something driven. Rather than
+// a second copy of this list somewhere else, drifting.
+func ChromeBinary() string { return chromeBinary() }

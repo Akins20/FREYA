@@ -19,7 +19,7 @@ func TestDeadlinesIncludesNoteReminders(t *testing.T) {
 	}
 
 	r := New()
-	if err := RegisterNotes(r, dir); err != nil {
+	if _, err := RegisterNotes(r, dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Execute(context.Background(), "note_add", map[string]any{

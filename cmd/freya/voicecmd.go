@@ -22,8 +22,9 @@ import (
 
 // voiceState holds the spoken-mode machinery for a REPL session.
 type voiceState struct {
-	// mu guards style, which voice_adjust can change from inside a tool goroutine
-	// while another goroutine is speaking.
+	// mu guards style and enabled, both of which are changed from one goroutine
+	// while others read them: voice_adjust runs inside a tool call, and the window
+	// can turn voice on from an HTTP handler while a turn is mid-flight.
 	mu       sync.Mutex
 	session  *voice.Session
 	verifier *voice.MFCCVerifier
@@ -39,6 +40,34 @@ type voiceState struct {
 	speaker *voice.Speaker
 	// indicator is the screen light, if there is a display. Nil is safe.
 	indicator *indicator
+}
+
+// voiceOn reports whether spoken mode is on.
+//
+// Guarded, because "enabled" is read from the REPL, the proactive notifier, the
+// interim speaker and now an HTTP handler, and was written from two of them
+// without a lock. Nothing here was ever going to crash — it is a bool — but the
+// race detector is right that a value written on one goroutine and read on
+// another with no synchronisation has no defined answer.
+func (v *voiceState) voiceOn() bool {
+	if v == nil {
+		return false
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.enabled
+}
+
+// setVoice turns spoken mode on or off and reports what it was.
+func (v *voiceState) setVoice(on bool) bool {
+	if v == nil {
+		return false
+	}
+	v.mu.Lock()
+	was := v.enabled
+	v.enabled = on
+	v.mu.Unlock()
+	return was
 }
 
 // Style implements skills.VoiceController.
@@ -263,16 +292,16 @@ func voiceCommand(ctx context.Context, rest string, v *voiceState, a *agent.Agen
 	switch sub {
 	case "":
 		fmt.Printf("  %s\n", v.describe())
-		fmt.Printf("  voice mode is %s\n", onOff(v.enabled))
+		fmt.Printf("  voice mode is %s\n", onOff(v.voiceOn()))
 		return false, nil
 
 	case "on":
-		v.enabled = true
+		v.setVoice(true)
 		fmt.Printf("  voice mode on — press Enter to speak, /voice off to stop\n")
 		return false, nil
 
 	case "off":
-		v.enabled = false
+		v.setVoice(false)
 		v.session.Interrupt()
 		fmt.Println("  voice mode off")
 		return false, nil

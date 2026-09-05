@@ -1055,3 +1055,28 @@ func sideEffects(tab *openTab, since time.Time, before tabSet) string {
 	}
 	return browser.Describe(tab.client.Since(since)) + openedTabs(tab.ctx, before)
 }
+
+// Tab is one of the tabs she is driving, for anything that displays them.
+type Tab struct {
+	Name string
+	URL  string
+	Ctx  string
+}
+
+// Open reports the tabs she has open and where each one is.
+//
+// A copy, and only the tabs SHE drives — the browser may have others open that
+// she has not attached to, which browser_tabs reports separately because the
+// difference matters when a click opens one.
+func (t *Tabs) Open() []Tab {
+	if t == nil {
+		return nil
+	}
+	tabs := t.list()
+	out := make([]Tab, 0, len(tabs))
+	for _, tab := range tabs {
+		out = append(out, Tab{Name: tab.name, URL: tab.lastURL, Ctx: string(tab.ctx)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}

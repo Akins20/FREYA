@@ -54,7 +54,7 @@ func notifier(vs *voiceState, speak bool) func(sentinel.Observation) {
 		fmt.Printf("\n%s%s %s%s\n%s❯%s ", colour, marker, o.Summary, cReset, cCyan, cReset)
 
 		// Critical things are worth saying out loud when voice is active.
-		if speak && vs != nil && vs.enabled && o.Urgency >= sentinel.UrgencyImportant {
+		if speak && vs != nil && vs.voiceOn() && o.Urgency >= sentinel.UrgencyImportant {
 			go func() { _ = vs.session.Speak(context.Background(), o.Summary) }()
 		}
 	}

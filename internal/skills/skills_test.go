@@ -162,7 +162,7 @@ func TestWebSkillsWithoutKeyFailClearly(t *testing.T) {
 func TestNotesLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	r := New()
-	if err := RegisterNotes(r, dir); err != nil {
+	if _, err := RegisterNotes(r, dir); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -205,7 +205,7 @@ func TestNotesPersistAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 
 	r1 := New()
-	if err := RegisterNotes(r1, dir); err != nil {
+	if _, err := RegisterNotes(r1, dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r1.Execute(context.Background(), "note_add",
@@ -214,7 +214,7 @@ func TestNotesPersistAcrossReopen(t *testing.T) {
 	}
 
 	r2 := New()
-	if err := RegisterNotes(r2, dir); err != nil {
+	if _, err := RegisterNotes(r2, dir); err != nil {
 		t.Fatal(err)
 	}
 	out, err := r2.Execute(context.Background(), "note_list", nil)

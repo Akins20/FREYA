@@ -56,7 +56,7 @@ func everything(t *testing.T) *Registry {
 		t.Fatal(perr)
 	}
 	RegisterFiles(r, g, places)
-	if err := RegisterNotes(r, dir); err != nil {
+	if _, err := RegisterNotes(r, dir); err != nil {
 		t.Fatal(err)
 	}
 	tasks, terr := schedule.Open(dir)

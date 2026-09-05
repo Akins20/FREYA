@@ -518,3 +518,38 @@ func designBrief() string {
 		"measured from your own past work and every one of them names something you have " +
 		"actually done:]\n\n" + s.Body
 }
+
+// Served is one of her servers, and whether the address still answers.
+type Served struct {
+	Port  int
+	Dir   string
+	Alive bool
+}
+
+// Serving reports what she has running.
+//
+// From the same two sources serve_list reads — the terminal sessions named
+// serve-N and the port record beside them — so there is one answer rather than
+// two that can disagree. Liveness is asked of the port rather than inferred from
+// the bookkeeping, because a session record outlives a server that died.
+func Serving(terminals *term.Manager) []Served {
+	if terminals == nil {
+		return nil
+	}
+	var out []Served
+	for _, sess := range terminals.List() {
+		if !strings.HasPrefix(sess.Name, "serve-") {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimPrefix(sess.Name, "serve-"))
+		if err != nil {
+			continue
+		}
+		serving.Lock()
+		dir := serving.dir[port]
+		serving.Unlock()
+		out = append(out, Served{Port: port, Dir: dir, Alive: busy(port)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Port < out[j].Port })
+	return out
+}

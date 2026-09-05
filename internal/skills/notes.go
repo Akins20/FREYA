@@ -25,6 +25,14 @@ type Note struct {
 }
 
 // noteBook is a small JSON-backed collection kept beside the memory store.
+// NoteBook is her notes, exported so the window can show reminders without
+// re-reading the file.
+//
+// The in-memory copy is mutated before save(), so a reader that opened the JSON
+// itself would show a panel disagreeing with the tool that had just run. One
+// copy, one answer — the same reason RegisterPlaces hands back its PlaceBook.
+type NoteBook = noteBook
+
 type noteBook struct {
 	mu    sync.Mutex
 	path  string
@@ -62,10 +70,10 @@ func (nb *noteBook) save() error {
 }
 
 // RegisterNotes adds note and reminder skills backed by dir.
-func RegisterNotes(r *Registry, dir string) error {
+func RegisterNotes(r *Registry, dir string) (*NoteBook, error) {
 	nb, err := openNoteBook(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r.Register(Skill{
@@ -225,7 +233,7 @@ func RegisterNotes(r *Registry, dir string) error {
 		},
 	})
 
-	return nil
+	return nb, nil
 }
 
 // parseDue accepts RFC3339 timestamps, a date, or a relative offset such as
@@ -280,4 +288,35 @@ func DueReminders(dir string) func() ([]string, error) {
 		}
 		return due, nil
 	}
+}
+
+// Outstanding returns the notes still open, soonest due first.
+//
+// A copy, because the window polls this while note_add may be writing.
+func (nb *noteBook) Outstanding() []Note {
+	if nb == nil {
+		return nil
+	}
+	nb.mu.Lock()
+	defer nb.mu.Unlock()
+	var out []Note
+	for _, n := range nb.Notes {
+		if !n.Done {
+			out = append(out, n)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// Dated first and soonest first; undated keep their order behind them,
+		// because a note with no due time is not late, it is just a note.
+		switch {
+		case out[i].Due != nil && out[j].Due != nil:
+			return out[i].Due.Before(*out[j].Due)
+		case out[i].Due != nil:
+			return true
+		case out[j].Due != nil:
+			return false
+		}
+		return out[i].Created.Before(out[j].Created)
+	})
+	return out
 }

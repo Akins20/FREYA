@@ -62,6 +62,7 @@ func main() {
 		install   = flag.Bool("install-service", false, "write a systemd user unit and enable it")
 		talk      = flag.Bool("talk", false, "trigger one push-to-talk exchange in the running daemon")
 		autonomy  = flag.Bool("yes", false, "auto-approve routine actions (writes, commands); still refuses the destructive")
+		window    = flag.Bool("gui", false, "open her window: a served page in a Chrome application window")
 	)
 	flag.Parse()
 	initColors()
@@ -95,13 +96,13 @@ func main() {
 		return
 	}
 
-	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize, *autonomy); err != nil {
+	if err := run(*oneShot, *provider, *model, *verbose, *dryRun, *daemonize, *autonomy, *window); err != nil {
 		fmt.Fprintf(os.Stderr, "%sfreya: %v%s\n", cRed, err, cReset)
 		os.Exit(1)
 	}
 }
 
-func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemonize, autonomous bool) error {
+func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemonize, autonomous, window bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -252,7 +253,8 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	if seer, ok := provider.(llm.VisionAnalyzer); ok {
 		skills.RegisterVision(reg, seer)
 	}
-	if err := skills.RegisterNotes(reg, cfg.DataDir); err != nil {
+	notebook, err := skills.RegisterNotes(reg, cfg.DataDir)
+	if err != nil {
 		return err
 	}
 
@@ -367,36 +369,56 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		return out
 	}
 	skills.RegisterReflection(reg, refl)
-	// Interim narration: shown at once, and spoken when voice is on, so a slow
-	// lookup is filled with speech rather than silence.
-	a.OnInterim = func(text string) {
-		fmt.Printf("%s%s%s\n", cDim, text, cReset)
-	}
 
-	// The thinking window — her reasoning before each step, shown so her decisions
-	// are legible and inspectable. Rendered distinctly (a thought bubble, dim and
-	// indented) so it never reads as something she said. Printed to stdout in the
-	// REPL and, in the daemon, carried to the journal by the log wrapper below.
-	a.OnThought = func(text string) {
-		for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				fmt.Printf("%s  💭 %s%s\n", cDim, line, cReset)
-			}
+	// Her trace goes to one hub and everyone who wants it subscribes.
+	//
+	// Set once, here, and never reassigned. Three things wanted these fields —
+	// the terminal, the daemon's speaker, the window — and the last one to assign
+	// used to win, silently taking the trace off whoever assigned first. Worse,
+	// the window swapped them per turn, writing fields another goroutine was
+	// reading. See trace.go.
+	trace := newTraceHub()
+	a.OnThought = func(text string) { trace.emit("thought", "", text) }
+	a.OnInterim = func(text string) { trace.emit("interim", "", text) }
+	a.OnTool = func(event, name, detail string) {
+		switch event {
+		case "start":
+			trace.emit("tool-start", name, detail)
+		case "error":
+			trace.emit("tool-error", name, detail)
+		default:
+			trace.emit("tool-ok", name, detail)
 		}
 	}
 
-	if cfg.Verbose {
-		a.OnTool = func(event, name, detail string) {
-			switch event {
-			case "start":
-				fmt.Printf("%s  → %s %s%s\n", cDim, name, detail, cReset)
-			case "error":
-				fmt.Printf("%s  ✗ %s: %s%s\n", cRed, name, detail, cReset)
-			default:
+	// The terminal is the first subscriber. Interim narration is shown at once so
+	// a slow lookup is not silence; the thinking window is rendered distinctly —
+	// dim, indented, a bubble — so it never reads as something she said; the tool
+	// trace only when asked for.
+	trace.Add(func(kind, name, text string) {
+		switch kind {
+		case "interim":
+			fmt.Printf("%s%s%s\n", cDim, text, cReset)
+		case "thought":
+			for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					fmt.Printf("%s  💭 %s%s\n", cDim, line, cReset)
+				}
+			}
+		case "tool-start":
+			if cfg.Verbose {
+				fmt.Printf("%s  → %s %s%s\n", cDim, name, text, cReset)
+			}
+		case "tool-error":
+			if cfg.Verbose {
+				fmt.Printf("%s  ✗ %s: %s%s\n", cRed, name, text, cReset)
+			}
+		case "tool-ok":
+			if cfg.Verbose {
 				fmt.Printf("%s  ✓ %s%s\n", cDim, name, cReset)
 			}
 		}
-	}
+	})
 
 	// Proactivity: watchers run in the background and only speak when an
 	// observation clears the salience bar.
@@ -511,9 +533,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 				// you ask her to do something, she says nothing, and things
 				// start happening. Speaking the interim line is how she tells
 				// you "on it, opening your portal" before she opens it.
-				printInterim := a.OnInterim
-				a.OnInterim = func(text string) {
-					printInterim(text)
+				// A subscriber rather than a wrapper. Wrapping meant whoever
+				// assigned OnInterim afterwards silently dropped the speaking, and
+				// it made the window's own swap overwrite it entirely.
+				trace.Add(func(kind, _, text string) {
+					if kind != "interim" {
+						return
+					}
 					// Only what is fit to say. See speakableNarration: the model's
 					// working-out arrives down this channel too, and it was being
 					// read aloud — tool names, arguments with itself, thirty lines
@@ -521,7 +547,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 					if line, ok := speakableNarration(text); ok {
 						go func() { _ = vs.session.Speak(context.Background(), line) }()
 					}
-				}
+				})
 			}
 		}
 
@@ -769,14 +795,13 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		}
 		vs = nil
 	} else if cfg.Voice {
-		vs.enabled = true
+		vs.setVoice(true)
 	}
 	if vs != nil {
-		// Speak the interim line too, so voice mode has no dead air.
-		spoken := a.OnInterim
-		a.OnInterim = func(text string) {
-			spoken(text)
-			if !vs.enabled {
+		// Speak the interim line too, so voice mode has no dead air. A subscriber,
+		// like the daemon's, so neither can overwrite the other or the terminal.
+		trace.Add(func(kind, _, text string) {
+			if kind != "interim" || !vs.voiceOn() {
 				return
 			}
 			// Same filter as the daemon path. Two wirings, one rule, so voice mode
@@ -784,7 +809,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			if line, ok := speakableNarration(text); ok {
 				go func() { _ = vs.session.Speak(context.Background(), line) }()
 			}
-		}
+		})
 	}
 
 	sen.Notify = notifier(vs, true)
@@ -798,6 +823,20 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	defer ind.close()
 	if vs != nil {
 		vs.indicator = ind
+	}
+
+	// The window, when asked for. It runs alongside the REPL rather than instead
+	// of it: the same agent answers both, and the terminal stays where the tool
+	// trace and any confirmation still go — so nothing is lost by preferring the
+	// window, and a turn started in one is visible in the other.
+	if window {
+		src := &guiSources{
+			cfg: cfg, agent: a, notes: notebook, tasks: selfTasks,
+			sentinel: sen, tabs: browserTabs, terminals: terminals, voice: vs,
+		}
+		if err := startGUI(ctx, a, store, src, cfg.DataDir); err != nil {
+			return err
+		}
 	}
 
 	return repl(ctx, a, cfg, store, index, persona, vs, stdin, sen, ind)
@@ -865,7 +904,7 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			// In voice mode a bare Enter is the push-to-talk trigger.
-			if vs != nil && vs.enabled {
+			if vs != nil && vs.voiceOn() {
 				if err := spokenTurn(ctx, a, cfg, vs); err != nil {
 					fmt.Printf("%s%v%s\n", cRed, err, cReset)
 				}
@@ -886,7 +925,17 @@ func repl(ctx context.Context, a *agent.Agent, cfg *config.Config,
 
 		start := time.Now()
 		done := ind.working()
-		res, err := a.Ask(ctx, line)
+		// Registered like every other exchange. The REPL was the last surface that
+		// was not: nothing stopped a typed turn and a spoken or window turn running
+		// at once on one archive, which internal/memory/journal.go describes as
+		// interleaving into one deranged conversation and collapsing the cached
+		// prefix for both.
+		//
+		// A consequence worth naming: a spoken "stop" will now cancel a typed turn.
+		// That is what the word means.
+		turnCtx, endTurn := beginTurn(ctx, "working on: "+clipLine(line, 60))
+		res, err := a.Ask(turnCtx, line)
+		endTurn()
 		done()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -1075,14 +1124,11 @@ func command(ctx context.Context, line string, a *agent.Agent, cfg *config.Confi
 		return false, nil
 
 	case "/verbose":
+		// Only the flag. The terminal's subscriber reads cfg.Verbose at the moment
+		// it prints, so flipping it here is enough — and assigning a.OnTool from a
+		// slash command, which is what this used to do, is now a data race with the
+		// three other things subscribed to the trace. See trace.go.
 		cfg.Verbose = !cfg.Verbose
-		if cfg.Verbose {
-			a.OnTool = func(event, name, detail string) {
-				fmt.Printf("%s  → %s %s%s\n", cDim, name, detail, cReset)
-			}
-		} else {
-			a.OnTool = nil
-		}
 		fmt.Printf("  verbose %v\n", cfg.Verbose)
 		return false, nil
 

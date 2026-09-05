@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Freya</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <aside id="sidebar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M20 4 L34 12 L34 28 L20 36 L6 28 L6 12 Z" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M14 26 L14 14 L26 14 M14 20 L23 20" fill="none"
+              stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">FREYA</span>
+    </div>
+
+    <button id="new-chat" class="ghost wide">New conversation</button>
+
+    <div class="rail-label">Recent</div>
+    <div id="history" class="history"></div>
+
+    <div class="rail-foot">
+      <button id="theme" class="ghost" title="Light or dark">Theme</button>
+      <span id="conn" class="conn" title="Connection to Freya">connecting</span>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <div id="title">New conversation</div>
+      <div id="status"></div>
+    </header>
+
+    <div id="thread" class="thread">
+      <div class="empty">
+        <svg class="mark big" viewBox="0 0 40 40" aria-hidden="true">
+          <path d="M20 4 L34 12 L34 28 L20 36 L6 28 L6 12 Z" fill="none"
+                stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M14 26 L14 14 L26 14 M14 20 L23 20" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <p>Ask her something, or give her something to do.</p>
+      </div>
+    </div>
+
+    <form id="composer" autocomplete="off">
+      <textarea id="input" rows="1" placeholder="Message Freya…"
+                aria-label="Message Freya"></textarea>
+      <button id="send" type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 20 L20 12 L4 4 L6 12 Z" fill="currentColor"/>
+        </svg>
+      </button>
+    </form>
+    <div id="hint">Enter to send · Shift+Enter for a new line</div>
+  </main>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
