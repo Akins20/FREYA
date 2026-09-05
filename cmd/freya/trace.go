@@ -40,6 +40,7 @@ type traceHub struct {
 //	tool-start   a tool was called; name is set, text is the arguments
 //	tool-ok      it succeeded
 //	tool-error   it failed; text is why
+//	retry        she decided to go round again; name is why, text is the detail
 //
 // A spoken exchange publishes the same way, because from the window's side a
 // voice turn and a typed one are the same turn arriving through a different

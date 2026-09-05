@@ -54,8 +54,8 @@ var assets embed.FS
 // the front end has to understand deeply is a shape that has to change whenever
 // she does.
 type Event struct {
-	// thought | interim | tool | reply | error | stopped | done | confirm
-	// | confirm-timeout | heard | speaking | listening
+	// thought | interim | tool | retry | reply | error | stopped | done
+	// | confirm | confirm-timeout | heard | speaking | listening
 	Kind string `json:"kind"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name, for kind=tool

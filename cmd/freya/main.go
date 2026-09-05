@@ -453,6 +453,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			trace.emit("tool-start", name, detail)
 		case "error":
 			trace.emit("tool-error", name, detail)
+		case "retry":
+			// Its own kind. It used to fall into the default with "ok", so the
+			// agent deciding to go round again — "unfinished", "unreviewed",
+			// "sources" — was drawn as a tool that had succeeded, with a tick
+			// beside a name that is not a tool at all.
+			trace.emit("retry", name, detail)
 		default:
 			trace.emit("tool-ok", name, detail)
 		}
@@ -483,6 +489,10 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 		case "tool-ok":
 			if cfg.Verbose {
 				fmt.Printf("%s  ✓ %s%s\n", cDim, name, cReset)
+			}
+		case "retry":
+			if cfg.Verbose {
+				fmt.Printf("%s  ↻ going round again: %s%s\n", cDim, name, cReset)
 			}
 		}
 	})

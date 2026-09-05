@@ -293,6 +293,10 @@ func windowTrace(srv *gui.Server) TraceFunc {
 			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &yes})
 		case "tool-error":
 			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &no})
+		case "retry":
+			// Not a tool. She looked at what she had and decided to go round again,
+			// and drawing that as a successful call put a tick next to "unfinished".
+			srv.Emit(gui.Event{Kind: "retry", Name: name, Text: text})
 
 		// A spoken exchange, rendered as the turn it is. Without these the window
 		// sits blank from the moment the microphone opens until she answers out

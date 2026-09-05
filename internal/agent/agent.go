@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -849,13 +850,24 @@ func (a *Agent) trace(event, name, detail string) {
 	}
 }
 
+// formatArgs renders a call's arguments for the trace.
+//
+// Sorted, because a map iterates in a different order every time and this string
+// is shown to a person. Unsorted, the same call rendered "path=x reason=y" on one
+// turn and "reason=y path=x" on the next, which reads as two different calls when
+// you are scanning a list of them.
 func formatArgs(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(args))
-	for k, v := range args {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, truncate(fmt.Sprint(v), 80)))
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, truncate(fmt.Sprint(args[k]), 80)))
 	}
 	return strings.Join(parts, " ")
 }

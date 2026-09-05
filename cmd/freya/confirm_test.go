@@ -322,6 +322,7 @@ func TestASpokenExchangeReachesTheWindow(t *testing.T) {
 		{"thought", "", "she needs the portal"},
 		{"tool-start", "browser_open", "portal"},
 		{"tool-ok", "browser_open", ""},
+		{"retry", "unreviewed", "nothing looked at the page"},
 		{"speaking", "", "opening it now"},
 		{"spoken", "", "Done — it's open."},
 		{"turn-done", "", ""},
@@ -340,9 +341,12 @@ func TestASpokenExchangeReachesTheWindow(t *testing.T) {
 		"heard":     "open my portal",
 		"thought":   "she needs the portal",
 		"tool":      "", // browser_open, twice: start then ok
-		"speaking":  "opening it now",
-		"reply":     "Done — it's open.",
-		"done":      "",
+		// A retry is her deciding to go round again, not a tool that succeeded.
+		// It used to arrive as a green tick beside a name like "unreviewed".
+		"retry":    "nothing looked at the page",
+		"speaking": "opening it now",
+		"reply":    "Done — it's open.",
+		"done":     "",
 	}
 	seen := map[string]string{}
 	for len(seen) < len(want) {
