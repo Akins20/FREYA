@@ -1111,3 +1111,46 @@ func TestEveryAnimationTheSheetAsksForExists(t *testing.T) {
 			"simply sits still", strings.Join(missing, ", "))
 	}
 }
+
+// The renderer has a branch for every markdown construct her replies contain.
+//
+// This is a source-level test and it is worth being honest about what that buys:
+// it cannot tell you the output is right, only that the code which produces it
+// has not been deleted. That is the failure it is for. Blockquotes had NO branch
+// at all, so a page she had quoted fell through to the paragraph case and came
+// out as one run-on line with the > markers still in it — and nothing anywhere
+// said so, because a renderer that drops a construct produces plausible text
+// rather than an error.
+//
+// The behaviour itself is verified by driving the real window and reading the
+// DOM back, which needs a browser and does not belong in this suite.
+func TestTheRendererHandlesWhatSheActuallyWrites(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(js)
+
+	for _, c := range []struct{ construct, evidence, cost string }{
+		{"fenced code", "split(/```/)", "a code block prints with its fences and no monospace"},
+		{"blockquote", `^\s*>`, "a quoted page becomes one run-on line with > still in it"},
+		{"heading", `#{1,4}`, "a heading prints its own hashes"},
+		{"bullet list", `[-*+]\s+`, "every bullet prints its own dash"},
+		{"numbered list", `\d+[.)]`, "every item prints its own number twice"},
+		{"horizontal rule", "appendChild(document.createElement('hr'))", "a rule prints as ---"},
+		{"inline code, bold, italic", "`[^`]+`", "her emphasis prints as asterisks"},
+	} {
+		if !strings.Contains(script, c.evidence) {
+			t.Errorf("app.js has no branch for %s (looked for %q).\n"+
+				"Without it: %s — and nothing reports it, because a renderer that "+
+				"drops a construct produces plausible text rather than an error.",
+				c.construct, c.evidence, c.cost)
+		}
+	}
+
+	// A quote inside a quote inside a quote is not something she writes, and a
+	// reply that nested without limit would recurse as deep as it liked.
+	if !strings.Contains(script, "depth < 3") {
+		t.Error("the blockquote recursion has no depth bound")
+	}
+}

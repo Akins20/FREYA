@@ -534,17 +534,52 @@ function inline(parent, text) {
 }
 
 // blocks turns one prose chunk into paragraphs, headings and lists.
-function blocks(body, chunk) {
+function blocks(body, chunk, depth) {
+  depth = depth || 0;
   const lines = chunk.split('\n');
   let list = null;      // the <ul>/<ol> being filled
   let para = null;      // the <p> being filled
+  let quote = null;     // the lines of the > block being collected
 
   const endPara = () => { para = null; };
   const endList = () => { list = null; };
 
+  // A quote is collected whole and then parsed as its own document, so a list or
+  // a second paragraph inside one comes out as a list or a second paragraph.
+  const endQuote = () => {
+    if (!quote) return;
+    const q = document.createElement('blockquote');
+    body.appendChild(q);
+    // Bounded. She writes quotes; she does not write quotes of quotes of quotes,
+    // and a reply that did would otherwise recurse as deep as it liked.
+    if (depth < 3) blocks(q, quote.join('\n'), depth + 1);
+    else q.appendChild(document.createTextNode(quote.join(' ')));
+    quote = null;
+  };
+
   for (const raw of lines) {
     const line = raw.trimEnd();
-    if (!line.trim()) { endPara(); endList(); continue; }
+    if (!line.trim()) { endPara(); endList(); endQuote(); continue; }
+
+    // Blockquotes. Without this branch a quoted line fell through to the
+    // paragraph case and consecutive ones were joined with spaces, so a page she
+    // had quoted came out as one run-on line with the > markers still in it.
+    const quoted = line.match(/^\s*>\s?(.*)$/);
+    if (quoted) {
+      endPara(); endList();
+      if (!quote) quote = [];
+      quote.push(quoted[1]);
+      continue;
+    }
+    endQuote();
+
+    // A rule. Three or more of - * _ on their own line, which is not a bullet
+    // because a bullet needs a space after it — so this used to print as "---".
+    if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) {
+      endPara(); endList();
+      body.appendChild(document.createElement('hr'));
+      continue;
+    }
 
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
@@ -575,6 +610,7 @@ function blocks(body, chunk) {
     else para.appendChild(document.createTextNode(' '));
     inline(para, line);
   }
+  endQuote();
 }
 
 // The body of a turn, with her working sealed behind it.

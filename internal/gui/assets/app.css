@@ -227,6 +227,23 @@ button.wide { width: 100%; text-align: left; }
   overflow-x: auto;
 }
 .turn.freya .body pre code { background: none; border: 0; padding: 0; }
+/* Something she is quoting rather than saying: a page she read, a line from a
+   file, an error somebody else wrote. It has to be visibly not her voice. */
+.turn.freya .body blockquote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 13px;
+  border-left: 2px solid var(--edge);
+  color: var(--text-2);
+}
+.turn.freya .body blockquote > :last-child { margin-bottom: 0; }
+.turn.freya .body blockquote blockquote { margin-top: 8px; }
+
+.turn.freya .body hr {
+  border: 0;
+  border-top: 1px solid var(--edge);
+  margin: 16px 0;
+}
+
 .turn.freya .body strong { font-weight: 640; color: var(--text); }
 .turn.freya .body em { font-style: italic; color: var(--text-2); }
 .turn.freya .body h3 {
