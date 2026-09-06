@@ -59,7 +59,11 @@ type Event struct {
 	Kind string `json:"kind"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name, for kind=tool
-	OK   *bool  `json:"ok,omitempty"`   // tool outcome, once known
+	// Call identifies one invocation, so the window can pair a finish with its
+	// own start. A round's tools run concurrently, so two calls to one tool at
+	// once is ordinary and the name alone does not say which is which.
+	Call string `json:"call,omitempty"`
+	OK   *bool  `json:"ok,omitempty"` // tool outcome, once known
 }
 
 // ErrStopped is a turn that was superseded or called off rather than one that
@@ -715,6 +719,12 @@ func (s *Server) Confirm(ctx context.Context, command, reason, risk, preview str
 	case <-ctx.Done():
 		// The turn was called off, not refused — but the caller is going away
 		// either way, so there is nothing left to route to.
+		//
+		// Tell the window first. Behind a modal this did not show, because the
+		// next finish() tore the dialog down; as a card in the thread the question
+		// would sit there open and answerable forever, against a turn that no
+		// longer exists.
+		s.Emit(Event{Kind: "confirm-timeout", Text: id})
 		return false, true
 	case <-time.After(confirmWait):
 		s.Emit(Event{Kind: "confirm-timeout", Text: id})

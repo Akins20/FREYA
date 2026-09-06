@@ -198,6 +198,37 @@ Voice in the window presses `pushToTalk` — her existing pipeline, verification
 included. Do not add `getUserMedia`: it is a second recorder on one device, and
 audio from a web page has walked around the voiceprint.
 
+### How a turn is drawn
+
+One attribute, `data-phase` on `aside.work`, with three values and three writers
+(`beginFreyaTurn` → `live`, `sealWork` → `fresh`, `settle` → `settled`). Nothing
+is created or re-parented between them; CSS renders the same subtree three ways.
+The demotion fires when the **next** turn starts, so the thread quiets behind
+you — that one line is most of the answer to a scrollback full of boxes
+summarising work nobody is looking at.
+
+Four invariants, each with a test:
+
+- **No code path runs from a thought to the waterfall.** `say()` writes the
+  one-line slot and the fold; `addCall()` writes the flow. The shared `trace()`
+  sink they both used is deleted, so there is nowhere to put both.
+- **A group of one has no group chrome**, and a group with a failure in it never
+  folds — not on close, not at `fresh`. A failure you have to click to find is a
+  failure you do not see.
+- **Nothing in the flow re-sorts.** Grouping folds *consecutive* entries of one
+  family; a waterfall that reorders is a lie about time.
+- **Zero `innerHTML`.** Tool names, arguments, error text and archive content all
+  go in as `textContent`, which makes the XSS boundary a grep.
+
+`Event.Call` identifies one invocation. A round's tools run on separate
+goroutines, so six `file_read` at once is ordinary, and pairing a finish to a
+start by name alone was a guess — survivable when a call was one dot, a visible
+lie now the row carries arguments, a duration, a bar and an error message.
+
+The permission request is a card in the thread, appended to `#thread` and never
+to the turn: a confirm can arrive with no turn running and can be replayed to a
+window that connects late, so there may be no turn to write into.
+
 ### Provider abstraction
 
 `internal/llm/llm.go` defines neutral `Message`/`Tool`/`Response` types. Each provider

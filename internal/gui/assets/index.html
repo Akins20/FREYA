@@ -37,7 +37,8 @@
   <main id="main">
     <header id="topbar">
       <div id="title">New conversation</div>
-      <div id="status"></div>
+      <button id="pending" class="ghost pend" type="button" hidden
+              title="She is waiting on an answer">1 waiting</button>
       <button id="stop" class="ghost stop" type="button" hidden
               title="Cancel what she is doing">Stop</button>
       <button id="inspect" class="ghost" type="button" aria-pressed="true"
@@ -65,7 +66,7 @@
                 stroke-width="2" stroke-linecap="round"/>
         </svg>
       </button>
-      <textarea id="input" rows="1" placeholder="Message Freya…"
+      <textarea id="input" rows="1" placeholder="Message Freya — Enter to send"
                 aria-label="Message Freya"></textarea>
       <button id="send" type="submit" aria-label="Send">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -73,7 +74,6 @@
         </svg>
       </button>
     </form>
-    <div id="hint">Enter to send · Shift+Enter for a new line · tap the mic and speak</div>
   </main>
 
   <!-- What she has on. Every panel here is read from the thing that already
@@ -86,29 +86,6 @@
     <div id="ins-model" class="ins-model"></div>
     <div id="panels"></div>
   </aside>
-
-  <div id="confirm-veil" class="veil" hidden>
-    <div id="confirm" class="sheet" role="alertdialog" aria-modal="true"
-         aria-labelledby="confirm-head">
-      <div class="sheet-head">
-        <span id="confirm-risk" class="risk"></span>
-        <span id="confirm-head">She wants to do this</span>
-        <span id="confirm-clock" class="clock"></span>
-      </div>
-      <pre id="confirm-cmd" class="cmd"></pre>
-      <div id="confirm-why" class="why"></div>
-      <div id="confirm-effect" class="effect"></div>
-      <label id="confirm-typed" class="typed" hidden>
-        This cannot be undone. Type <b>yes</b> to allow it.
-        <input id="confirm-word" type="text" autocomplete="off" spellcheck="false"
-               aria-label="Type yes to allow">
-      </label>
-      <div class="sheet-foot">
-        <button id="confirm-no" class="ghost" type="button">Don't</button>
-        <button id="confirm-yes" class="danger" type="button">Allow</button>
-      </div>
-    </div>
-  </div>
 
 </div>
 <script src="app.js"></script>

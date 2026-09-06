@@ -57,8 +57,11 @@ type Agent struct {
 	// is just slow.
 	Reflector *reflect.Reflector
 
-	// OnTool is called before and after each tool execution, for tracing.
-	OnTool func(event, name, detail string)
+	// OnTool is called before and after each tool execution, for tracing. call
+	// identifies one invocation, so a finish can be paired with its own start
+	// when several calls to one tool are in flight at once; it is empty for
+	// events that are not a single tool call.
+	OnTool func(event, name, call, detail string)
 	// OnInterim receives text the model produced *alongside* tool calls —
 	// "hang on, let me look that up". Surfacing it is what lets her speak
 	// mid-action instead of going silent for the length of a web search.
@@ -528,7 +531,10 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 				return
 			}
 
-			a.trace("start", call.Name, formatArgs(call.Args))
+			// Unique within the exchange: round and index, both of which this
+			// closure already has.
+			callID := fmt.Sprintf("%s-r%d-%d", exchangeID, round, i)
+			a.traceCall("start", call.Name, callID, formatArgs(call.Args))
 
 			started := time.Now()
 			output, err := a.Skills.Execute(ctx, call.Name, call.Args)
@@ -543,9 +549,9 @@ func (a *Agent) Ask(ctx context.Context, input string) (*Result, error) {
 				// Errors go back to the model as text: a failed tool is
 				// information it can act on, not a reason to abort the turn.
 				output = "ERROR: " + err.Error()
-				a.trace("error", call.Name, err.Error())
+				a.traceCall("error", call.Name, callID, err.Error())
 			} else {
-				a.trace("ok", call.Name, truncate(output, 200))
+				a.traceCall("ok", call.Name, callID, truncate(output, 200))
 			}
 			failedAt[i] = err != nil
 			outputs[i] = output
@@ -845,8 +851,25 @@ func fenceBlock(source, body string) string {
 }
 
 func (a *Agent) trace(event, name, detail string) {
+	a.traceCall(event, name, "", detail)
+}
+
+// traceCall is trace with the identity of one invocation attached.
+//
+// # Why a call needs an id at all
+//
+// A round's tools run on separate goroutines, so two calls to the same tool in
+// one round are ordinary — six file_read in one round is a normal thing for her
+// to do. Without an id the only way to pair a finish with its start is by name,
+// and the answer is a guess: the window drew six overlapping bars and could not
+// say which duration belonged to which path. That was survivable while a call
+// was one grey dot. It is not survivable now the row carries the arguments, the
+// duration, a position on a time axis and the error text, because a mispairing
+// prints one call's failure beside another call's arguments — a visible lie
+// rather than a mis-coloured dot.
+func (a *Agent) traceCall(event, name, call, detail string) {
 	if a.OnTool != nil {
-		a.OnTool(event, name, detail)
+		a.OnTool(event, name, call, detail)
 	}
 }
 

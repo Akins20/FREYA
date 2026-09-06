@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -617,17 +618,16 @@ func TestEveryControlInThePageIsWiredUp(t *testing.T) {
 
 	// id -> the event it must handle. A control with no handler is furniture.
 	controls := map[string]string{
-		"new-chat":     "click",
-		"theme":        "click",
-		"inspect":      "click",
-		"voice":        "click",
-		"mic":          "click",
-		"stop":         "click",
-		"confirm-yes":  "click",
-		"confirm-no":   "click",
-		"confirm-word": "input",
-		"composer":     "submit",
-		"input":        "keydown",
+		"new-chat": "click",
+		"theme":    "click",
+		"inspect":  "click",
+		"voice":    "click",
+		"mic":      "click",
+		"stop":     "click",
+		"pending":  "click",
+		"thread":   "click",
+		"composer": "submit",
+		"input":    "keydown",
 	}
 	for id, event := range controls {
 		if !strings.Contains(page, `id="`+id+`"`) {
@@ -913,4 +913,201 @@ func (l *lockedRecorder) body() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.ResponseRecorder.Body.String()
+}
+
+// Nothing in this window builds markup out of text.
+//
+// Tool names, arguments, error text, her replies and everything read back from
+// the archive all pass through here. textContent everywhere makes the XSS
+// boundary a one-line grep rather than a property somebody has to keep noticing;
+// the last two innerHTML assignments went with the trace box they were in.
+func TestTheWindowNeverBuildsMarkupFromText(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(js), "\n") {
+		code := line
+		if c := strings.Index(code, "//"); c >= 0 {
+			code = code[:c] // a comment may name it; an assignment may not
+		}
+		if strings.Contains(code, "innerHTML") || strings.Contains(code, "outerHTML") ||
+			strings.Contains(code, "insertAdjacentHTML") {
+			t.Errorf("app.js:%d builds markup from a string: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
+// Every event kind the server can emit is handled by the window.
+//
+// This is the test that would have caught `retry`: it has been on the wire since
+// the agent could decide to go round again, and app.js had no case for it, so it
+// was read off the stream and dropped on the floor. Nothing failed. The kinds are
+// read from Event.Kind's own doc comment, so the list cannot drift from the type
+// it documents.
+func TestEveryEventKindIsHandled(t *testing.T) {
+	src, err := os.ReadFile("gui.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The comment block immediately above `Kind string`.
+	i := strings.Index(string(src), "Kind string `json:\"kind\"`")
+	if i < 0 {
+		t.Fatal("Event.Kind has moved; this test reads the comment above it")
+	}
+	head := string(src)[:i]
+	start := strings.LastIndex(head, "// thought")
+	if start < 0 {
+		t.Fatal("the kind list above Event.Kind is gone")
+	}
+	var kinds []string
+	for _, tok := range strings.FieldsFunc(head[start:], func(r rune) bool {
+		return r == '|' || r == '\n' || r == ' ' || r == '\t'
+	}) {
+		if tok == "//" || tok == "" {
+			continue
+		}
+		kinds = append(kinds, tok)
+	}
+	if len(kinds) < 8 {
+		t.Fatalf("only parsed %d kinds from the doc comment: %v", len(kinds), kinds)
+	}
+
+	var missing []string
+	for _, k := range kinds {
+		if !strings.Contains(string(js), "case '"+k+"':") {
+			missing = append(missing, k)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("the window has no case for %d event kind(s): %s\n"+
+			"They are read off the stream and dropped, silently — which is what "+
+			"happened to `retry` for the whole of its life.",
+			len(missing), strings.Join(missing, ", "))
+	}
+}
+
+// A finish is paired with its own start, not with the last one wearing the same
+// name.
+//
+// A round's tools run on separate goroutines, so six file_read in one round is
+// ordinary. Paired by name the window could not say which duration, which
+// arguments and which error text belonged together — survivable while a call was
+// one grey dot, and a visible lie now the row carries all three.
+func TestAToolEventNamesTheInvocationNotJustTheTool(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "e.call") {
+		t.Error("app.js does not read the call id off the event, so it is back to " +
+			"pairing finishes by tool name")
+	}
+
+	// And the field really is on the wire.
+	yes := true
+	body, err := json.Marshal(Event{Kind: "tool", Name: "file_read", Call: "x-r1-3", OK: &yes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"call":"x-r1-3"`) {
+		t.Errorf("the call id does not survive encoding: %s", body)
+	}
+}
+
+// Every class the script puts on an element has a rule to draw it.
+//
+// Written after cutting a block of dead CSS took `.failed` and `@keyframes
+// pulse` out with it. Nothing failed: error messages simply rendered as plain
+// paragraphs and the "she is working" dot stopped moving, both of which look
+// like a design decision until you go looking. The classes are still set, the
+// element is still there, and the page is silently wrong — the same shape as
+// every other bug this window has produced.
+func TestEveryClassTheScriptSetsIsStyled(t *testing.T) {
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css, err := assets.ReadFile("assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, sheet := string(js), string(css)
+
+	// el('div', 'turn user'), className = '…', classList.add/toggle('…')
+	var used []string
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`el\('[a-z]+',\s*'([^']*)'`),
+		regexp.MustCompile(`className\s*=\s*'([^']*)'`),
+		regexp.MustCompile(`classList\.(?:add|toggle)\('([^']+)'`),
+	} {
+		for _, m := range re.FindAllStringSubmatch(script, -1) {
+			used = append(used, strings.Fields(m[1])...)
+		}
+	}
+
+	// Comments stripped first. A comment that MENTIONS a class counted as a rule
+	// that draws it, which is how the first version of this test passed while
+	// `.failed` had been deleted — the sentence "with none of .failed's alarm"
+	// was keeping it alive.
+	bare := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(sheet, " ")
+	styled := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\.([a-zA-Z][\w-]*)`).FindAllStringSubmatch(bare, -1) {
+		styled[m[1]] = true
+	}
+
+	// Names built by concatenation ('pill voice-' + st.voice) are matched by
+	// their prefix, and a couple carry a second class that does the drawing.
+	exempt := map[string]bool{"voice-": true, "perm-no": true, "perm-yes": true}
+
+	seen, missing := map[string]bool{}, []string{}
+	for _, c := range used {
+		if c == "" || seen[c] || exempt[c] || styled[c] {
+			continue
+		}
+		seen[c] = true
+		missing = append(missing, c)
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("app.js sets %d class(es) app.css never draws: %s\n"+
+			"The element is there and the page is silently wrong, which reads as a "+
+			"design decision rather than a missing rule.",
+			len(missing), strings.Join(missing, ", "))
+	}
+	if len(seen)+len(styled) < 20 {
+		t.Error("the patterns have stopped matching; this test is no longer checking anything")
+	}
+}
+
+// And the animations: a class that asks for one it does not have just sits still.
+func TestEveryAnimationTheSheetAsksForExists(t *testing.T) {
+	css, err := assets.ReadFile("assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := string(css)
+
+	defined := map[string]bool{}
+	for _, m := range regexp.MustCompile(`@keyframes\s+([\w-]+)`).FindAllStringSubmatch(sheet, -1) {
+		defined[m[1]] = true
+	}
+	var missing []string
+	for _, m := range regexp.MustCompile(`animation:\s*([\w-]+)`).FindAllStringSubmatch(sheet, -1) {
+		if m[1] == "none" || defined[m[1]] {
+			continue
+		}
+		missing = append(missing, m[1])
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("app.css animates %s, which is not defined anywhere — the element "+
+			"simply sits still", strings.Join(missing, ", "))
+	}
 }

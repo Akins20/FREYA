@@ -1857,3 +1857,89 @@ written for. Both now check the thing they claimed to.
 The tool count is no longer written down anywhere. A test forbids a count in
 prose and pins the registry instead, so adding or removing a tool fails the suite
 and somebody has to look at what the documents claim.
+
+## The conversation view, redesigned
+
+The complaint was precise: cluttered, does not flow, tool calls buried in the
+thinking block rather than in their own grouped waterfall, and permission asked
+in a modal rather than as a card in the chat. Five designs were built from
+different starting principles, judged on three criteria, and the winner —
+*a turn that puts itself away* — implemented with the best of the others grafted
+in.
+
+**One attribute drives a turn.** `data-phase` on `aside.work`, three values,
+three writers, and no node created or re-parented between them.
+
+- `live` — the trace IS the content and gets the full column.
+- `fresh` — the reply landed; one quiet line, one click back to the working.
+- `settled` — a newer turn exists; a column of hairline ticks in the gutter.
+
+The demotion fires when the **next** turn begins. That single line is most of the
+answer: a `details.trace` box was ~67px of chrome on every finished turn, so ten
+turns of scrollback carried ~670px of boxes summarising work nobody was looking
+at any more, plus a permanent 30px hint row and a topbar status slot that was the
+third place saying "listening".
+
+**Thoughts and tool calls are separated at the source.** `trace()` — the sink
+`addThought` and `addStep` both wrote into, which is *how* they re-merged — is
+deleted. `say()` writes a one-line slot plus a collapsed log; `addCall()` writes
+the flow. There is no longer a function that both can call.
+
+**The waterfall is real.** Each call carries `--s`/`--e` in milliseconds since
+the turn began, on one axis per turn (normalising per group would make a 40ms
+group look like a 40-second one). Bars use multiplication only, the span grows in
+1.5× steps and never shrinks within a turn, and a group's envelope is a hollow
+bar across its members' true span — so collapsing is a zoom-out, not a
+substitution. `.call-arg` puts the arguments on the row: they were already on the
+wire and thrown away.
+
+**Grouping: same family, adjacent, unbroken.** The family is the prefix up to the
+first underscore — the registry's own convention across 164 names — so a header
+says something true about a subsystem. A retry mark closes the open group,
+because that is the seam worth seeing. A group of one has no group chrome at all.
+
+**The permission card lives in the thread**, appended to `#thread` and never to
+the turn, because a confirm can arrive with no turn running and can be replayed
+mid-scrollback. It keeps every safety property of the modal — the preview
+carries the weight and now sits *above* the command, destructive needs the word
+"yes" typed in full, silence is a no with a visible clock — and adds what a modal
+got for free by disappearing: it deflates into a one-line record when answered,
+and `1 waiting` sits in the topbar while any card is open.
+
+### Bugs this turned up
+
+- **`retry` was drawn as a successful tool call.** Everything that was not
+  `start` or `error` fell through a `default:` to `ok`, so "unreviewed" got a
+  green tick. It had also never had a `case` in the front end at all.
+- **Concurrent calls could not be told apart.** A round's tools run on separate
+  goroutines; six `file_read` in one round is ordinary. Pairing by name resolved
+  them by luck. `Event.Call` makes it exact — necessary now the row carries
+  arguments, a duration, a bar and an error message, where a mispairing prints
+  one call's failure beside another call's arguments.
+- **`formatArgs` iterated a map**, so the same call rendered its arguments in a
+  different order every turn.
+- **`Confirm`'s `ctx.Done()` branch never emitted `confirm-timeout`.** Invisible
+  behind a modal the next `finish()` tore down; as a card it would sit open and
+  answerable forever against a turn that no longer exists.
+- **Every outstanding question but the first was thrown away.** The server
+  replays all of them on connect, with a comment explaining that a dropped
+  confirm reads as "declined by user" for something no human saw — and the front
+  end rendered `st.asking[0]` and dropped the rest, which is that exact refusal.
+- **Closing the Activity panel disabled confirm recovery**, because `pollState`
+  returned before the fetch.
+- **`finish()` declined every open question**, so a typed turn ending silently
+  refused a background job's. It declines only the ones its own turn raised now.
+
+### Three more tests that name their failure
+
+- `TestEveryEventKindIsHandled` reads the kind list off `Event.Kind`'s own doc
+  comment and requires a `case` for each. It catches `retry`, which had been on
+  the wire and dropped on the floor for its whole life.
+- `TestEveryClassTheScriptSetsIsStyled` — written after cutting a block of dead
+  CSS silently took `.failed` and `@keyframes pulse` with it. Errors rendered as
+  plain paragraphs and the working dot stopped moving; nothing failed. Its first
+  version passed anyway, because a *comment* mentioning `.failed` counted as a
+  rule — so it strips comments first, which is the only reason it works.
+- `TestTheWindowNeverBuildsMarkupFromText` — after this pass the string
+  `innerHTML` does not appear in app.js outside a comment, so the XSS boundary is
+  a one-line grep rather than a property somebody has to keep noticing.

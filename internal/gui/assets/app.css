@@ -23,6 +23,11 @@
      their own hex before there was anything that had to agree with them; the
      confirmation sheet is that thing. */
   --bad:     #d2694f;
+  /* How much amber a waterfall bar and a settled tick carry. Percentages rather
+     than colours, because the same translucency that reads on near-black smears
+     on warm white — so they belong beside the palette, not inside a rule. */
+  --wash:    20%;
+  --tick:    55%;
   --radius:  10px;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
@@ -38,6 +43,8 @@
   --edge:   #ded5c7;
   --amber:  #b8791a;
   --bad:    #b8452a;
+  --wash:   14%;
+  --tick:   75%;
 }
 
 * { box-sizing: border-box; }
@@ -136,7 +143,7 @@ button.wide { width: 100%; text-align: left; }
 }
 .conn { font-size: 11px; color: var(--mute); }
 .conn.live { color: var(--amber); }
-.conn.gone { color: #d2694f; }
+.conn.gone { color: var(--bad); }
 
 /* ---- the conversation --------------------------------------------------- */
 
@@ -154,7 +161,6 @@ button.wide { width: 100%; text-align: left; }
   color: var(--text-2);
 }
 #title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#status { color: var(--amber); font-size: 12px; flex: none; }
 
 .thread {
   flex: 1;
@@ -162,8 +168,12 @@ button.wide { width: 100%; text-align: left; }
   padding: 26px 20px 8px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  /* Wider between exchanges than within one. Every gap used to be 20px, so a
+     question, the box summarising her work, and her answer read as three
+     unrelated slabs — which is most of what "does not flow" meant. */
+  gap: 24px;
 }
+.turn.user + .turn.freya { margin-top: -12px; }
 
 .empty {
   margin: auto;
@@ -186,17 +196,17 @@ button.wide { width: 100%; text-align: left; }
   overflow-wrap: anywhere;
 }
 
-.turn.freya { display: flex; gap: 12px; align-items: flex-start; }
-.turn.freya .who {
-  width: 26px; height: 26px; flex: none;
-  border-radius: 7px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  color: var(--amber);
-  display: grid; place-items: center;
-  font-size: 11px; font-weight: 700;
+/* Two columns. The left one is 22px of gutter while a turn is live — the width
+   its avatar used to take — and becomes the tick column once it settles. */
+.turn.freya {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: start;
 }
-.turn.freya .body { min-width: 0; flex: 1; }
+.turn.freya .work { grid-column: 1 / -1; grid-row: 1; }
+.turn.freya .body { grid-column: 1 / -1; grid-row: 2; }
+.turn.freya .body { min-width: 0; }
 .turn.freya .body p { margin: 0 0 10px; }
 .turn.freya .body p:last-child { margin-bottom: 0; }
 .turn.freya .body code {
@@ -230,60 +240,6 @@ button.wide { width: 100%; text-align: left; }
 .turn.freya .body ol { margin: 0 0 10px; padding-left: 22px; }
 .turn.freya .body li { margin: 3px 0; }
 .turn.freya .body li::marker { color: var(--amber); }
-
-/* ---- what happened on the way ------------------------------------------- */
-
-details.trace {
-  border: 1px solid var(--edge);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 70%, transparent);
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-details.trace > summary {
-  cursor: pointer;
-  padding: 8px 12px;
-  color: var(--text-2);
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-details.trace > summary::-webkit-details-marker { display: none; }
-details.trace > summary::before {
-  content: "›";
-  color: var(--amber);
-  transition: transform .12s ease;
-}
-details.trace[open] > summary::before { transform: rotate(90deg); }
-details.trace .inner { padding: 0 12px 10px 30px; color: var(--mute); }
-details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
-
-.step { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
-.step .name { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
-.step .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mute); flex: none; }
-.step.ok  .dot { background: var(--amber); }
-.step.bad .dot { background: var(--bad); }
-
-.working { display: flex; align-items: center; gap: 9px; color: var(--mute); font-size: 13px; }
-.working .pulse {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--amber);
-  animation: pulse 1.1s ease-in-out infinite;
-}
-@keyframes pulse { 0%,100% { opacity:.25 } 50% { opacity:1 } }
-
-/* Themed, not hard-coded. These were three dark-theme hexes, so in light theme
-   the failure text was pale salmon on white and effectively unreadable — which
-   is the message you most need to be able to read. */
-.failed {
-  border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--edge));
-  background: color-mix(in srgb, var(--bad) 12%, transparent);
-  color: color-mix(in srgb, var(--bad) 78%, var(--text));
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  font-size: 13px;
-}
 
 /* ---- the composer ------------------------------------------------------- */
 
@@ -326,133 +282,10 @@ details.trace .thought { white-space: pre-wrap; margin: 0 0 8px; }
 #send:hover { background: var(--amber-d); }
 #send:disabled { opacity: .4; cursor: default; }
 
-#hint {
-  flex: none;
-  text-align: center;
-  color: var(--mute);
-  font-size: 11px;
-  padding: 7px 0 12px;
-}
-
 /* Narrow enough that the rail is in the way rather than useful. */
 @media (max-width: 720px) {
   #sidebar { display: none; }
 }
-
-/* ---- asking permission --------------------------------------------------- */
-
-.veil {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, .55);
-  backdrop-filter: blur(2px);
-  z-index: 40;
-}
-.veil[hidden] { display: none; }
-
-.sheet {
-  width: min(560px, 100%);
-  max-height: 84vh;
-  overflow: auto;
-  background: var(--panel);
-  border: 1px solid var(--edge);
-  border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
-  padding: 18px 20px 16px;
-}
-
-.sheet-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-.sheet-head .clock {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--mute);
-  font-variant-numeric: tabular-nums;
-}
-
-.risk {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-}
-.risk.mid  { color: var(--amber); }
-.risk.high { color: var(--bad); }
-
-/* The command, verbatim and wrapped — never truncated. A confirmation that
-   hides the tail of what it is confirming is worse than none. */
-.sheet .cmd {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.sheet .why { color: var(--mute); font-size: 13px; margin-bottom: 8px; }
-.sheet .why[hidden], .sheet .effect[hidden] { display: none; }
-
-/* The preview carries the weight, because it is the thing being decided. */
-.sheet .effect {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border-left: 3px solid var(--amber);
-  background: var(--raised);
-  font-size: 13.5px;
-  line-height: 1.5;
-  margin-bottom: 12px;
-}
-
-.sheet .typed {
-  display: block;
-  font-size: 13px;
-  color: var(--bad);
-  margin-bottom: 14px;
-}
-.sheet .typed[hidden] { display: none; }
-.sheet .typed input {
-  display: block;
-  margin-top: 8px;
-  width: 140px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--edge);
-  background: var(--raised);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 13px;
-}
-
-.sheet-foot { display: flex; justify-content: flex-end; gap: 10px; }
-
-.sheet-foot .danger {
-  padding: 8px 16px;
-  border-radius: 9px;
-  border: 1px solid var(--bad);
-  background: var(--bad);
-  color: #fff;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.sheet-foot .danger:disabled { opacity: .4; cursor: not-allowed; }
-.sheet-foot .ghost { padding: 8px 16px; }
 
 /* ---- what she has on ----------------------------------------------------- */
 
@@ -548,7 +381,7 @@ body.no-inspector #inspect { opacity: .55; }
   transform: translateX(-2px);
 }
 .step-doing   { padding-left: 16px; }
-.step-doing   .sdot { background: var(--amber); box-shadow: 0 0 0 3px rgba(240, 164, 55, .18); }
+.step-doing   .sdot { background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent); }
 .step-done    { padding-left: 16px; color: var(--mute); }
 .step-done    .sdot { background: var(--amber); opacity: .5; }
 .step-todo    { padding-left: 16px; }
@@ -600,11 +433,11 @@ body.no-inspector #inspect { opacity: .55; }
 #mic.speaking { color: var(--amber); border-color: var(--amber); }
 
 @keyframes mic-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 164, 55, .40); }
-  50%      { box-shadow: 0 0 0 7px rgba(240, 164, 55, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 40%, transparent); }
+  50%      { box-shadow: 0 0 0 7px transparent; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #mic.listening { animation: none; box-shadow: 0 0 0 3px rgba(240, 164, 55, .35); }
+  #mic.listening { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 35%, transparent); }
 }
 
 #voice.on { color: var(--amber); border-color: var(--amber); }
@@ -630,6 +463,19 @@ body.offline #inspector::before {
   margin-bottom: 4px;
 }
 
+/* Something went wrong, in a register you cannot miss. Themed rather than
+   hard-coded: this used to carry three dark-theme hexes, so in light theme the
+   one message you most need to read was pale salmon on near-white. */
+.failed {
+  border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--edge));
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: color-mix(in srgb, var(--bad) 78%, var(--text));
+  border-radius: var(--radius);
+  padding: 10px 13px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 /* Superseded, not failed: a note in her own dim, with none of .failed's alarm. */
 .note {
   border-left: 2px solid var(--mute);
@@ -644,7 +490,12 @@ body.offline #inspector::before {
    so it gets a button's focus ring whatever element it is built from. */
 .history .item:focus-visible,
 #inspect:focus-visible,
-.sheet-foot button:focus-visible,
+.perm-foot button:focus-visible,
+.perm-word:focus-visible,
+.work-bar:focus-visible,
+.work[tabindex]:focus-visible,
+.grp-head:focus-visible,
+#pending:focus-visible,
 #mic:focus-visible,
 #send:focus-visible {
   outline: 2px solid var(--amber);
@@ -652,3 +503,468 @@ body.offline #inspector::before {
 }
 
 #inspect:disabled { opacity: .35; cursor: not-allowed; }
+
+
+/* ---- what she did, and when ----------------------------------------------
+ *
+ * One attribute drives all of this: data-phase on aside.work, with three values
+ * and three writers. Nothing is created, destroyed or re-parented between them —
+ * the same subtree is rendered three ways.
+ *
+ *   live     she is working, no reply yet. The trace IS the content.
+ *   fresh    the reply landed and this is the last turn. One click back to it.
+ *   settled  a newer turn exists. A column of hairline ticks in the gutter.
+ *
+ * The demotion happens when the NEXT turn starts, so the thread quiets behind
+ * you as you go — which is what a conversation does, and what ten bordered
+ * summary boxes of finished work did not.
+ */
+
+/* The one animation in the window that means "this is happening now". It drives
+   the live turn's dot and a running tool's node, and nothing else — the mic's
+   listening ring is the only other pulse, and that exclusivity is the point. */
+@keyframes pulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
+
+.work { min-width: 0; font-size: 13px; }
+
+.work-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 0 0 8px;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: var(--mute);
+  text-align: left;
+  cursor: pointer;
+}
+.work-dot {
+  width: 7px; height: 7px; flex: none;
+  border-radius: 50%;
+  background: var(--edge);
+}
+.work[data-phase="live"] .work-dot {
+  background: var(--amber);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.work-say {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A thought is her working something out; an interim line is written for you.
+   Same slot, no extra height, different voice. */
+.work-say[data-kind="thought"] { font-style: italic; }
+.work-say[data-kind="interim"] { font-style: normal; color: var(--text-2); }
+.work-time { flex: none; font-variant-numeric: tabular-nums; font-size: 11.5px; }
+
+/* ---- the waterfall -------------------------------------------------------- */
+
+.flow {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0 0 0 16px;
+  position: relative;
+  --scale: 0.1;
+}
+/* The rail the nodes sit on. */
+.flow::before {
+  content: "";
+  position: absolute;
+  left: 3px; top: 4px; bottom: 4px;
+  width: 1px;
+  background: var(--edge);
+}
+
+.entry { position: relative; }
+
+/* One grid, shared verbatim by a call row and a group header, so a rolled-up
+   bar sits on exactly the same ruler as its members. */
+.entry.call,
+.grp-head {
+  display: grid;
+  grid-template-columns: minmax(0, 17ch) minmax(0, 1fr) 64px 46px;
+  column-gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  min-height: 22px;
+}
+.flow[data-bars="off"] .entry.call,
+.flow[data-bars="off"] .grp-head {
+  grid-template-columns: minmax(0, 17ch) minmax(0, 1fr) 0 46px;
+}
+.flow[data-bars="off"] .bar { display: none; }
+
+.node {
+  position: absolute;
+  left: -16px; top: 11px;
+  width: 7px; height: 7px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--edge);
+}
+.entry[data-state="run"] > .node,
+.entry[data-state="run"] > details > .grp-head > .node {
+  background: var(--amber);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.entry[data-state="ok"] > .node,
+.entry[data-state="ok"] > details > .grp-head > .node { background: var(--amber); }
+.entry[data-state="bad"] > .node,
+.entry[data-state="bad"] > details > .grp-head > .node { background: var(--bad); }
+/* Cut off, not finished. A hollow ring, because a solid one would claim it
+   completed and a grey one is indistinguishable from never started. */
+.entry[data-state="stale"] > .node,
+.entry[data-state="stale"] > details > .grp-head > .node {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--mute);
+}
+.node-mark {
+  border-radius: 1px;
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--mute);
+  transform: rotate(45deg);
+}
+
+.call-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.entry[data-state="bad"] .call-name { color: var(--bad); }
+.call-arg {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-ms, .grp-ms {
+  font-size: 11px;
+  color: var(--mute);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.call-why {
+  grid-column: 1 / -1;
+  margin: 2px 0 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--bad) 78%, var(--text));
+}
+
+/* Bars. Multiplication only — a division by a substituted custom property is
+   the riskiest bet available here and buys the same picture. */
+.bar {
+  position: relative;
+  height: 8px;
+  align-self: center;
+  background: color-mix(in srgb, var(--edge) 55%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar-fill {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: calc(var(--s, 0) * var(--scale) * 1%);
+  width: max(2px, calc((var(--e, 0) - var(--s, 0)) * var(--scale) * 1%));
+  background: color-mix(in srgb, var(--amber) var(--wash), transparent);
+  border-left: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+  border-radius: 0 2px 2px 0;
+}
+.entry[data-state="bad"] .bar-fill {
+  background: color-mix(in srgb, var(--bad) var(--wash), transparent);
+  border-left-color: var(--bad);
+}
+.entry[data-state="stale"] .bar-fill {
+  background: repeating-linear-gradient(90deg,
+    color-mix(in srgb, var(--amber) 45%, transparent) 0 3px, transparent 3px 6px);
+}
+/* A group's envelope is hollow so collapsing reads as zooming out rather than
+   as substituting one bar for several. Opened, it recedes to become the ruler. */
+.bar.rollup .bar-fill {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 50%, transparent);
+}
+.entry.grp details[open] > .grp-head .bar.rollup { opacity: .35; }
+
+/* ---- groups --------------------------------------------------------------- */
+
+.entry.grp > details > summary { list-style: none; cursor: pointer; }
+.entry.grp > details > summary::-webkit-details-marker { display: none; }
+.grp-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.entry.grp[data-state="bad"] > details > .grp-head .grp-name { color: var(--bad); }
+.grp-n { font-size: 11px; color: var(--mute); font-variant-numeric: tabular-nums; }
+.grp-body { list-style: none; margin: 0; padding: 0; }
+/* Indent the name, never the row: the bar column must not shift between a
+   header and the members it is measuring. */
+.grp-body .call-name { padding-left: 12px; }
+
+.mark-why {
+  font-size: 12px;
+  color: var(--mute);
+  font-style: italic;
+  padding: 3px 0;
+  display: block;
+}
+
+/* ---- her thinking, kept and not accumulated -------------------------------- */
+
+.mind { font-size: 12px; }
+.mind > summary {
+  cursor: pointer;
+  color: var(--mute);
+  list-style: none;
+  padding: 2px 0;
+}
+.mind > summary::-webkit-details-marker { display: none; }
+.mind > summary::before { content: "› "; }
+.mind[open] > summary::before { content: "⌄ "; }
+.mind-log { padding: 4px 0 6px 14px; }
+.mote {
+  margin: 0 0 7px;
+  color: var(--mute);
+  font-style: italic;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.mote[data-kind="interim"] { font-style: normal; color: var(--text-2); }
+
+/* ---- live ----------------------------------------------------------------- */
+
+/* While she is working the trace is the content, and nothing competes for the
+   space. The log is being written; showing it as it grows is the accumulating
+   wall this design exists to remove. */
+.work[data-phase="live"] .mind { display: none; }
+
+/* ---- fresh ---------------------------------------------------------------- */
+
+/* You just watched it happen. One click gets you back to it. */
+.work[data-phase="fresh"] .flow,
+.work[data-phase="fresh"] .mind { display: none; }
+.work[data-phase="fresh"].open .flow,
+.work[data-phase="fresh"].open .mind { display: block; }
+.work[data-phase="fresh"] .work-bar::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--edge);
+}
+.work[data-phase="fresh"].open .work-bar::after { content: "⌄"; }
+.work[data-phase="fresh"] .work-time { margin-left: 0; }
+
+/* A failure is never folded away — not by a group closing, not by the turn
+   finishing. A failure you have to click to find is a failure you do not see. */
+.work[data-phase="fresh"][data-fault] .flow { display: block; }
+
+/* ---- settled -------------------------------------------------------------- */
+
+.turn.freya.settled .work { grid-column: 1; grid-row: 1; padding-top: 4px; }
+.turn.freya.settled .body { grid-column: 2; grid-row: 1; }
+
+.work[data-phase="settled"] { cursor: pointer; }
+.work[data-phase="settled"] .work-bar,
+.work[data-phase="settled"] .mind,
+.work[data-phase="settled"] .entry.mark,
+.work[data-phase="settled"] .call-name,
+.work[data-phase="settled"] .call-arg,
+.work[data-phase="settled"] .call-ms,
+.work[data-phase="settled"] .grp-ms,
+.work[data-phase="settled"] .grp-name,
+.work[data-phase="settled"] .grp-n,
+.work[data-phase="settled"] .call-why,
+.work[data-phase="settled"] .bar,
+.work[data-phase="settled"] .node,
+.work[data-phase="settled"] .flow::before { display: none; }
+
+/* Each direct child of the flow becomes a hairline tick. They compress rather
+   than clip, so twelve entries beside a one-line answer squeeze instead of
+   silently truncating. */
+.work[data-phase="settled"] .flow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+}
+.work[data-phase="settled"] .entry {
+  flex: 0 1 auto;
+  min-height: 2px;
+  height: 3px;
+  width: 12px;
+  border-radius: 2px;
+  background: var(--edge);
+  overflow: hidden;
+}
+.work[data-phase="settled"] .entry.grp { width: 20px; }
+.work[data-phase="settled"] .entry[data-state="ok"] {
+  background: color-mix(in srgb, var(--amber) var(--tick), transparent);
+}
+.work[data-phase="settled"] .entry[data-state="bad"] { background: var(--bad); }
+.work[data-phase="settled"] .entry > details,
+.work[data-phase="settled"] .entry > details > summary { display: none; }
+
+/* ---- asking permission, in the thread -------------------------------------
+ *
+ * A modal is loud for free, because it disappears. A card lives in the
+ * scrollback forever, so it has to be seen to fall out of the top tier once it
+ * has been answered — which is what the deflation is for.
+ */
+
+.perm {
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--edge));
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px 12px;
+  transition: background-color .18s ease, border-color .18s ease, padding .18s ease;
+}
+.perm[data-risk="destructive"] { border-color: color-mix(in srgb, var(--bad) 55%, var(--edge)); }
+
+.perm.arriving {
+  animation: arrive .7s ease-out 1;
+}
+@keyframes arrive {
+  from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 45%, transparent); }
+  to   { box-shadow: 0 0 0 3px transparent; }
+}
+
+.perm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 11px;
+}
+.perm-clock {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mute);
+  font-variant-numeric: tabular-nums;
+}
+.perm-title { font-size: 13.5px; }
+
+.risk {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.risk.mid  { color: var(--amber); }
+.risk.high { color: var(--bad); }
+
+/* The preview carries the weight, and sits above the command, because it is the
+   thing being decided. */
+.perm-effect {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--amber);
+  background: var(--raised);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+/* Verbatim and wrapped, never truncated, at any state. A confirmation that
+   hides the tail of what it is confirming is worse than none. */
+.perm-cmd {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.perm-why { margin: 0 0 10px; color: var(--mute); font-size: 13px; }
+
+.perm-typed { display: block; font-size: 13px; color: var(--bad); margin-bottom: 12px; }
+.perm-typed[hidden] { display: none; }
+.perm-word {
+  display: block;
+  margin-top: 8px;
+  width: 140px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.perm-foot { display: flex; justify-content: flex-end; gap: 10px; }
+.perm-foot .ghost { padding: 8px 16px; }
+.perm-foot .danger {
+  padding: 8px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--bad);
+  background: var(--bad);
+  color: var(--warm);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.perm-foot .danger:disabled { opacity: .4; cursor: not-allowed; }
+
+.perm-verdict { display: none; }
+
+/* Answered: the card deflates into a record of what was decided. */
+.perm:not([data-state="open"]) {
+  padding: 8px 12px;
+  background: transparent;
+  border-color: var(--edge);
+}
+.perm:not([data-state="open"]) .perm-head,
+.perm:not([data-state="open"]) .perm-why,
+.perm:not([data-state="open"]) .perm-typed,
+.perm:not([data-state="open"]) .perm-foot { display: none; }
+.perm:not([data-state="open"]):not(.expand) .perm-effect,
+.perm:not([data-state="open"]):not(.expand) .perm-cmd { display: none; }
+.perm:not([data-state="open"]) .perm-verdict {
+  display: block;
+  font-size: 12.5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.perm.expand .perm-verdict { white-space: normal; margin-bottom: 8px; }
+.perm[data-state="allowed"] .perm-verdict { color: var(--text-2); }
+/* Missed is not failed. "I did not answer" and "I refused" are different facts
+   about your afternoon, and neither is an error, so neither is red. */
+.perm[data-state="refused"] .perm-verdict,
+.perm[data-state="expired"] .perm-verdict { color: var(--mute); }
+
+#pending {
+  flex: none;
+  font-size: 12px;
+  padding: 5px 11px;
+  color: var(--amber);
+  border-color: var(--amber);
+}
+#pending[hidden] { display: none; }
+
+.turn.aside-note .note { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .perm.arriving { animation: none; }
+  .work[data-phase="live"] .work-dot,
+  .entry[data-state="run"] > .node,
+  .entry[data-state="run"] > details > .grp-head > .node { animation: none; }
+  .perm { transition: none; }
+}

@@ -38,6 +38,11 @@ type traceHub struct {
 //	thought      her reasoning before a step
 //	interim      text the model produced alongside its tool calls
 //	tool-start   a tool was called; name is set, text is the arguments
+//
+// call identifies ONE invocation and is empty for everything that is not a
+// single tool call. Two concurrent calls to one tool in one round is ordinary,
+// and by name alone their finishes cannot be told apart.
+//
 //	tool-ok      it succeeded
 //	tool-error   it failed; text is why
 //	retry        she decided to go round again; name is why, text is the detail
@@ -55,7 +60,7 @@ type traceHub struct {
 //
 // The terminal subscriber ignores the voice kinds — it prints them itself, on
 // the path that produced them, and printing twice is worse than not at all.
-type TraceFunc func(kind, name, text string)
+type TraceFunc func(kind, name, call, text string)
 
 func newTraceHub() *traceHub { return &traceHub{subs: map[int]TraceFunc{}} }
 
@@ -90,7 +95,12 @@ func (h *traceHub) Add(fn TraceFunc) (remove func()) {
 // printing has to stay in order with the rest of the line and a subscriber that
 // blocks is a subscriber that is wrong. The window's subscriber hands off to a
 // non-blocking channel of its own; that is where the decoupling belongs.
-func (h *traceHub) emit(kind, name, text string) {
+func (h *traceHub) emit(kind, name, text string) { h.emitCall(kind, name, "", text) }
+
+// emitCall carries the identity of one tool invocation alongside its name. See
+// Agent.traceCall for why a name alone is not enough to pair a finish with its
+// start.
+func (h *traceHub) emitCall(kind, name, call, text string) {
 	// Nil-safe: voiceState carries a hub that is only set once one exists, and a
 	// spoken exchange in a session that never built one must still work rather
 	// than take the process down.
@@ -104,6 +114,6 @@ func (h *traceHub) emit(kind, name, text string) {
 	}
 	h.mu.RUnlock()
 	for _, fn := range subs {
-		fn(kind, name, text)
+		fn(kind, name, call, text)
 	}
 }

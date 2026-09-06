@@ -282,17 +282,17 @@ func guiBanner(url string) string {
 // thought bubbles, tool steps and the whole spoken path went nowhere, nothing
 // errored, and the window simply sat there looking finished.
 func windowTrace(srv *gui.Server) TraceFunc {
-	return func(kind, name, text string) {
+	return func(kind, name, call, text string) {
 		yes, no := true, false
 		switch kind {
 		case "thought", "interim":
 			srv.Emit(gui.Event{Kind: kind, Text: text})
 		case "tool-start":
-			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text})
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Call: call, Text: text})
 		case "tool-ok":
-			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &yes})
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Call: call, Text: text, OK: &yes})
 		case "tool-error":
-			srv.Emit(gui.Event{Kind: "tool", Name: name, Text: text, OK: &no})
+			srv.Emit(gui.Event{Kind: "tool", Name: name, Call: call, Text: text, OK: &no})
 		case "retry":
 			// Not a tool. She looked at what she had and decided to go round again,
 			// and drawing that as a successful call put a tick next to "unfinished".

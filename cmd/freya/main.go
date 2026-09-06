@@ -447,12 +447,12 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	}
 	a.OnThought = func(text string) { trace.emit("thought", "", text) }
 	a.OnInterim = func(text string) { trace.emit("interim", "", text) }
-	a.OnTool = func(event, name, detail string) {
+	a.OnTool = func(event, name, call, detail string) {
 		switch event {
 		case "start":
-			trace.emit("tool-start", name, detail)
+			trace.emitCall("tool-start", name, call, detail)
 		case "error":
-			trace.emit("tool-error", name, detail)
+			trace.emitCall("tool-error", name, call, detail)
 		case "retry":
 			// Its own kind. It used to fall into the default with "ok", so the
 			// agent deciding to go round again — "unfinished", "unreviewed",
@@ -460,7 +460,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 			// beside a name that is not a tool at all.
 			trace.emit("retry", name, detail)
 		default:
-			trace.emit("tool-ok", name, detail)
+			trace.emitCall("tool-ok", name, call, detail)
 		}
 	}
 
@@ -468,7 +468,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	// a slow lookup is not silence; the thinking window is rendered distinctly —
 	// dim, indented, a bubble — so it never reads as something she said; the tool
 	// trace only when asked for.
-	trace.Add(func(kind, name, text string) {
+	trace.Add(func(kind, name, _, text string) {
 		switch kind {
 		case "interim":
 			fmt.Printf("%s%s%s\n", cDim, text, cReset)
@@ -612,7 +612,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 				// A subscriber rather than a wrapper. Wrapping meant whoever
 				// assigned OnInterim afterwards silently dropped the speaking, and
 				// it made the window's own swap overwrite it entirely.
-				trace.Add(func(kind, _, text string) {
+				trace.Add(func(kind, _, _, text string) {
 					if kind != "interim" {
 						return
 					}
@@ -913,7 +913,7 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	if vs != nil {
 		// Speak the interim line too, so voice mode has no dead air. A subscriber,
 		// like the daemon's, so neither can overwrite the other or the terminal.
-		trace.Add(func(kind, _, text string) {
+		trace.Add(func(kind, _, _, text string) {
 			if kind != "interim" || !vs.voiceOn() {
 				return
 			}

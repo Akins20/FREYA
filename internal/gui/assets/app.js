@@ -21,8 +21,14 @@ const input = $('input');
 const send = $('send');
 
 let turnEl = null;   // the turn being built
-let traceEl = null;  // its foldable "what happened" block
 let busy = false;
+
+// The parts of the turn her working is drawn into. One turn at a time, so these
+// are module state rather than threaded through every function.
+let workEl = null, flowEl = null, barEl = null, sayEl = null, mindEl = null;
+let openGrp = null;             // the group currently accepting calls
+const openCalls = new Map();    // tool name -> [{el, t0}], resolved FIFO
+let mindCount = 0, turnT0 = 0, tick = 0, span = 0;
 
 // ---- rendering ------------------------------------------------------------
 
@@ -39,84 +45,465 @@ function scroll(force) {
   if (force || atBottom()) thread.scrollTop = thread.scrollHeight;
 }
 
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;   // never innerHTML
+  return n;
+}
+
 function userTurn(text) {
   clearEmpty();
-  const el = document.createElement('div');
-  el.className = 'turn user';
-  const b = document.createElement('div');
-  b.className = 'bubble';
-  b.textContent = text;            // textContent, never innerHTML: this is input
-  el.appendChild(b);
-  thread.appendChild(el);
+  const t = el('div', 'turn user');
+  t.appendChild(el('div', 'bubble', text));
+  thread.appendChild(t);
   scroll(true);
+}
+
+// ---- a turn has three states ----------------------------------------------
+//
+// One attribute, data-phase, on one element. The same subtree is rendered three
+// ways by CSS and nothing is created, destroyed or re-parented between them.
+//
+//   live     she is working and there is no reply yet — the trace IS the content
+//   fresh    the reply has landed and this is still the last turn — one click back
+//   settled  a newer turn exists below — a column of hairline ticks in the gutter
+//
+// The demotion fires when the NEXT turn begins, so the thread quiets behind you
+// as you go. That single mechanic is most of the answer to "cluttered": ten
+// turns of scrollback were carrying ten bordered boxes summarising work nobody
+// is looking at any more.
+
+function settle(w) {
+  if (!w || w.dataset.phase === 'settled') return;
+  w.dataset.phase = 'settled';
+  w.closest('.turn')?.classList.add('settled');
+  w.tabIndex = 0;
+  w.setAttribute('role', 'button');
+}
+
+// A settled turn comes back on a click or a key, in place. One way in, one class
+// swap — rather than a pile of :focus-within overrides that fight each other.
+function unsettle(w) {
+  if (!w || w.dataset.phase !== 'settled') return;
+  w.dataset.phase = 'fresh';
+  w.closest('.turn')?.classList.remove('settled');
+  w.removeAttribute('tabindex');
+  w.removeAttribute('role');
 }
 
 function beginFreyaTurn() {
   clearEmpty();
-  turnEl = document.createElement('div');
-  turnEl.className = 'turn freya';
+  // The whole fresh -> settled mechanic, in one line.
+  thread.querySelectorAll('.work[data-phase="fresh"]').forEach(settle);
 
-  const who = document.createElement('div');
-  who.className = 'who';
-  who.textContent = 'F';
+  turnEl = el('div', 'turn freya');
 
-  const body = document.createElement('div');
-  body.className = 'body';
+  workEl = el('aside', 'work');
+  workEl.dataset.phase = 'live';
 
-  traceEl = document.createElement('details');
-  traceEl.className = 'trace';
-  const sum = document.createElement('summary');
-  sum.textContent = 'Working…';
-  const inner = document.createElement('div');
-  inner.className = 'inner';
-  traceEl.append(sum, inner);
+  barEl = el('button', 'work-bar');
+  barEl.type = 'button';
+  barEl.setAttribute('aria-expanded', 'true');
+  const dot = el('span', 'work-dot');
+  sayEl = el('span', 'work-say');
+  sayEl.dataset.kind = 'thought';
+  const time = el('span', 'work-time');
+  barEl.append(dot, sayEl, time);
 
-  const working = document.createElement('div');
-  working.className = 'working';
-  working.innerHTML = '<span class="pulse"></span>';
-  working.append(document.createTextNode('thinking'));
+  flowEl = el('ol', 'flow');
 
-  body.append(traceEl, working);
-  turnEl.append(who, body);
+  // Her thinking, kept but not accumulated on screen. A thought is the most
+  // disposable thing in this window — interesting for the four seconds it is
+  // true — and the old view did the opposite: every one of them piled up inside
+  // a fold that was both closed and enormous.
+  mindEl = el('details', 'mind');
+  mindEl.append(el('summary', '', ''), el('div', 'mind-log'));
+
+  const body = el('div', 'body');
+  workEl.append(barEl, flowEl, mindEl);
+  turnEl.append(workEl, body);
   thread.appendChild(turnEl);
+
+  openGrp = null;
+  openCalls.clear();
+  mindCount = 0;
+  turnT0 = now();
+  span = 0;
+  clearInterval(tick);
+  tick = setInterval(tickClock, 250);
+
   scroll(true);
+  return turnEl;
 }
 
-function trace(node) {
-  if (!traceEl) return;
-  traceEl.querySelector('.inner').appendChild(node);
+// now is monotonic and never crosses the wire: every --s and --e is unitless
+// milliseconds since this turn began.
+function now() { return performance.now(); }
+
+// ---- thinking, which never touches the waterfall ---------------------------
+//
+// say() writes the one-line slot and the log. addCall() writes the flow. There
+// is no longer a function that both call, which is what let thoughts and tool
+// calls end up in the same box in the first place.
+
+// Her reasoning arrives as markdown — "**My Approach to the Task**" — and this
+// slot is one line of plain text, so the markers have to come off rather than be
+// shown raw. Not a parser: the emphasis carries nothing here, so it is removed
+// rather than rendered.
+function plain(text) {
+  return String(text || '')
+    .replace(/`{1,3}/g, '')
+    .replace(/\*{1,3}/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .trim();
+}
+
+function say(kind, text) {
+  if (!workEl) beginFreyaTurn();
+  const line = plain(text);
+  if (!line) return;
+  sayEl.textContent = line.split('\n').map((l) => l.trim()).find(Boolean) || line;
+  sayEl.dataset.kind = kind;
+
+  const p = el('p', 'mote', line);
+  p.dataset.kind = kind;
+  mindEl.querySelector('.mind-log').appendChild(p);
+  mindCount += 1;
+  mindEl.querySelector('summary').textContent =
+    mindCount + (mindCount === 1 ? ' thought' : ' thoughts');
   scroll(false);
 }
 
-function addThought(text) {
-  const p = document.createElement('p');
-  p.className = 'thought';
-  p.textContent = text;
-  trace(p);
+// ---- the waterfall ---------------------------------------------------------
+
+// family is the tool's subsystem: the name up to the first underscore. It is the
+// registry's own convention — browser_*, file_*, desktop_* — so a group header
+// makes a true statement about a subsystem rather than a vague "6 things". A
+// name with no underscore is its own family and only groups with an exact repeat.
+function family(name) {
+  const i = name.indexOf('_');
+  return i > 0 ? name.slice(0, i) : name;
 }
 
-function addStep(name, ok) {
-  if (!traceEl) return;
-  const inner = traceEl.querySelector('.inner');
-  // An existing pending row for this tool is the one being resolved.
-  let row = ok === undefined ? null
-    : [...inner.querySelectorAll('.step')].reverse()
-        .find((r) => r.dataset.name === name && !r.classList.contains('ok') && !r.classList.contains('bad'));
-  if (!row) {
-    row = document.createElement('div');
-    row.className = 'step';
-    row.dataset.name = name;
-    row.innerHTML = '<span class="dot"></span>';
-    const n = document.createElement('span');
-    n.className = 'name';
-    n.textContent = name;
-    row.appendChild(n);
-    inner.appendChild(row);
+const FAMILY_LABEL = {
+  browser: 'Browser', file: 'Files', folder: 'Files', run: 'Shell',
+  terminal: 'Terminal', desktop: 'Desktop', web: 'Web', memory: 'Memory',
+  recall: 'Memory', plan: 'Plan', service: 'Services', usage: 'Usage',
+  claude: 'Claude', work: 'Jobs', dev: 'Code', system: 'System', note: 'Notes',
+  screen: 'Screen', image: 'Images', doc: 'Documents', site: 'Site',
+};
+
+// An unknown prefix prints itself rather than nothing, so a tool added tomorrow
+// degrades to a plain label instead of an empty header.
+function famLabel(fam) { return FAMILY_LABEL[fam] || fam; }
+
+const GROUP_CAP = 24;   // beyond this a sibling group of the same family opens
+
+function closeGroup() {
+  if (!openGrp) return;
+  const g = openGrp;
+  openGrp = null;
+  const state = groupState(g.li);
+  // A group that ran clean folds itself away the moment she moves on. A group
+  // with a failure in it never folds, in either direction — a failure you have
+  // to click to find is a failure you do not see.
+  if (state === 'ok' && g.n > 1) g.details.open = false;
+}
+
+function groupState(li) {
+  const kids = [...li.querySelectorAll('.entry.call')];
+  const state = kids.some((k) => k.dataset.state === 'run') ? 'run'
+    : kids.some((k) => k.dataset.state === 'bad') ? 'bad'
+    : kids.some((k) => k.dataset.state === 'stale') ? 'stale' : 'ok';
+  li.dataset.state = state;
+  return state;
+}
+
+function callRow(name, arg) {
+  const li = el('li', 'entry call');
+  li.dataset.name = name;
+  li.dataset.state = 'run';
+  li.append(el('span', 'node'), el('span', 'call-name', name));
+  const a = el('span', 'call-arg', arg || '');
+  a.title = arg || '';
+  const bar = el('span', 'bar');
+  bar.appendChild(el('i', 'bar-fill'));
+  li.append(a, bar, el('span', 'call-ms'));
+  li.title = arg ? name + '  ' + arg : name;
+  return li;
+}
+
+// The second consecutive call of a family promotes the lone row that is already
+// there into a group: one node move, at the bottom of the list, before anything
+// below it exists. openCalls holds element references, so a finish still in
+// flight resolves correctly across the move.
+function promoteToGroup(first, fam) {
+  const li = el('li', 'entry grp');
+  li.dataset.fam = fam;
+  li.dataset.state = 'run';
+
+  const details = el('details', '');
+  details.open = true;
+  const head = el('summary', 'grp-head');
+  head.append(el('span', 'node'), el('span', 'grp-name', famLabel(fam)),
+    el('span', 'grp-n', '×2'));
+  const bar = el('span', 'bar rollup');
+  bar.appendChild(el('i', 'bar-fill'));
+  head.append(bar, el('span', 'grp-ms'));
+
+  const body = el('ol', 'grp-body');
+  first.replaceWith(li);
+  body.appendChild(first);
+  details.append(head, body);
+  li.appendChild(details);
+
+  return { li, details, body, head, fam, n: 1 };
+}
+
+function addCall(name, ok, text, call) {
+  // Today's addStep returned early with no turn and the event was simply lost.
+  if (!workEl) beginFreyaTurn();
+  const key = call || name;
+
+  if (ok === undefined) {
+    const fam = family(name);
+    const row = callRow(name, text);
+    row.style.setProperty('--s', Math.round(now() - turnT0));
+    row.style.setProperty('--e', Math.round(now() - turnT0));
+
+    const last = flowEl.lastElementChild;
+    if (openGrp && openGrp.fam === fam && openGrp.li === last && openGrp.n < GROUP_CAP) {
+      openGrp.body.appendChild(row);
+      openGrp.n += 1;
+      openGrp.head.querySelector('.grp-n').textContent = '×' + openGrp.n;
+      nameGroup(openGrp);
+    } else if (!openGrp && last && last.classList.contains('call') &&
+               family(last.dataset.name) === fam) {
+      // Two in a row of one family: promote, then add.
+      openGrp = promoteToGroup(last, fam);
+      openGrp.body.appendChild(row);
+      openGrp.n = 2;
+      nameGroup(openGrp);
+    } else {
+      closeGroup();
+      flowEl.appendChild(row);
+    }
+
+    if (!openCalls.has(key)) openCalls.set(key, []);
+    openCalls.get(key).push(row);
+    rescale();
+    scroll(false);
+    return;
   }
-  if (ok === true) row.classList.add('ok');
-  if (ok === false) row.classList.add('bad');
+
+  // A finish. FIFO among unfinished rows of this name — the old code took the
+  // LAST one, which resolves concurrent calls to one tool by luck.
+  const queue = openCalls.get(key) || [];
+  const row = queue.shift() || (() => {
+    // A finish with no start: Emit dropped one. Draw it resolved, with no bar
+    // and no duration, rather than losing it.
+    const r = callRow(name, '');
+    r.dataset.orphan = '';
+    flowEl.appendChild(r);
+    return r;
+  })();
+  if (!queue.length) openCalls.delete(key);
+
+  row.dataset.state = ok ? 'ok' : 'bad';
+  const ms = Math.round(now() - turnT0);
+  row.style.setProperty('--e', ms);
+  const started = Number(row.style.getPropertyValue('--s') || 0);
+  // Every row gets its duration now: e.call identifies the invocation, so a
+  // finish is paired with its own start even when six of one tool are in flight
+  // at once. Without it the pairing was a guess by name, and the window drew six
+  // overlapping bars it could not attribute.
+  if (row.dataset.orphan === undefined) {
+    row.querySelector('.call-ms').textContent = fmtMs(ms - started);
+  }
+  if (!ok && text) {
+    const why = el('div', 'call-why', text);
+    row.appendChild(why);
+    workEl.dataset.fault = '';
+    row.closest('details')?.setAttribute('open', '');
+  }
+  const grp = row.closest('.entry.grp');
+  if (grp) {
+    groupState(grp);
+    rollup(grp);
+  }
+  rescale();
   scroll(false);
 }
+
+// A retry is not a tool and never gets a tick. It is the seam where she looked
+// at what she had and decided to go round again — which is exactly the moment a
+// group must not fold across, or the fold hides the thing worth seeing.
+function addMark(why, detail) {
+  if (!workEl) beginFreyaTurn();
+  closeGroup();
+  const li = el('li', 'entry mark');
+  li.append(el('span', 'node node-mark'),
+    el('span', 'mark-why', 'going round again — ' + (why || 'unfinished')));
+  if (detail) li.title = detail;
+  flowEl.appendChild(li);
+  scroll(false);
+}
+
+// When every member shares one name the header says the tool; mixed families say
+// the subsystem. "browser_scroll ×12" is more useful than "Browser ×12".
+function nameGroup(g) {
+  const names = new Set([...g.body.querySelectorAll('.entry.call')].map((c) => c.dataset.name));
+  g.head.querySelector('.grp-name').textContent =
+    names.size === 1 ? [...names][0] : famLabel(g.fam);
+}
+
+// The group's envelope: from the first member's start to the last one's end, on
+// the same ruler as its members, so collapsing is a zoom-out rather than a
+// substitution.
+function rollup(grp) {
+  const kids = [...grp.querySelectorAll('.entry.call')];
+  if (!kids.length) return;
+  let lo = Infinity, hi = 0;
+  for (const k of kids) {
+    lo = Math.min(lo, Number(k.style.getPropertyValue('--s') || 0));
+    hi = Math.max(hi, Number(k.style.getPropertyValue('--e') || 0));
+  }
+  grp.style.setProperty('--s', lo);
+  grp.style.setProperty('--e', hi);
+  const ms = grp.querySelector('.grp-ms');
+  if (ms && grp.dataset.state !== 'run') ms.textContent = fmtMs(hi - lo);
+}
+
+// ---- the axis --------------------------------------------------------------
+//
+// One axis per turn, not per group: normalising each group to full width would
+// make a 40ms group look identical to a 40-second one, which is a lie in exactly
+// the place a waterfall exists to tell the truth.
+//
+// The span grows in 1.5x steps and never shrinks within a turn, so bars settle
+// in occasional jumps instead of creeping under the cursor every quarter second.
+function spanFor(ms) {
+  let s = 1000;
+  while (s < ms) s = Math.ceil(s * 1.5);
+  return s;
+}
+
+function rescale() {
+  if (!flowEl) return;
+  let hi = 0;
+  for (const e of flowEl.querySelectorAll('.entry')) {
+    hi = Math.max(hi, Number(e.style.getPropertyValue('--e') || 0));
+  }
+  const want = spanFor(hi);
+  if (want > span) {
+    span = want;
+    flowEl.style.setProperty('--scale', 100 / span);
+  }
+  // A single timed entry has nothing to compare against, so a bar spanning the
+  // whole track would say nothing. The column collapses and the duration stands
+  // on its own.
+  const timed = flowEl.querySelectorAll('.entry.call, .entry.grp').length;
+  flowEl.dataset.bars = timed > 1 ? 'on' : 'off';
+}
+
+function fmtMs(ms) {
+  if (ms < 0) return '';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+}
+
+function fmtClock(ms) {
+  const t = Math.floor(ms / 1000);
+  return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+}
+
+// One ticker for the window: it grows the running bars, steps the axis, and
+// writes the clock. Started with the turn and cleared by sealWork, which is the
+// single place a turn stops running — so it cannot be left writing into a
+// detached element.
+function tickClock() {
+  if (!workEl || workEl.dataset.phase !== 'live') return;
+  const t = Math.round(now() - turnT0);
+  for (const e of flowEl.querySelectorAll('.entry[data-state="run"]')) {
+    e.style.setProperty('--e', t);
+  }
+  for (const g of flowEl.querySelectorAll('.entry.grp[data-state="run"]')) rollup(g);
+  rescale();
+  barEl.querySelector('.work-time').textContent = fmtClock(t);
+}
+
+// ---- she is not working any more -------------------------------------------
+
+function summarise() {
+  const calls = flowEl.querySelectorAll('.entry.call').length;
+  // Deduplicated on the LABEL, not the family: file_* and folder_* are different
+  // prefixes and the same subsystem, so a set of families produced
+  // "system, files, files".
+  const seen = new Set();
+  for (const c of flowEl.querySelectorAll('.entry.call')) seen.add(famLabel(family(c.dataset.name)));
+  if (!calls) return mindCount ? 'thought it through' : '';
+  const what = [...seen].join(', ').toLowerCase();
+  return calls + (calls === 1 ? ' step' : ' steps') + (what ? ' · ' + what : '');
+}
+
+// The one place a running turn stops running. Every path that ends a turn calls
+// it, so they cannot drift apart.
+function sealWork() {
+  clearInterval(tick);
+  tick = 0;
+  if (!workEl || workEl.dataset.phase !== 'live') return;
+  closeGroup();
+  // A call still open when the turn ended is not "not started" and is not
+  // "finished": it was cut off. It says so, with a hollow node and a dashed bar.
+  for (const e of flowEl.querySelectorAll('.entry[data-state="run"]')) e.dataset.state = 'stale';
+  for (const g of flowEl.querySelectorAll('.entry.grp')) { groupState(g); rollup(g); }
+  rescale();
+
+  const label = summarise();
+  sayEl.textContent = label;
+  sayEl.removeAttribute('data-kind');
+  barEl.setAttribute('aria-label', label || 'what she did');
+  barEl.querySelector('.work-time').textContent = fmtClock(now() - turnT0);
+  workEl.title = label;
+  workEl.dataset.phase = 'fresh';
+  workEl.classList.remove('open');
+  barEl.setAttribute('aria-expanded', 'false');
+
+  // A replayed archive turn has no trace at all; it should render as prose, not
+  // as an empty box with a caret.
+  if (!flowEl.children.length && !mindCount) workEl.remove();
+}
+
+function endTurn() {
+  turnEl = null;
+  workEl = null;
+  flowEl = null;
+  barEl = null;
+  sayEl = null;
+  mindEl = null;
+  openGrp = null;
+  openCalls.clear();
+}
+
+// Opening a finished turn's working, and promoting a settled one back.
+thread.addEventListener('click', (ev) => {
+  const w = ev.target.closest('.work');
+  if (!w) return;
+  if (w.dataset.phase === 'settled') { unsettle(w); return; }
+  if (ev.target.closest('.work-bar')) {
+    const open = w.classList.toggle('open');
+    w.querySelector('.work-bar').setAttribute('aria-expanded', String(open));
+  }
+});
+thread.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const w = ev.target.closest?.('.work[data-phase="settled"]');
+  if (!w) return;
+  ev.preventDefault();
+  unsettle(w);
+});
 
 // Markdown, the part of it she actually writes.
 //
@@ -190,17 +577,16 @@ function blocks(body, chunk) {
   }
 }
 
-function renderReply(text) {
+// The body of a turn, with her working sealed behind it.
+function turnBody() {
   if (!turnEl) beginFreyaTurn();
   const body = turnEl.querySelector('.body');
-  body.querySelector('.working')?.remove();
-  if (traceEl) {
-    const steps = traceEl.querySelectorAll('.step').length;
-    traceEl.querySelector('summary').textContent =
-      steps ? `${steps} step${steps === 1 ? '' : 's'}` : 'What she was thinking';
-    if (!traceEl.querySelector('.inner').children.length) traceEl.remove();
-  }
+  sealWork();
+  return body;
+}
 
+function renderReply(text) {
+  const body = turnBody();
   text.split(/```/).forEach((part, i) => {
     if (i % 2 === 1) {
       const pre = document.createElement('pre');
@@ -218,24 +604,23 @@ function renderReply(text) {
 // Superseded is not failed. Something else took the turn — a spoken request, the
 // stop word — and a red failure box would be wrong about what happened.
 function renderStopped(text) {
-  if (!turnEl) beginFreyaTurn();
-  const body = turnEl.querySelector('.body');
-  body.querySelector('.working')?.remove();
-  const d = document.createElement('div');
-  d.className = 'note';
-  d.textContent = text || 'Stopped.';
-  body.appendChild(d);
+  turnBody().appendChild(el('div', 'note', text || 'Stopped.'));
   scroll(true);
 }
 
 function renderError(text) {
-  if (!turnEl) beginFreyaTurn();
-  const body = turnEl.querySelector('.body');
-  body.querySelector('.working')?.remove();
-  const d = document.createElement('div');
-  d.className = 'failed';
-  d.textContent = text;
-  body.appendChild(d);
+  turnBody().appendChild(el('div', 'failed', text));
+  scroll(true);
+}
+
+// A note in the thread rather than a line in a status bar that vanishes. Used
+// for the things the window itself has to say — a control that would not work,
+// an answer that arrived too late.
+function renderNote(text) {
+  clearEmpty();
+  const t = el('div', 'turn aside-note');
+  t.appendChild(el('div', 'note', text));
+  thread.appendChild(t);
   scroll(true);
 }
 
@@ -266,15 +651,18 @@ function connect() {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
     switch (e.kind) {
-      case 'thought':  addThought(e.text); break;
-      case 'interim':  addThought(e.text); break;
-      case 'tool':     addStep(e.name, e.ok); break;
+      case 'thought':  say('thought', e.text); break;
+      case 'interim':  say('interim', e.text); break;
+      case 'tool':     addCall(e.name, e.ok, e.text, e.call); break;
+      // Her deciding to go round again. It has been on the wire and dropped on
+      // the floor here, with no case at all.
+      case 'retry':    addMark(e.name, e.text); break;
       case 'reply':    renderReply(e.text); break;
       case 'error':    renderError(e.text); break;
       case 'stopped':  renderStopped(e.text); break;
       case 'done':     finish(); break;
       case 'confirm':         askPermission(e.text); break;
-      case 'confirm-timeout': closePermission(e.text); break;
+      case 'confirm-timeout': settlePerm(e.text, 'expired'); break;
       case 'listening':       micState('listening'); break;
       case 'heard':           spokenTurn(e.text); break;
       case 'speaking':        micState(e.text ? 'speaking' : ''); break;
@@ -300,14 +688,13 @@ function connect() {
 let voiceOn = false;
 let listening = false;   // the recorder is open, whatever else is happening
 
+// The microphone button IS the indicator. There used to be a second one in the
+// topbar saying the same word, and a third in the inspector's voice pill.
 function micState(state) {
   listening = state === 'listening';
   const mic = $('mic');
   mic.classList.toggle('listening', state === 'listening');
   mic.classList.toggle('speaking', state === 'speaking');
-  if (state === 'listening') $('status').textContent = 'listening';
-  else if (state === 'speaking') $('status').textContent = 'speaking';
-  else if (!busy) $('status').textContent = '';
 }
 
 // What she heard, arriving as the user's turn — because that is what it is. It
@@ -320,16 +707,16 @@ function spokenTurn(text) {
   // reply to THIS request lands in the previous turn's body and then finish()
   // tears down the wrong element.
   if (busy && turnEl) {
-    turnEl.querySelector('.working')?.remove();
-    turnEl = null;
-    traceEl = null;
+    // Seal before endTurn: this is the path that clears the ticker, and without
+    // it a detached interval goes on writing into an orphaned element forever.
+    sealWork();
+    endTurn();
   }
   listening = false;
   micState('');
   busy = true;
   send.disabled = true;
   $('stop').hidden = false;
-  $('status').textContent = 'working';
   userTurn(text);
   beginFreyaTurn();
   pollState();
@@ -339,8 +726,10 @@ async function control(path) {
   try {
     const r = await fetch('/voice/' + path, { method: 'POST' });
     if (!r.ok) {
-      $('status').textContent = (await r.text()).trim() || 'that did not work';
-      setTimeout(() => { if (!busy) $('status').textContent = ''; }, 4000);
+      // Into the thread, not a status line that clears itself after four
+      // seconds. "The microphone is in use" is worth still being there when you
+      // look back at why the button did nothing.
+      renderNote((await r.text()).trim() || 'That did not work.');
       return null;
     }
     return await r.json();
@@ -428,12 +817,15 @@ function row(body, text, sub, cls) {
 }
 
 function renderState(st) {
+  // The parts that must run whatever the panel is doing: a question she is
+  // waiting on, and the voice toggle following her rather than its own clicks.
+  for (const q of st.asking || []) askPermission(JSON.stringify({ ...q, replayed: true }));
+  reconcileAsks(st.asking);
+  setVoiceButton(st.voice && st.voice !== 'off');
+  if (!inspectOn || !inspectorFits()) return;
+
   $('ins-voice').textContent = st.voice || 'off';
   $('ins-voice').className = 'pill voice-' + (st.voice || 'off');
-  // The button follows her, not the other way round: voice can be turned on from
-  // the terminal, from a tool call, or by /voice on, and a toggle that only ever
-  // reflected its own clicks would be wrong the moment any of those happened.
-  setVoiceButton(st.voice && st.voice !== 'off');
   $('ins-cost').textContent = st.costToday
     ? '$' + st.costToday.toFixed(2) + ' · ' + (st.callsToday || 0) + ' calls'
     : 'nothing spent yet';
@@ -447,10 +839,6 @@ function renderState(st) {
   // The event stream can drop a confirm — a reconnect, a full channel — and a
   // dropped one reads to her as a refusal five minutes later. The poll carries
   // the outstanding question too, so a window that missed it still gets asked.
-  if (!permission && st.asking && st.asking.length) {
-    askPermission(JSON.stringify(st.asking[0]));
-  }
-
   const panels = $('panels');
   panels.textContent = '';
 
@@ -516,9 +904,12 @@ function renderState(st) {
   }
 }
 
+// Always fetched, even with the panel closed. /state is also how an outstanding
+// permission question is recovered when the event stream dropped it, so
+// returning early here quietly disabled that whole safety net for anyone who had
+// turned the Activity panel off.
 async function pollState() {
   clearTimeout(inspectTimer);
-  if (!inspectOn || !inspectorFits()) return;
   let st = null;
   try {
     const r = await fetch('/state');
@@ -546,87 +937,169 @@ function showInspector(on) {
   btn.title = inspectorFits()
     ? 'What she has on'
     : 'The window is too narrow to show this';
-  if (on && inspectorFits()) pollState(); else clearTimeout(inspectTimer);
+  // The poll is never stopped. It draws the panel only when there is a panel to
+  // draw, but /state is also how an outstanding permission question is recovered
+  // when the event stream dropped it — so closing the Activity panel must not
+  // switch that off.
+  pollState();
 }
 
 window.addEventListener('resize', () => showInspector(inspectOn));
 
 $('inspect').addEventListener('click', () => showInspector(!inspectOn));
 
-// ---- asking permission ----------------------------------------------------
+// ---- asking permission, in the thread -------------------------------------
 //
-// The guard stops before anything destructive and asks. In a terminal that is a
-// prompt; here it is this. Three things are carried over from the terminal
-// version deliberately, because each of them was a decision:
+// The guard stops before anything destructive and asks. This used to be a modal
+// over the whole window; it is a card in the conversation now, where the
+// question happened, with its options inline.
+//
+// The card has to be a child of #thread rather than of the turn, and that is
+// forced rather than preferred: a confirm can arrive with no turn running, and
+// can be REPLAYED to a window that connects late — so there may be no turn
+// element to write into, and on a replay the question legitimately belongs
+// mid-scrollback. #thread always exists.
+//
+// Three decisions are carried over from the terminal prompt, because each of
+// them was a decision:
 //
 //   - The preview is the safety feature. "Delete 4,312 files totalling 8.2 GB"
-//     is a decision; "Are you sure?" is a reflex. So the effect gets the most
-//     visual weight, not the buttons.
+//     is a decision; "Are you sure?" is a reflex. So the effect sits ABOVE the
+//     command and carries the weight.
 //   - A destructive action needs the word "yes" typed in full. Muscle memory
-//     clicks the primary button before the eyes have finished reading, and that
-//     is exactly the moment this exists to catch.
-//   - Silence is a no, and the countdown says so out loud. A timeout that looks
-//     identical to a refusal is how she learns the window always says no.
+//     clicks the primary button before the eyes have finished reading.
+//   - Silence is a no, and the countdown says so out loud.
+//
+// A modal is loud for free, because it disappears. A card lives in the
+// scrollback forever, so it has to be SEEN to fall out of the top tier once it
+// is answered — hence the deflation, and #pending in the topbar while any card
+// is still open.
 
-let permission = null;   // the question on screen
-let permissionTick = 0;  // its countdown timer
+const perms = new Map();   // id -> {p, card, tick, born, bornInTurn}
+
+function permCount() {
+  let n = 0;
+  for (const r of perms.values()) if (r.card.dataset.state === 'open') n += 1;
+  return n;
+}
+
+function syncPending() {
+  const n = permCount();
+  const btn = $('pending');
+  btn.hidden = n === 0;
+  btn.textContent = n + ' waiting';
+}
 
 function askPermission(raw) {
   let p;
   try { p = JSON.parse(raw); } catch { return; }
+  if (!p || !p.id) return;
+  // Idempotent across the stream and the poll: the same question arrives down
+  // both, and a replay to a reconnecting window arrives again.
+  if (perms.has(p.id)) return;
 
-  // One at a time. A second question while one is up would replace it and the
-  // first would time out unanswered, which is a silent refusal.
-  if (permission) return;
-  permission = p;
-
-  $('confirm-risk').textContent = p.risk || 'risk';
-  $('confirm-risk').className = 'risk ' + (p.risk === 'destructive' ? 'high' : 'mid');
-  $('confirm-cmd').textContent = p.command || '';
-  const why = $('confirm-why');
-  why.textContent = p.reason ? 'She says: ' + p.reason : '';
-  why.hidden = !p.reason;
-  const effect = $('confirm-effect');
-  effect.textContent = p.preview || '';
-  effect.hidden = !p.preview;
-
+  clearEmpty();
+  const card = el('article', 'turn perm');
+  card.dataset.state = 'open';
+  card.dataset.id = p.id;
   const destructive = p.risk === 'destructive';
-  const typed = $('confirm-typed');
-  const word = $('confirm-word');
-  typed.hidden = !destructive;
-  word.value = '';
-  $('confirm-yes').disabled = destructive;
-  $('confirm-yes').textContent = destructive ? 'Allow anyway' : 'Allow';
+  if (destructive) card.dataset.risk = 'destructive';
 
-  $('confirm-veil').hidden = false;
-  (destructive ? word : $('confirm-no')).focus();
+  const head = el('header', 'perm-head');
+  head.append(el('span', 'risk ' + (destructive ? 'high' : 'mid'), p.risk || 'risk'),
+    el('span', 'perm-title', 'She wants to do this'));
+  const clock = el('span', 'perm-clock');
+  head.appendChild(clock);
+  card.appendChild(head);
+
+  // Effect first. app.js has said in a comment for weeks that the preview is
+  // what is being decided, while the DOM put the command above it.
+  if (p.preview) card.appendChild(el('div', 'perm-effect', p.preview));
+  card.appendChild(el('pre', 'perm-cmd', p.command || ''));
+  if (p.reason) card.appendChild(el('p', 'perm-why', 'She says: ' + p.reason));
+
+  const typed = el('label', 'perm-typed');
+  const word = el('input', 'perm-word');
+  word.type = 'text';
+  word.autocomplete = 'off';
+  word.spellcheck = false;
+  word.setAttribute('aria-label', 'Type yes to allow');
+  typed.append(document.createTextNode('This cannot be undone. Type '),
+    el('b', '', 'yes'), document.createTextNode(' to allow it.'), word);
+  typed.hidden = !destructive;
+  card.appendChild(typed);
+
+  const foot = el('footer', 'perm-foot');
+  const no = el('button', 'ghost perm-no', "Don't");
+  no.type = 'button';
+  const yes = el('button', 'danger perm-yes', destructive ? 'Allow anyway' : 'Allow');
+  yes.type = 'button';
+  yes.disabled = destructive;
+  foot.append(no, yes);
+  card.append(foot, el('div', 'perm-verdict'));
+
+  no.addEventListener('click', () => decide(p.id, false));
+  yes.addEventListener('click', () => decide(p.id, true));
+  word.addEventListener('input', () => {
+    yes.disabled = word.value.trim().toLowerCase() !== 'yes';
+  });
+  word.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !yes.disabled) { ev.preventDefault(); decide(p.id, true); }
+  });
+
+  thread.appendChild(card);
+  const rec = { p, card, tick: 0, born: now(), bornInTurn: busy };
+  perms.set(p.id, rec);
 
   let left = p.seconds || 0;
-  const clock = $('confirm-clock');
   const show = () => {
     if (left <= 0) { clock.textContent = ''; return; }
-    const m = Math.floor(left / 60), sec = String(left % 60).padStart(2, '0');
-    clock.textContent = m + ':' + sec + ' left';
+    clock.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
   };
   show();
-  clearInterval(permissionTick);
-  permissionTick = setInterval(() => { left -= 1; show(); if (left <= 0) clearInterval(permissionTick); }, 1000);
+  rec.tick = setInterval(() => {
+    left -= 1;
+    show();
+    if (left <= 0) clearInterval(rec.tick);
+  }, 1000);
+
+  syncPending();
+  // A replayed card lands where the scroll already is: yanking the viewport away
+  // from someone who is reading is hostile, and a replay is by definition old.
+  const live = !p.replayed;
+  if (live) {
+    card.classList.add('arriving');
+    setTimeout(() => card.classList.remove('arriving'), 800);
+    scroll(true);
+    // Never steal the caret mid-sentence, and never while the recorder is open.
+    if (document.activeElement !== input && !listening) {
+      (destructive ? word : no).focus();
+    }
+  }
 }
 
-function closePermission(id) {
-  // Guarded by id: a timeout for a question already answered must not tear down
-  // the one now on screen.
-  if (!permission || (id && id !== permission.id)) return;
-  clearInterval(permissionTick);
-  permission = null;
-  $('confirm-veil').hidden = true;
-  input.focus();
+// settlePerm moves a card out of the top tier. Same DOM, one attribute.
+function settlePerm(id, state, sentence) {
+  const rec = perms.get(id);
+  if (!rec || rec.card.dataset.state !== 'open') return;
+  clearInterval(rec.tick);
+  rec.card.dataset.state = state;
+  const cmd = rec.p.command || '';
+  const said = sentence || ({
+    allowed: 'Allowed',
+    refused: 'Declined',
+    expired: 'No answer — declined',
+  })[state] || state;
+  // Expired reads as mute, not as a failure: "I missed one" and "I refused one"
+  // are different facts about your own afternoon, and neither is an error.
+  rec.card.querySelector('.perm-verdict').textContent = cmd ? said + ' — ' + cmd : said;
+  syncPending();
 }
 
-async function decide(ok) {
-  if (!permission) return;
-  const id = permission.id;
-  closePermission(id);
+async function decide(id, ok) {
+  const rec = perms.get(id);
+  if (!rec || rec.card.dataset.state !== 'open') return;
+  settlePerm(id, ok ? 'allowed' : 'refused');
   try {
     const r = await fetch('/answer', {
       method: 'POST',
@@ -634,31 +1107,59 @@ async function decide(ok) {
       body: JSON.stringify({ id, ok }),
     });
     // 410 means the question timed out or was answered elsewhere. Swallowing it
-    // made a too-late "Allow" look exactly like an approval, so the user watched
-    // for something to happen and nothing did.
+    // made a too-late "Allow" look exactly like an approval.
     if (r.status === 410) {
-      renderStopped('That question had already expired, so it was declined.');
+      rec.card.dataset.state = 'expired';
+      rec.card.querySelector('.perm-verdict').textContent =
+        'That question had already expired, so it was declined. ' + (rec.p.command || '');
+      syncPending();
     } else if (!r.ok) {
-      renderError('that answer was not accepted (' + r.status + ')');
+      renderNote('That answer was not accepted (' + r.status + ').');
     }
   } catch (err) {
-    renderError('could not send that answer: ' + String(err));
+    renderNote('Could not send that answer: ' + String(err));
   }
 }
 
-$('confirm-no').addEventListener('click', () => decide(false));
-$('confirm-yes').addEventListener('click', () => decide(true));
-$('confirm-word').addEventListener('input', (ev) => {
-  $('confirm-yes').disabled = ev.target.value.trim().toLowerCase() !== 'yes';
+// The state poll settles the other direction: a card no longer outstanding on
+// the server was answered somewhere else, or timed out. The age guard matters —
+// a poll already in flight when a card is created would otherwise kill a live
+// question before the server had ever heard of it.
+const PERM_SETTLE_GRACE = 3000;
+
+function reconcileAsks(asking) {
+  const live = new Set((asking || []).map((a) => a.id));
+  for (const [id, rec] of perms) {
+    if (rec.card.dataset.state !== 'open') continue;
+    if (live.has(id)) continue;
+    if (now() - rec.born < PERM_SETTLE_GRACE) continue;
+    settlePerm(id, 'expired');
+  }
+}
+
+// Clicking the verdict re-reveals what was decided, read-only. The buttons never
+// come back.
+thread.addEventListener('click', (ev) => {
+  const v = ev.target.closest('.perm-verdict');
+  if (v) v.closest('.perm')?.classList.toggle('expand');
 });
-$('confirm-word').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter' && !$('confirm-yes').disabled) { ev.preventDefault(); decide(true); }
-});
-// Escape declines. Anything unparsed is a no, in the window as at the prompt —
-// a dialog that treats ambiguity as consent is worse than no dialog, because it
-// looks like a safeguard.
+
+// Escape declines the oldest open card. Anything unparsed is a no, in the window
+// as at the prompt.
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && permission) { ev.preventDefault(); decide(false); }
+  if (ev.key !== 'Escape') return;
+  for (const [id, rec] of perms) {
+    if (rec.card.dataset.state === 'open') { ev.preventDefault(); decide(id, false); return; }
+  }
+});
+
+$('pending').addEventListener('click', () => {
+  for (const rec of perms.values()) {
+    if (rec.card.dataset.state !== 'open') continue;
+    rec.card.scrollIntoView({ block: 'center' });
+    rec.card.querySelector('.perm-no')?.focus();
+    return;
+  }
 });
 
 function finish() {
@@ -670,15 +1171,16 @@ function finish() {
   // recorded, which is the one light in this window that must never lie.
   if (!listening) micState('');
   $('stop').hidden = true;
-  // A turn that ends with a question still on screen would leave the modal there
-  // for a turn that is over, and answering it then posts to an id the server has
-  // already forgotten. Anything unanswered is declined, which is the direction
-  // this whole dialog errs in.
-  if (permission) decide(false);
-  $('status').textContent = '';
-  turnEl?.querySelector('.working')?.remove();
-  turnEl = null;
-  traceEl = null;
+  sealWork();
+  // Only the questions THIS turn raised. The modal version declined everything
+  // outstanding, which meant a typed turn ending silently refused a background
+  // job's question — the exact false refusal the server's replay machinery
+  // exists to prevent. A card that arrived with no turn running keeps its own
+  // clock and its own five minutes.
+  for (const [id, rec] of perms) {
+    if (rec.card.dataset.state === 'open' && rec.bornInTurn) decide(id, false);
+  }
+  endTurn();
   input.focus();
   loadHistory();
   pollState();
@@ -690,7 +1192,6 @@ async function ask(text) {
   busy = true;
   send.disabled = true;
   $('stop').hidden = false;
-  $('status').textContent = 'working';
   userTurn(text);
   beginFreyaTurn();
   pollState();

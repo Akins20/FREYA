@@ -42,7 +42,7 @@ func newWorkManager(ctx context.Context, a *agent.Agent, store *memory.Store,
 		// Progress goes to the job, not to a terminal nobody is watching. This is
 		// what makes "what are you doing?" answerable while it happens.
 		worker.OnInterim = func(text string) { j.Note(clipLine(text, 100)) }
-		worker.OnTool = func(event, name, detail string) {
+		worker.OnTool = func(event, name, _, detail string) {
 			if event == "start" {
 				j.Note(name)
 			}

@@ -16,10 +16,10 @@ func TestEverySubscriberHearsTheTurn(t *testing.T) {
 	h := newTraceHub()
 
 	var terminal, window []string
-	stopTerminal := h.Add(func(kind, name, text string) {
+	stopTerminal := h.Add(func(kind, name, _, text string) {
 		terminal = append(terminal, kind+":"+name+":"+text)
 	})
-	h.Add(func(kind, name, text string) {
+	h.Add(func(kind, name, _, text string) {
 		window = append(window, kind+":"+name+":"+text)
 	})
 
@@ -51,9 +51,9 @@ func TestEverySubscriberHearsTheTurn(t *testing.T) {
 func TestRemovingTwiceIsSafe(t *testing.T) {
 	h := newTraceHub()
 	var n int
-	remove := h.Add(func(string, string, string) { n++ })
+	remove := h.Add(func(string, string, string, string) { n++ })
 	other := 0
-	h.Add(func(string, string, string) { other++ })
+	h.Add(func(string, string, string, string) { other++ })
 
 	remove()
 	remove()
@@ -90,7 +90,7 @@ func TestSubscribingDuringATurnIsSafe(t *testing.T) {
 	}()
 
 	for i := 0; i < 50; i++ {
-		remove := h.Add(func(string, string, string) {})
+		remove := h.Add(func(string, string, string, string) {})
 		remove()
 	}
 	close(stop)
