@@ -67,6 +67,81 @@ func TestSheIsNotAllowedToClaimSuccessAfterAFullyFailedExchange(t *testing.T) {
 	}
 }
 
+// The measured case, and the reason severeFailure is 1.
+//
+// Asked to delete a file in a session with no way to confirm, she makes two
+// calls — the tool, then a shell fallback — and the guard refuses both with a
+// message that says in plain words that nothing was done and not to report it as
+// a refusal by the user. She answered "Gone." Five runs in six, across two
+// persona texts, with the file still on disk every time.
+//
+// Two calls was below the old threshold of three, so the backstop never ran. The
+// count was protecting exactly the case that needed catching: the danger is not
+// losing track across fourteen errors, it is one refusal and a confident
+// sentence.
+func TestTwoRefusalsAreEnoughToStopHerSayingItIsDone(t *testing.T) {
+	const refusal = "REFUSED: nobody could be asked: this needs confirmation " +
+		"(destructive risk: removes files). Nothing was done."
+	p := &scriptedProvider{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{{ID: "1", Name: "file_delete"}}},
+		{ToolCalls: []llm.ToolCall{{ID: "2", Name: "file_delete"}}},
+		{Text: "Gone."},
+		{Text: "That needs your approval to remove files, and there's no way to " +
+			"show you the prompt here. replay.txt is still there."},
+	}}
+	a, store := newTestAgent(t, p)
+	a.Skills.Register(skills.Skill{
+		Tool: llm.Tool{Name: "file_delete", Params: llm.ObjectSchema(nil)},
+		Handler: func(context.Context, map[string]any) (string, error) {
+			return "", errors.New(refusal)
+		},
+	})
+
+	res, err := a.Ask(context.Background(), "delete replay.txt from your working directory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(res.Reply) == "Gone." {
+		t.Fatal("two refusals and she still reported the file deleted; the file is " +
+			"on disk and the user has stopped checking")
+	}
+	if !strings.Contains(res.Reply, "still there") {
+		t.Errorf("the corrected answer was not used: %q", res.Reply)
+	}
+
+	// The archive holds the truth. The next turn reads this, and a false
+	// completion in there is believed by every turn after it.
+	turns := store.Turns()
+	if last := turns[len(turns)-1]; strings.TrimSpace(last.Text) == "Gone." {
+		t.Errorf("the false claim was archived: %q", last.Text)
+	}
+}
+
+// A refusal is not a failure of the world, and it still counts as nothing done —
+// the guard declining a call means it never touched anything.
+func TestARefusalCountsEvenWhenItIsTheOnlyCall(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{{ID: "1", Name: "wipe"}}},
+		{Text: "All cleared."},
+		{Text: "I couldn't clear it — that needs a confirmation I can't ask for here."},
+	}}
+	a, _ := newTestAgent(t, p)
+	a.Skills.Register(skills.Skill{
+		Tool: llm.Tool{Name: "wipe", Params: llm.ObjectSchema(nil)},
+		Handler: func(context.Context, map[string]any) (string, error) {
+			return "", errors.New("REFUSED: needs confirmation. Nothing was done.")
+		},
+	})
+
+	res, err := a.Ask(context.Background(), "wipe the folder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Reply, "All cleared") {
+		t.Errorf("one refusal was enough to claim the job done: %q", res.Reply)
+	}
+}
+
 // One success is enough to make the exchange ordinary. The check must not fire
 // on partial failure, or every recovered turn pays for an extra call.
 func TestOneSuccessMakesTheExchangeOrdinary(t *testing.T) {
@@ -188,12 +263,22 @@ func TestTheBriefStatesFactsAndNamesTheGoal(t *testing.T) {
 // The free half: on any round where nothing has worked, the fact rides in the
 // tail so she writes with it in front of her — no extra call, and as much a
 // prompt to change approach as to report honestly.
-func TestTheFactRidesInTheTailWithoutAnExtraCall(t *testing.T) {
+// The cheap half: the fact is stated in the tail of the ordinary request, so she
+// writes with it in front of her rather than reconstructing it from a pile of
+// near-identical errors. It also reads mid-loop as a reason to change approach.
+//
+// This used to assert that two failures cost no extra call. That assertion was
+// the bug: measured against the real model, two refusals and a confident "Gone."
+// was five runs out of six. See severeFailure.
+func TestTheFactRidesInTheTail(t *testing.T) {
+	var reqs []llm.Request
 	p := &scriptedProvider{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{{ID: "1", Name: "click"}}},
 		{ToolCalls: []llm.ToolCall{{ID: "2", Name: "click"}}},
 		{Text: "I can't get that button to take a click."},
+		{Text: "I can't get that button to take a click."},
 	}}
+	p.onCall = func(r llm.Request) { reqs = append(reqs, r) }
 	a, _ := newTestAgent(t, p)
 	a.Skills.Register(skills.Skill{
 		Tool: llm.Tool{Name: "click", Params: llm.ObjectSchema(nil)},
@@ -206,15 +291,17 @@ func TestTheFactRidesInTheTailWithoutAnExtraCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.calls != 3 {
-		t.Errorf("made %d model calls, want 3 — two failures is not severe enough to re-ask", p.calls)
-	}
 	if res.Reply != "I can't get that button to take a click." {
-		t.Errorf("an honest answer was second-guessed: %q", res.Reply)
+		t.Errorf("an honest answer came back changed: %q", res.Reply)
 	}
 
-	// The note was present on the last request, at the end.
-	last := p.lastReq.Messages[len(p.lastReq.Messages)-1]
+	// On the request that produced the answer — the third — not the backstop's
+	// re-ask that follows it, which carries the fuller brief in its system text.
+	if len(reqs) < 3 {
+		t.Fatalf("only %d requests were made", len(reqs))
+	}
+	answering := reqs[2]
+	last := answering.Messages[len(answering.Messages)-1]
 	if !strings.Contains(last.Text, "not one of them has worked") {
 		t.Errorf("the fact was not stated in the tail: %q", last.Text)
 	}

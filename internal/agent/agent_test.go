@@ -139,6 +139,9 @@ func TestFailingToolIsReportedToModelNotFatal(t *testing.T) {
 	p := &scriptedProvider{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "boom"}}},
 		{Text: "I handled the failure"},
+		// Nothing in this exchange worked, so the truthfulness backstop asks
+		// again before the answer stands. See truthful.go.
+		{Text: "I handled the failure"},
 	}}
 	a, _ := newTestAgent(t, p)
 
@@ -173,6 +176,7 @@ func TestUnknownToolDoesNotCrash(t *testing.T) {
 	p := &scriptedProvider{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "does_not_exist"}}},
 		{Text: "recovered"},
+		{Text: "recovered"}, // the truthfulness backstop; nothing worked here either
 	}}
 	a, _ := newTestAgent(t, p)
 

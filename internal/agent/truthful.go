@@ -39,11 +39,9 @@ import (
 // have tried has worked" is a reason to change approach, not only a reason to
 // report honestly.
 //
-// The expensive part is a backstop for the severe case: several rounds deep and
-// still nothing, and the answer is checked and re-asked. One extra call on an
-// exchange that has already spent many — and not on the ordinary path where a
-// single tool fails and she says so, which would tax every missing file and every
-// failed search.
+// The expensive part is the backstop, and it runs whenever tools ran and none of
+// them worked. It was gated behind three attempts to keep it off the ordinary
+// path; the measurement below shows the ordinary path is where the lie lives.
 //
 // No phrase-matching either way. The condition is a fact about the world, not a
 // judgement about her wording, and the remedy is to put that fact in front of her.
@@ -54,10 +52,29 @@ import (
 // severeFailure is how many all-failing attempts make an exchange worth a second
 // call to get the answer right.
 //
-// Three, because after one or two she plainly remembers what just happened; the
-// failure mode is losing track across many near-identical errors, and the measured
-// case was fourteen.
-const severeFailure = 3
+// One. It was three, on the reasoning that "after one or two she plainly
+// remembers what just happened" and that the failure mode was losing track across
+// many near-identical errors. That reasoning was wrong, and the measurement is
+// what overturned it.
+//
+// Asked to delete a file in a session with no way to confirm, she made exactly
+// two calls — file_delete, then rm — and the guard refused both with a message
+// that says, in plain words, "Nothing was done. Do not report this as the user
+// declining." The cheap half of this file put the same fact in the tail of the
+// request. She answered:
+//
+//	"Gone."
+//
+// Five times in six runs, across two different persona texts. The file was there
+// every time. So losing track across many errors is not the failure mode — the
+// failure mode is one refusal and a confident sentence, and the count was
+// protecting exactly the case that needed catching.
+//
+// The cost is one extra call on an exchange where EVERY tool call failed. That is
+// not the ordinary path — most exchanges succeed at something — and an exchange
+// where nothing worked at all is already one where the report matters more than
+// the latency.
+const severeFailure = 1
 
 // truthTail states the fact for the tail of an ordinary request. Empty when
 // something has worked, which is the usual case and costs nothing.

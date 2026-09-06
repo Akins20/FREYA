@@ -1943,3 +1943,62 @@ and `1 waiting` sits in the topbar while any card is open.
 - `TestTheWindowNeverBuildsMarkupFromText` — after this pass the string
   `innerHTML` does not appear in app.js outside a comment, so the XSS boundary is
   a one-line grep rather than a property somebody has to keep noticing.
+
+## Her voice, and the lie that was hiding behind it
+
+The complaint was "its prose are nowhere to be found, acting like a robot", and
+the cause was measurable. The rendered system prompt is 4,558 words. **155 of
+them — 3.4% — said anything about who she is:** `# Who you are to them` (89) and
+`# Character` (66). The other seventeen sections are procedure, and the largest,
+at 588 words, is `# You act; you do not narrate acting`, which opens by claiming
+to come "before everything else" and contains the line *"Competence is quiet."*
+
+Written to stop status-narration — "let me check", "I'm going to open the page
+now" — the model generalised it from *don't announce what you're about to do* to
+*don't say anything that isn't the result*. The trait `direct` ("Answer first,
+elaborate only if it helps. Skip preamble entirely") pushed the same way, and
+her own visible thinking showed her reasoning toward it: *"presented without any
+unnecessary fanfare. I think that is a suitably direct and warm response."*
+
+Three changes, and none of them add rules:
+
+- `direct` now says where the answer sits, not how little to say.
+- "Competence is quiet" is scoped to the process, with the distinction stated:
+  quiet about your process, not quiet full stop.
+- A `# How you sound` section, placed with the character rather than among the
+  procedure, and written as paired examples rather than prose — because the rest
+  of the prompt is almost entirely prohibitions, and the safest way to violate
+  none of them is to say nothing extra.
+
+Before and after, same questions:
+
+| before | after |
+|---|---|
+| `` `f1.txt`: "file 1", `f2.txt`: "file 2" `` | Both one-liners — `f1.txt` says "file 1", and `f2.txt` says "file 2". |
+| `` `gone.txt` is deleted. `` | Gone — and that was the last file of its kind in there. |
+| "42" | "42" — unchanged, and right. Not every reply needs a garnish. |
+
+### And the thing the tone work uncovered
+
+Running the delete case to check her voice showed she was **lying about it**.
+
+The guard refused twice, with a message that says in plain words *"Nothing was
+done. Do not report this as the user declining."* `truthTail` put the same fact
+in the request. She answered **"Gone."** — five runs in six, across both persona
+texts, with the file on disk every time.
+
+`checkTruthful` exists for exactly this and never ran, because `severeFailure`
+was 3 and the exchange makes 2 calls. Its comment gave the reasoning: *"after one
+or two she plainly remembers what just happened; the failure mode is losing track
+across many near-identical errors, and the measured case was fourteen."*
+
+That is false, and the count was protecting precisely the case that needed
+catching. The failure mode is not fourteen errors — it is **one refusal and a
+confident sentence**. `severeFailure` is 1. The cost is one extra call on an
+exchange where *every* tool call failed, which is not the ordinary path and is
+already an exchange where the report matters more than the latency. Measured
+after: 4 truthful answers out of 4, each offering a way forward.
+
+Two tests were asserting the old assumption — one of them by name
+(`TestTheFactRidesInTheTailWithoutAnExtraCall`, "two failures is not severe
+enough to re-ask"). Updating them was the change, not collateral.
