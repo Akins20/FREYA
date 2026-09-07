@@ -255,6 +255,9 @@ func run(oneShot, providerOverride, modelOverride string, verbose, dryRun, daemo
 	skills.RegisterDev(reg, cfg.ProjectsDir)
 	skills.RegisterDesktop(reg, g)
 	skills.RegisterClipboard(reg, g)
+	// Working in the document they already have open, rather than writing a
+	// second file beside it. See internal/skills/document.go.
+	skills.RegisterDocuments(reg, g)
 	skills.RegisterArrange(reg, g)
 	// Where the user's own things live, learned from their browsing rather than
 	// hardcoded per provider. See internal/routes.

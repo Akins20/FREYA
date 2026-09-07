@@ -229,6 +229,37 @@ The permission request is a card in the thread, appended to `#thread` and never
 to the turn: a confirm can arrive with no turn running and can be replayed to a
 window that connects late, so there may be no turn to write into.
 
+### Working in a document that is already open
+
+`internal/skills/document.go`. `internal/docs` writes files; this drives the one
+on screen, with the user's unsaved edits in it. Four skills: `document_list`,
+`document_read`, `document_write`, `document_save`.
+
+**The clipboard, not the accessibility tree, and that was measured.** LibreOffice
+does expose its grid over AT-SPI, down to `Table` and `TableCell` — and it is
+unusable: the sheet reports its size as the whole addressable grid (1,048,576 x
+16,384) rather than the used range, cell objects exist only while on screen, and
+`Text.GetText` on a cell holding "region" came back empty. Selecting and copying
+returned the entire used range first go, tab-separated, **including the computed
+value of a formula** — the number the user can see and the file on disk does not
+contain.
+
+Three consequences worth keeping:
+
+- **A sheet is selected with Ctrl+End then Ctrl+Shift+Home**, never Ctrl+A. In
+  Calc, Ctrl+A selects a million empty rows and copying that looks like a hang.
+- **Saving answers the format dialog by its button label.** A .xlsx save puts up
+  "Non-standard file format", and the wrong button silently rewrites it as .ods.
+  Enter happens to keep the format on this build; that is a fact about one build.
+  The dialog publishes no window title, so it is found by walking LibreOffice's
+  windows for a button that says what it does.
+- **A paste into an open document is RiskHigh, so it outranks autonomy.** Every
+  other synthetic input types into a window the user is watching. This one
+  overwrites a region of a document that may hold work existing in no file, since
+  the file on disk is the last save. At the KindInput default of medium it
+  auto-approved under `-yes` and in the daemon. `internal/guard/rules.go` raises
+  it and a test pins that.
+
 ### Provider abstraction
 
 `internal/llm/llm.go` defines neutral `Message`/`Tool`/`Response` types. Each provider

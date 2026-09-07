@@ -253,6 +253,24 @@ func assess(action Action, extraProtected []string, workspace string) Assessment
 		raise(RiskMedium, "synthetic-input",
 			"sends keystrokes or clicks to whatever window has focus")
 
+		// Except when it lands in a document the user has open, which is worse
+		// than the general case and has to outrank autonomy.
+		//
+		// Everything else this kind covers types into a window the user is
+		// looking at, and a wrong keystroke is visible and undone. A paste into
+		// an open document overwrites a region of something that may hold an
+		// afternoon of unsaved work — work that exists in no file, because the
+		// file on disk is the last save. Auto-approved at medium, the daemon
+		// could do it while nobody was watching and then be asked to save.
+		//
+		// So it asks, every time, whatever the autonomy setting says.
+		if strings.HasPrefix(action.Command, "paste into ") {
+			a.Reversible = false
+			raise(RiskHigh, "open-document",
+				"overwrites part of a document the user has open, including anything "+
+					"in it that has not been saved")
+		}
+
 	case KindSystem:
 		raise(RiskMedium, "system", "changes system state")
 

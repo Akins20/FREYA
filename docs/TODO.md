@@ -2002,3 +2002,66 @@ after: 4 truthful answers out of 4, each offering a way forward.
 Two tests were asserting the old assumption — one of them by name
 (`TestTheFactRidesInTheTailWithoutAnExtraCall`, "two failures is not severe
 enough to re-ask"). Updating them was the change, not collateral.
+
+## Working in the document she already has open
+
+`internal/docs` writes files. That answers "make me a spreadsheet" and answers
+nothing about the spreadsheet on screen with unsaved edits in it, which is where
+a person actually works — so asked to add a column to the sheet in front of them,
+the best she could do was write a second file beside it.
+
+Four skills now: `document_list`, `document_read`, `document_write`,
+`document_save`.
+
+### The obvious route was the wrong one, and probing said so
+
+LibreOffice exposes its grid over AT-SPI properly — `Table`, `TableCell`, `Text`,
+`Value` interfaces all present on the right nodes. It is still unusable for this:
+
+- the sheet reports its dimensions as **1,048,576 x 16,384**, the whole
+  addressable grid rather than the used range, so there is nothing to enumerate
+- cell objects are realised only while on screen; anything scrolled out of view
+  does not exist to read
+- `Text.GetText` on a cell holding "region" returned empty
+
+Selecting and copying, against the same live document, returned the whole used
+range as tab-separated text on the first attempt — including **360** for a Total
+cell holding `=SUM(B2:B4)`. That is the value LibreOffice had computed: the
+number the user can see, and the number the file on disk did not contain until
+the same afternoon's cached-value fix.
+
+So it drives the application the way a person does. No bridge, no extension, no
+package the machine does not already have. `python3-uno` would be cleaner still
+and needs a root install, which is the user's to make, not hers.
+
+### Three things that had to be got right
+
+- **Ctrl+End then Ctrl+Shift+Home**, never Ctrl+A, for a sheet. Ctrl+A in Calc
+  selects a million empty rows and copying them looks like a hang.
+- **The save dialog is answered by button label.** Saving a .xlsx asks
+  "Non-standard file format" with *Use ODF Format* / *Use Excel 2007 Format*, and
+  the wrong one silently rewrites the file as .ods. Enter picks keep-the-format
+  on this build — a fact about one build, not something to rest a file on. The
+  dialog publishes no window title at all, so it is found by walking
+  LibreOffice's own windows for a button that says what it does.
+- **A paste into an open document always asks.** `KindInput` is RiskMedium and
+  `-yes` and the daemon auto-approve at medium, so as first built she could paste
+  over an open document unwatched and then be asked to save it. Every other
+  synthetic input types into a window the user is looking at, where a wrong
+  keystroke is visible and undone; this one overwrites work that may exist in no
+  file. It is RiskHigh and irreversible now, verified live: under `-yes` with
+  nobody to ask, the write was refused and she said so.
+
+### Bugs the tests caught while building
+
+- The em dash is **three bytes** in UTF-8, so `" — "` is five and `" - "` is
+  three. One hardcoded width left a stray byte on the front of every application
+  name. The separator's width now comes from whichever one matched.
+- `readDocument` had to wait after Ctrl+C before reading: a clipboard read that
+  races the copy returns what was there before, which is the previous document's
+  contents and looks entirely plausible.
+
+Verified end to end against a real open spreadsheet: she listed what was open,
+read both sheets and reported the computed total, added a row at a named cell,
+saved it, and the file on disk was still `Microsoft Excel 2007+` rather than
+having become an .ods.

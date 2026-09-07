@@ -305,6 +305,20 @@ func (r *Reader) Window(ctx context.Context, title string) (*Node, error) {
 	return nil, ErrNoTree
 }
 
+// Walk reads a subtree in place, so a caller that already holds a node can fill
+// it in.
+//
+// Window covers the usual case of "find a window and read it". This exists for
+// the one it does not: a modal dialog that publishes no title at all cannot be
+// looked up by name, so it has to be reached through its application's children
+// and then read. LibreOffice's "Non-standard file format" dialog is exactly that.
+func (r *Reader) Walk(ctx context.Context, n *Node) {
+	if n == nil {
+		return
+	}
+	r.walk(ctx, n, 0)
+}
+
 // Describe renders a subtree the way browser_inspect renders a page: what is
 // there, what it is called, and what can be aimed at.
 //
