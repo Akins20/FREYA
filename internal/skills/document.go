@@ -288,13 +288,17 @@ func readDocument(ctx context.Context, d openDoc) (string, error) {
 		}
 		return "", err
 	}
-	// Leave the cursor somewhere sane rather than holding a selection over the
-	// user's whole document.
-	if d.Kind == kindSheet {
-		_ = keys(ctx, "ctrl+Home")
-	} else {
-		_ = keys(ctx, "Left")
-	}
+	// Collapse the selection to a DEFINED place, not merely somewhere sane.
+	//
+	// This used to press Left for a text document, which collapses to whichever
+	// end of the selection the application prefers — so a later write landed at
+	// an arbitrary point. Measured: appending a paragraph after a read put it
+	// inside the last sentence, splicing "…before she touches it" and "Next
+	// steps:" together and stranding the full stop after her text.
+	//
+	// Home for both kinds, so where the cursor is afterwards is a fact rather
+	// than a guess. Writing does not depend on it either way now — see writeBlock.
+	_ = keys(ctx, "ctrl+Home")
 	return text, nil
 }
 
@@ -321,7 +325,7 @@ func goToCell(ctx context.Context, ref string) error {
 // autoinput not to help — and Calc's autoinput will happily finish "Nor" as
 // "North" from the column above. A paste is one operation and lands exactly what
 // was on the clipboard.
-func writeBlock(ctx context.Context, d openDoc, ref, tsv string) error {
+func writeBlock(ctx context.Context, d openDoc, ref, content string, asHTML bool) error {
 	bin := firstOf("xclip", "xsel")
 	if bin == "" {
 		return fmt.Errorf("writing into a document this way needs xclip or xsel on PATH")
@@ -329,12 +333,24 @@ func writeBlock(ctx context.Context, d openDoc, ref, tsv string) error {
 	if err := focusDoc(ctx, d); err != nil {
 		return err
 	}
-	if ref != "" {
-		if err := goToCell(ctx, ref); err != nil {
-			return err
+
+	if d.Kind == kindSheet {
+		if ref != "" {
+			if err := goToCell(ctx, ref); err != nil {
+				return err
+			}
 		}
+	} else if err := placeInText(ctx, ref); err != nil {
+		return err
 	}
-	if err := clipWrite(ctx, bin, tsv); err != nil {
+	if asHTML {
+		if err := clipWriteHTML(ctx, content); err != nil {
+			// Losing the bold is better than losing the paragraph.
+			if err2 := clipWrite(ctx, bin, content); err2 != nil {
+				return err
+			}
+		}
+	} else if err := clipWrite(ctx, bin, content); err != nil {
 		return err
 	}
 	select {
@@ -346,6 +362,37 @@ func writeBlock(ctx context.Context, d openDoc, ref, tsv string) error {
 	// cell colours in with it. Ctrl+Shift+V opens a dialog; this is the direct
 	// one Calc gives for text.
 	return keys(ctx, "ctrl+v")
+}
+
+// placeInText puts the cursor where a write into a text document should land.
+//
+// A spreadsheet has cell addresses; prose has no such thing, so "where" has to
+// be said in the few words that actually mean something: the end, the start, or
+// wherever the user left the cursor.
+//
+// "end" opens a new paragraph first. Appending without one splices the new text
+// onto the last sentence — measured, and it read as a typo rather than an edit.
+func placeInText(ctx context.Context, where string) error {
+	switch strings.ToLower(strings.TrimSpace(where)) {
+	case "", "cursor":
+		return nil
+	case "end", "append":
+		if err := keys(ctx, "ctrl+End"); err != nil {
+			return err
+		}
+		return keys(ctx, "Return")
+	case "start", "beginning", "top":
+		if err := keys(ctx, "ctrl+Home"); err != nil {
+			return err
+		}
+		// A paragraph opened above, so the existing first line stays its own.
+		if err := keys(ctx, "Return"); err != nil {
+			return err
+		}
+		return keys(ctx, "Up")
+	}
+	return fmt.Errorf("for a text document, 'at' is end, start or cursor — %q is "+
+		"none of those", where)
 }
 
 // saveDoc saves, and answers the format question it provokes.
@@ -553,6 +600,12 @@ func RegisterDocuments(r *Registry, g *guard.Guard) {
 				"For a spreadsheet give 'at' as a cell address (D1, A12) and 'content' as " +
 				"rows of tab-separated values — one line per row. The block is pasted, so " +
 				"a whole table lands in one go.\n\n" +
+				"Set format to 'html' to write FORMATTED content: bold, italic, colour, " +
+				"headings, bulleted and numbered lists, and real tables all come through. " +
+				"Write ordinary HTML — <b>, <i>, <span style=\"color:#cc0000\">, <ul><li>, " +
+				"<table><tr><td> — and it arrives styled rather than as tags. Use it " +
+				"whenever the answer has structure; a list pasted as plain text is a list " +
+				"they have to format themselves.\n\n" +
 				"Read the document first so you know what is there. This overwrites " +
 				"whatever occupies the cells you paste over, and their document may have " +
 				"work in it you did not put there.\n\n" +
@@ -560,11 +613,14 @@ func RegisterDocuments(r *Registry, g *guard.Guard) {
 			Params: llm.ObjectSchema(map[string]llm.Property{
 				"content": {Type: "string", Description: "What to put in. For a sheet, " +
 					"rows of tab-separated values separated by newlines."},
-				"at": {Type: "string", Description: "Cell address to start at, for a " +
-					"spreadsheet — D1, A12. Omit for a text document, where it goes at " +
-					"the cursor."},
+				"at": {Type: "string", Description: "Where it goes. For a spreadsheet, " +
+					"a cell address — D1, A12. For a text document, 'end' to append as a " +
+					"new paragraph, 'start' to put it at the top, or 'cursor' to use " +
+					"wherever they left it."},
 				"document": {Type: "string", Description: "Part of the file name. Omit " +
 					"when only one document is open."},
+				"format": {Type: "string", Description: "'text' (default) or 'html' for " +
+					"formatted content — styling, lists, tables."},
 				"reason": {Type: "string", Description: "Why, in a few words."},
 			}, "content"),
 		},
@@ -590,15 +646,20 @@ func RegisterDocuments(r *Registry, g *guard.Guard) {
 				return "", err
 			}
 			at := strings.TrimSpace(argString(args, "at"))
-			if d.Kind == kindSheet && at == "" {
-				return "", fmt.Errorf("say which cell to start at — writing at wherever " +
-					"the cursor happens to be would overwrite whatever it is sitting on")
+			if at == "" {
+				if d.Kind == kindSheet {
+					return "", fmt.Errorf("say which cell to start at — writing at wherever " +
+						"the cursor happens to be would overwrite whatever it is sitting on")
+				}
+				return "", fmt.Errorf("say where it goes: 'end' to append as a new " +
+					"paragraph, 'start' for the top, or 'cursor' for wherever they left it")
 			}
 			reason := argString(args, "reason")
 			if reason == "" {
 				reason = "write into the open document"
 			}
 
+			asHTML := strings.EqualFold(strings.TrimSpace(argString(args, "format")), "html")
 			rows := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1
 			where := d.Name
 			if at != "" {
@@ -615,10 +676,86 @@ func RegisterDocuments(r *Registry, g *guard.Guard) {
 					reason, rows, where),
 			}
 			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
-				if err := writeBlock(ctx, d, at, content); err != nil {
+				if err := writeBlock(ctx, d, at, content, asHTML); err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("Put %d row(s) into %s. Not saved yet.", rows, where), nil
+				kind := "row(s)"
+				if asHTML {
+					kind = "formatted block"
+					rows = 1
+				}
+				return fmt.Sprintf("Put %d %s into %s. Not saved yet.", rows, kind, where), nil
+			})
+		},
+	})
+
+	r.Register(Skill{
+		Tool: llm.Tool{
+			Name: "document_replace",
+			Description: "Change specific text in an open document, leaving everything " +
+				"else exactly as it is.\n\n" +
+				"This is the surgical edit: fix a name, correct a figure, reword a phrase. " +
+				"Unlike document_write it does not overwrite a region — it finds what you " +
+				"name and replaces every occurrence, keeping the formatting around it.\n\n" +
+				"Leave 'to' empty to delete the text instead.\n\n" +
+				"Read the document first so you are replacing something that is actually " +
+				"there and know how many times it occurs. It does not save.",
+			Params: llm.ObjectSchema(map[string]llm.Property{
+				"find": {Type: "string", Description: "The exact text to look for."},
+				"to": {Type: "string", Description: "What to put in its place. Empty " +
+					"deletes it."},
+				"match_case": {Type: "boolean", Description: "Match capitalisation exactly."},
+				"document": {Type: "string", Description: "Part of the file name. Omit " +
+					"when only one document is open."},
+				"reason": {Type: "string", Description: "Why, in a few words."},
+			}, "find"),
+		},
+		Mutates: true,
+		Serial:  true,
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if err := requireX11(); err != nil {
+				return "", err
+			}
+			if !have("xdotool") {
+				return "", fmt.Errorf("xdotool is not installed")
+			}
+			find := argString(args, "find")
+			if find == "" {
+				return "", fmt.Errorf("find is required — say what to look for")
+			}
+			to := argString(args, "to")
+			docs, err := openDocuments(ctx)
+			if err != nil {
+				return "", err
+			}
+			d, err := pick(docs, argString(args, "document"))
+			if err != nil {
+				return "", err
+			}
+			reason := argString(args, "reason")
+			if reason == "" {
+				reason = "replace text in the open document"
+			}
+			what := fmt.Sprintf("replace %q with %q", find, to)
+			if to == "" {
+				what = fmt.Sprintf("delete every %q", find)
+			}
+			action := guard.Action{
+				Kind:    guard.KindInput,
+				Command: "paste into " + d.App,
+				Args:    []string{what},
+				Reason:  fmt.Sprintf("%s — %s, everywhere it appears in %s", reason, what, d.Name),
+			}
+			return g.Run(ctx, action, func(ctx context.Context) (string, error) {
+				if _, err := replaceInDocument(ctx, d, find, to,
+					argBool(args, "match_case")); err != nil {
+					return "", err
+				}
+				if to == "" {
+					return fmt.Sprintf("Deleted every %q in %s. Not saved yet.", find, d.Name), nil
+				}
+				return fmt.Sprintf("Replaced %q with %q throughout %s. Not saved yet.",
+					find, to, d.Name), nil
 			})
 		},
 	})
@@ -663,3 +800,177 @@ func RegisterDocuments(r *Registry, g *guard.Guard) {
 		},
 	})
 }
+
+// --- surgical edits ---------------------------------------------------------
+
+// replaceInDocument runs Find & Replace over an open document.
+//
+// # Why the fields are found by their labels
+//
+// Ctrl+H opens a dialog whose BUTTONS are named — "Replace All", "Close" — and
+// whose input fields are not: they arrive in the accessibility tree as unnamed
+// combo boxes, several of them, because the collapsed "Other options" section
+// contributes more.
+//
+// The obvious route is to type into Find and press Tab. Measured, that does not
+// work: Tab from the Find field lands on "Find Next", and the replacement is
+// typed into a button. A tab count is a guess about a layout that changes with
+// the version, the locale and whether Other options is expanded.
+//
+// The labels beside them are named, though, and they are on the same row. So
+// each field is found by taking the label's position and picking the input to
+// its right on the same line. That is a fact about the dialog as drawn, not a
+// count somebody has to keep true.
+func replaceInDocument(ctx context.Context, d openDoc, find, repl string, matchCase bool) (int, error) {
+	if err := focusDoc(ctx, d); err != nil {
+		return 0, err
+	}
+	if err := keys(ctx, "ctrl+h"); err != nil {
+		return 0, err
+	}
+	// The dialog is slower to appear than a keystroke is to send.
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(1200 * time.Millisecond):
+	}
+
+	reader, err := a11y.Open(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("the Find and Replace dialog opened and cannot be read: %w", err)
+	}
+	dlg, err := reader.Window(ctx, "Find and Replace")
+	if err != nil {
+		return 0, fmt.Errorf("Find and Replace did not open, or publishes nothing: %w", err)
+	}
+
+	if err := typeBesideLabel(ctx, reader, dlg, []string{"Find:", "Search:"}, find); err != nil {
+		_ = keys(ctx, "Escape")
+		return 0, err
+	}
+	if err := typeBesideLabel(ctx, reader, dlg, []string{"Replace:", "Replace with:"}, repl); err != nil {
+		_ = keys(ctx, "Escape")
+		return 0, err
+	}
+	if matchCase {
+		if box := a11y.Find(dlg, "Match case", ""); box != nil {
+			if acts := reader.Actions(ctx, box); len(acts) > 0 {
+				if i, ok := a11y.PreferredAction(acts); ok {
+					_ = reader.Do(ctx, box, i)
+				}
+			}
+		}
+	}
+
+	btn := a11y.Find(dlg, "Replace All", "")
+	if btn == nil {
+		_ = keys(ctx, "Escape")
+		return 0, fmt.Errorf("the dialog has no Replace All button; it may be a different " +
+			"version than this expects")
+	}
+	acts := reader.Actions(ctx, btn)
+	i, ok := a11y.PreferredAction(acts)
+	if !ok {
+		_ = keys(ctx, "Escape")
+		return 0, fmt.Errorf("Replace All publishes no action to perform")
+	}
+	if err := reader.Do(ctx, btn, i); err != nil {
+		_ = keys(ctx, "Escape")
+		return 0, err
+	}
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(900 * time.Millisecond):
+	}
+
+	// LibreOffice reports the count in a message the dialog puts up; when it
+	// found nothing it says so and waits. Either way the dialog has to be closed,
+	// and Escape closes whichever is in front.
+	_ = keys(ctx, "Escape")
+	_ = keys(ctx, "Escape")
+	return 0, nil
+}
+
+// typeBesideLabel puts text into the input that sits beside a label.
+//
+// Beside means: on the same row, starting to the right of the label, nearest
+// first. Clicking it focuses it; Ctrl+A then the text replaces whatever the
+// dialog remembered from last time, which it does remember.
+func typeBesideLabel(ctx context.Context, reader *a11y.Reader, dlg *a11y.Node,
+	labels []string, text string) error {
+
+	var lab *a11y.Node
+	var want string
+	for _, l := range labels {
+		if n := a11y.Find(dlg, l, ""); n != nil {
+			lab, want = n, l
+			break
+		}
+	}
+	if lab == nil {
+		return fmt.Errorf("the dialog has no %s field where one was expected", labels[0])
+	}
+	lrect, ok := reader.Extents(ctx, lab)
+	if !ok || lrect.W == 0 {
+		return fmt.Errorf("%s is in the dialog but publishes no position, so the field "+
+			"beside it cannot be found", want)
+	}
+
+	field := inputRightOf(ctx, reader, dlg, lrect)
+	if field == nil {
+		return fmt.Errorf("nothing that takes typing sits beside %s", want)
+	}
+	frect, _ := reader.Extents(ctx, field)
+	x, y := frect.Centre()
+	if _, err := run(ctx, 10*time.Second, "xdotool", "mousemove", itoaInt(x), itoaInt(y),
+		"click", "1"); err != nil {
+		return err
+	}
+	if err := keys(ctx, "ctrl+a"); err != nil {
+		return err
+	}
+	// An empty replacement is a deletion, and typing nothing after select-all
+	// leaves the old text selected rather than removing it.
+	if text == "" {
+		return keys(ctx, "Delete")
+	}
+	return typeInto(ctx, text)
+}
+
+// inputRightOf finds the editable control on a label's row.
+func inputRightOf(ctx context.Context, reader *a11y.Reader, root *a11y.Node, label Rectish) *a11y.Node {
+	labMidY := label.Y + label.H/2
+	var best *a11y.Node
+	bestDX := 1 << 30
+
+	var walk func(n *a11y.Node)
+	walk = func(n *a11y.Node) {
+		if n == nil {
+			return
+		}
+		if strings.Contains(n.Role, "combo") || strings.Contains(n.Role, "text") ||
+			strings.Contains(n.Role, "entry") {
+			if r, ok := reader.Extents(ctx, n); ok && r.W > 20 && r.H > 8 {
+				// Same row, and starting to the right of the label.
+				if labMidY >= r.Y && labMidY <= r.Y+r.H && r.X >= label.X+label.W-4 {
+					if dx := r.X - (label.X + label.W); dx < bestDX {
+						best, bestDX = n, dx
+					}
+				}
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return best
+}
+
+// Rectish is the shape of an a11y.Rect, kept local so this file does not need to
+// name the type in a signature the package may change.
+type Rectish = a11y.Rect
+
+// itoaInt formats a coordinate for xdotool.
+func itoaInt(n int) string { return fmt.Sprintf("%d", n) }

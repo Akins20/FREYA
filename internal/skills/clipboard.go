@@ -170,6 +170,31 @@ func clipWrite(ctx context.Context, bin, text string) error {
 	return runWithInput(ctx, 5*time.Second, text, bin, args...)
 }
 
+// clipWriteHTML puts rich content on the clipboard, as HTML.
+//
+// # Why this is the whole formatting story
+//
+// A clipboard selection is offered in several types at once, and an application
+// takes the richest it understands. Writer and Calc both read text/html, so
+// putting HTML there and pressing paste gives bold, italic, colour, headings,
+// bulleted and numbered lists, and real tables — verified against a live Writer
+// document, which rendered all of them correctly from one paste.
+//
+// That is the difference between typing text into a document and editing one.
+// Nothing else here changes: the same paste, at the same place, through the same
+// guard.
+//
+// xsel cannot set a target type, so this needs xclip. The caller falls back to
+// plain text rather than failing, because losing the bold is better than losing
+// the paragraph.
+func clipWriteHTML(ctx context.Context, html string) error {
+	if !have("xclip") {
+		return fmt.Errorf("formatted content needs xclip; xsel cannot set a clipboard type")
+	}
+	return runWithInput(ctx, 5*time.Second, html,
+		"xclip", "-selection", "clipboard", "-t", "text/html", "-in")
+}
+
 // firstOf returns the first of these binaries that is installed.
 func firstOf(bins ...string) string {
 	for _, b := range bins {

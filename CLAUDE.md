@@ -232,8 +232,23 @@ window that connects late, so there may be no turn to write into.
 ### Working in a document that is already open
 
 `internal/skills/document.go`. `internal/docs` writes files; this drives the one
-on screen, with the user's unsaved edits in it. Four skills: `document_list`,
-`document_read`, `document_write`, `document_save`.
+on screen, with the user's unsaved edits in it. Five skills: `document_list`,
+`document_read`, `document_write`, `document_replace`, `document_save`.
+
+**Formatting comes from the clipboard's HTML target.** A selection is offered in
+several types at once and the application takes the richest it understands, so
+`document_write` with `format: html` gives bold, italic, colour, headings,
+bulleted and numbered lists and real tables — verified against a live Writer
+document, which rendered all of them from one paste. It falls back to plain text
+when xclip is absent, because losing the bold beats losing the paragraph.
+
+**`document_replace` is the surgical edit**, and its fields are found by their
+labels. Ctrl+H opens a dialog whose buttons are named and whose inputs are not —
+several unnamed combo boxes, because the collapsed "Other options" section adds
+more. Typing into Find and pressing Tab lands on *Find Next*, so the replacement
+goes into a button; measured, not assumed. Each field is located as "the input to
+the right of this label on the same row", which is a fact about the dialog as
+drawn rather than a tab count that has to stay true across versions and locales.
 
 **The clipboard, not the accessibility tree, and that was measured.** LibreOffice
 does expose its grid over AT-SPI, down to `Table` and `TableCell` — and it is
@@ -253,6 +268,10 @@ Three consequences worth keeping:
   Enter happens to keep the format on this build; that is a fact about one build.
   The dialog publishes no window title, so it is found by walking LibreOffice's
   windows for a button that says what it does.
+- **Prose needs a place.** A sheet has cell addresses; text has `end`, `start` or
+  `cursor`, and appending opens its own paragraph. Without that, a write after a
+  read landed wherever the selection happened to collapse and spliced itself into
+  the last sentence.
 - **A paste into an open document is RiskHigh, so it outranks autonomy.** Every
   other synthetic input types into a window the user is watching. This one
   overwrites a region of a document that may hold work existing in no file, since

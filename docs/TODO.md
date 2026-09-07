@@ -2065,3 +2065,44 @@ Verified end to end against a real open spreadsheet: she listed what was open,
 read both sheets and reported the computed total, added a row at a named cell,
 saved it, and the file on disk was still `Microsoft Excel 2007+` rather than
 having become an .ods.
+
+### Formatting, and the surgical edit
+
+Two additions after the first version went out, both from the same question:
+can she actually work in a document, or only put text in one?
+
+**Styling is the clipboard's HTML target.** A selection is offered in several
+types at once and the application takes the richest it understands. Putting HTML
+there and pressing paste gives bold, italic, colour, headings, bulleted and
+numbered lists and real tables — verified against a live Writer document, which
+rendered every one of them from a single paste. So `document_write` gained
+`format: html` and nothing else changed: same paste, same place, same guard.
+
+**`document_replace` is the surgical half**, and it is where the measuring paid
+off. Ctrl+H opens a dialog whose buttons are named — "Replace All", "Close" — and
+whose input fields are not: they arrive as several unnamed combo boxes, because
+the collapsed "Other options" section contributes more of them.
+
+The obvious route is to type the search text and press Tab. That does not work:
+Tab from Find lands on **Find Next**, so the replacement is typed into a button
+and Replace stays empty. A tab count is a guess about a layout that changes with
+the version, the locale, and whether Other options is expanded.
+
+The labels beside the fields *are* named and sit on the same row. So each field
+is found as "the input to the right of this label, on this line" — a fact about
+the dialog as drawn rather than a count somebody has to keep true.
+
+**And prose needed a notion of where.** The first version pasted at the cursor,
+which after a read was wherever the selection happened to collapse. Appending a
+paragraph spliced it into the last sentence — "…before she touches itNext steps:"
+with the original full stop stranded after her text. It read as a typo rather
+than an edit. `at` now takes `end`, `start` or `cursor`, appending opens its own
+paragraph, and reading leaves the cursor somewhere defined.
+
+Verified end to end on a real open .docx: replaced 45000 with 52000 leaving the
+40000 beside it alone, appended a bold heading, a two-item bulleted list and a
+bordered table, saved, and read the lot back off disk.
+
+What is still keystrokes rather than a tool: backspace, delete, tab characters
+and cursor movement. She has `desktop_key` for all of them; what is missing is a
+document-aware wrapper so she does not have to reason about focus.

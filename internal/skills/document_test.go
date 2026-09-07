@@ -139,3 +139,110 @@ func between(s, start, end string) string {
 	}
 	return s[i : i+j]
 }
+
+// Prose needs a notion of where, and "wherever the cursor is" is not one.
+//
+// Measured: after document_read collapsed the selection with Left, appending a
+// paragraph spliced it into the last sentence — "…before she touches itNext
+// steps:" with the original full stop stranded after her text. It read as a typo
+// rather than an edit. A spreadsheet has cell addresses; prose had nothing, so
+// the paste landed wherever reading happened to leave the cursor.
+func TestWritingProseHasToSayWhere(t *testing.T) {
+	src, err := readSource("document.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	place := between(src, "func placeInText(", "\n}\n")
+	if place == "" {
+		t.Fatal("placeInText has moved")
+	}
+	// Appending must open a paragraph of its own, or it splices.
+	appendPath := between(place, `case "end", "append":`, "case \"start\"")
+	if !strings.Contains(appendPath, "ctrl+End") || !strings.Contains(appendPath, "Return") {
+		t.Error("appending does not go to the end and open a new paragraph, so it " +
+			"joins the last sentence")
+	}
+	// An unrecognised placement is refused rather than silently meaning "here".
+	if !strings.Contains(place, "none of those") {
+		t.Error("an unknown placement does not refuse; it would land at the cursor")
+	}
+
+	// And reading has to leave the cursor somewhere defined, or the next write
+	// inherits an arbitrary position.
+	read := between(src, "func readDocument(", "\n}\n")
+	if strings.Contains(read, `keys(ctx, "Left")`) {
+		t.Error("reading collapses the selection with Left, which lands at whichever " +
+			"end the application prefers")
+	}
+	if !strings.Contains(read, "ctrl+Home") {
+		t.Error("reading does not leave the cursor at a known place")
+	}
+}
+
+// The Find and Replace fields are located by their labels, never by tabbing.
+//
+// Measured on the real dialog: typing into Find and pressing Tab lands on the
+// "Find Next" button, so the replacement gets typed into a button and Replace
+// stays empty. The dialog's inputs arrive in the accessibility tree unnamed —
+// several unnamed combo boxes, because the collapsed "Other options" section
+// contributes more of them — so there is nothing to match on but position.
+//
+// The labels beside them ARE named and sit on the same row, which makes "the
+// input to the right of this label" a fact about the dialog as drawn rather than
+// a tab count somebody has to keep true across versions and locales.
+func TestFindAndReplaceFieldsAreFoundByLabel(t *testing.T) {
+	src, err := readSource("document.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := between(src, "func replaceInDocument(", "\n// typeBesideLabel")
+	if fn == "" {
+		t.Fatal("replaceInDocument has moved")
+	}
+
+	if !strings.Contains(fn, "typeBesideLabel") {
+		t.Error("the fields are not located by their labels")
+	}
+	if strings.Contains(fn, `"Tab"`) {
+		t.Error("the dialog is driven by pressing Tab, which lands on Find Next")
+	}
+	// Both label spellings, because LibreOffice has used each.
+	for _, want := range []string{"Find:", "Replace:"} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("the %q label is not looked for", want)
+		}
+	}
+	// Replace All is a named button and is clicked through its own action, not
+	// aimed at with the pointer.
+	if !strings.Contains(fn, `"Replace All"`) {
+		t.Error("Replace All is not found by name")
+	}
+
+	// An empty replacement is a deletion, and select-all followed by typing
+	// nothing leaves the old text selected rather than removing it.
+	place := between(src, "func typeBesideLabel(", "\n// inputRightOf")
+	if !strings.Contains(place, `keys(ctx, "Delete")`) {
+		t.Error("an empty replacement does not delete; it would leave the field unchanged")
+	}
+}
+
+// Formatted content goes on the clipboard as HTML, which is what makes styling,
+// lists and tables possible at all — and it falls back to plain text rather than
+// failing, because losing the bold is better than losing the paragraph.
+func TestFormattedContentFallsBackToPlainText(t *testing.T) {
+	src, err := readSource("document.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := between(src, "func writeBlock(", "\n// placeInText")
+	if fn == "" {
+		t.Fatal("writeBlock has moved")
+	}
+	if !strings.Contains(fn, "clipWriteHTML") {
+		t.Error("formatted content is not written as HTML, so nothing is styled")
+	}
+	if !strings.Contains(fn, "clipWrite(ctx, bin, content)") {
+		t.Error("there is no plain-text fallback; a machine without xclip loses the write entirely")
+	}
+}

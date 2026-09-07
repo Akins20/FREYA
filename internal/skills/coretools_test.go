@@ -108,8 +108,8 @@ func everything(t *testing.T) *Registry {
 // be right about the product: it is to FAIL when the registry changes, so that
 // whoever added or removed a tool is made to look at what the docs claim.
 //
-// Bumped from 142 when document_list, document_read, document_write and
-// document_save landed — the test doing exactly its job: it failed, and made
+// Bumped from 142 as the document family arrived — list, read, write and save,
+// then replace — the test doing exactly its job: it failed, and made
 // somebody look at what the documents claim she can do.
 //
 // Four families are absent because they register nothing without a real
@@ -117,7 +117,7 @@ func everything(t *testing.T) *Registry {
 // provider that can see, and voice_adjust needs a synthesiser. Passing them nil
 // registers zero tools rather than erroring, which is exactly the kind of silent
 // nothing this file exists to catch — so they are named here instead of counted.
-const fixtureTools = 146
+const fixtureTools = 147
 
 var registeredOnlyWithARealDependency = []string{
 	"work_start", "work_list", "work_cancel", // a running pool
