@@ -81,3 +81,43 @@ noise. A fifty-point total gap across seventy benchmarks is not.
   `internal/telemetry/telemetry.go`. Both were falling through to the flash-lite
   default rate, so anyone who does set `FREYA_MODEL` to one would have had every
   cost understated by 2x to 5x.
+
+
+---
+
+# Addendum: the cached formula value, same day
+
+The 70% baseline above had a dominant failure shape — thirteen of eighteen
+failures were `a file matched workspace/*.xlsx but none contained all of: …`.
+She was building the spreadsheet correctly and it read back with a blank where
+the total belonged.
+
+The cause was one line of reasoning in `internal/docs/rich.go`: a formula cell
+was written as `<f>SUM(B2:B5)</f>` and nothing else, because "Excel and
+LibreOffice recalculate on open, and a stale cached value shown before
+recalculation is worse than none". True of a file edited over time; false of one
+written here in a single pass from data already in hand.
+
+Fixed by computing the value and writing `<f>SUM(B2:B5)</f><v>440</v>`, which is
+what Excel itself writes. Same suite, same model, same flags:
+
+| | before | after |
+|---|---|---|
+| weighted pass-rate | 70% | **80%** |
+| benchmarks passed | 52/70 | **58/70** |
+| suite duration | 18m40s | 15m35s |
+
+| category | before | after |
+|---|---|---|
+| conversion | 3/7 | **6/7** |
+| data-processing | 5/7 | **6/7** |
+| persistence | 4/7 | **6/7** |
+| orchestration | 3/6 | **4/6** |
+| terminal | 7/7 | 6/7 |
+
+Ten points from one bug. The terminal slip is a single run and within noise; the
+four gains are not.
+
+Worth noting against the model comparison above: this is what a real fix looks
+like next to a version bump. The model change cost fifty points and half an hour
+more runtime. Reading the failure text cost an afternoon and gained ten.

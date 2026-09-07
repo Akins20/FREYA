@@ -32,13 +32,27 @@ func isFormula(s string) bool {
 	return len(t) > 1 && strings.HasPrefix(t, FormulaPrefix)
 }
 
-// formulaXML renders a formula cell.
+// formulaXML renders a formula cell, with the value it comes to when that can
+// be worked out.
 //
-// No cached <v> is written. Excel and LibreOffice recalculate on open, and a
-// stale cached value shown before recalculation is worse than none.
-func formulaXML(ref string, style int, formula string) string {
+// It used to write the formula alone, reasoning that Excel and LibreOffice
+// recalculate on open and a stale cached value is worse than none. See
+// formula.go for why that was wrong here and what it cost: the value cannot be
+// stale, because it is computed from the very rows being written, and without it
+// nothing that reads the file without a recalculation engine sees a number —
+// her own docs.Extract included, so she could not check her own work.
+//
+// Excel writes both, and so does this. When the expression is one we cannot
+// evaluate exactly, the formula goes out alone as before: a missing value is a
+// gap, a wrong one is a lie.
+func formulaXML(ref string, style int, formula string, rows [][]string) string {
 	expr := strings.TrimPrefix(strings.TrimSpace(formula), FormulaPrefix)
-	return fmt.Sprintf(`<c r="%s" s="%d"><f>%s</f></c>`, ref, style, esc(expr))
+	v, ok := evalFormula(formula, rows, 0)
+	if !ok {
+		return fmt.Sprintf(`<c r="%s" s="%d"><f>%s</f></c>`, ref, style, esc(expr))
+	}
+	return fmt.Sprintf(`<c r="%s" s="%d"><f>%s</f><v>%s</v></c>`,
+		ref, style, esc(expr), formatValue(v))
 }
 
 // --- spreadsheet charts -----------------------------------------------------

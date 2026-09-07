@@ -455,7 +455,14 @@ func xlsxSheetWithDrawing(rows [][]string, drawing bool) string {
 			// A value that is genuinely numeric is stored as a number, so the
 			// spreadsheet can actually compute with it.
 			if isFormula(cell) && !isHeader {
-				sb.WriteString(formulaXML(ref, styleText, cell))
+				// Styled by what it evaluates to, not as text. A total that comes
+				// out as a number should sit under the column it totals looking
+				// like the numbers above it, right-aligned and formatted the same.
+				fstyle := styleText
+				if v, ok := evalFormula(cell, rows, 0); ok {
+					fstyle = cellStyle(formatValue(v), false)
+				}
+				sb.WriteString(formulaXML(ref, fstyle, cell, rows))
 				continue
 			}
 			if isNumeric(cell) && !isHeader {

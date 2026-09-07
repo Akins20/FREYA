@@ -601,9 +601,19 @@ func TestFormulasAndCharts(t *testing.T) {
 	if !strings.Contains(sheet, "<f>SUM(B2:B3)</f>") {
 		t.Error("formula not written as a formula")
 	}
-	// A cached value would be shown stale before recalculation.
-	if strings.Contains(sheet, "<f>SUM(B2:B3)</f><v>") {
-		t.Error("a cached value was written alongside the formula")
+	// The cached value goes out WITH the formula, and this test used to assert
+	// the opposite — "a cached value would be shown stale before recalculation".
+	// That is true of a file edited over time and false of one written here in a
+	// single pass from data already in hand: 10 + 20 cannot go stale between
+	// writing row 3 and writing row 4.
+	//
+	// Leaving it out cost thirteen of eighteen benchmark failures on 7 September,
+	// every one of them a spreadsheet built correctly that read back with a blank
+	// where the total belonged, because nothing outside a spreadsheet application
+	// recalculates — her own docs.Extract included.
+	if !strings.Contains(sheet, "<f>SUM(B2:B3)</f><v>30</v>") {
+		t.Errorf("the formula carries no computed value, so anything reading this "+
+			"file without a recalculation engine sees an empty total:\n%s", sheet)
 	}
 	if !strings.Contains(sheet, "<drawing") {
 		t.Error("sheet does not reference the drawing")

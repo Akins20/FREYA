@@ -1,0 +1,184 @@
+XLSX-FIX: flash-lite, cached formula values
+running 70 benchmarks × 1 runs against /run/media/akins/Akins Drive1/Development/JARVIS/bin/freya (parallel 2)
+
+  [pass] recall-within-task             run 1/1  all 1 checks passed
+  [pass] control-inside-a-wrapper       run 1/1  reply contains WRAPPER-3390
+  [pass] csv-to-docx-revenue-table      run 1/1  all 3 checks passed
+  [pass] regional-revenue-docx          run 1/1  all 2 checks passed
+  [pass] report-docx-with-table         run 1/1  all 1 checks passed
+  [pass] dedupe-colour-tags             run 1/1  all 4 checks passed
+  [FAIL] rental-reserve-reconcile       run 1/1  a file matched workspace/*.docx but none contained all of: 1800, 270, 460
+  [FAIL] weekly-paystub-overtime        run 1/1  paystub.txt is missing: 1120, 1204
+  [FAIL] savings-goals-remaining-docx   run 1/1  a file matched workspace/*.docx but none contained all of: Vacation, Laptop, Emergency, 1150, 450, 1800, 3400
+  [pass] filter-critical-servers        run 1/1  all 4 checks passed
+  [pass] headcount-memo-and-sheet       run 1/1  all 4 checks passed
+  [FAIL] join-prices-revenue-report     run 1/1  a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Sprocket, Bolt, 60, 200, 90, 280, 630
+  [FAIL] q3-business-review-pipeline    run 1/1  a file matched workspace/*.xlsx but none contained all of: Hardware, Software, Services, 750, 720, 600, 2070
+  [pass] weekly-spend-roundup           run 1/1  all 3 checks passed
+  [pass] five-step-pipeline             run 1/1  all 5 checks passed
+  [pass] weekly-error-report-cleanup    run 1/1  all 4 checks passed
+  [pass] inventory-restock-pipeline     run 1/1  all 5 checks passed
+  [pass] log-triage-pipeline            run 1/1  all 7 checks passed
+  [pass] numeric-relay-chain            run 1/1  all 7 checks passed
+  [pass] monthly-close-pipeline         run 1/1  all 8 checks passed
+  [FAIL] status-report-assembly-pipeline run 1/1  a file matched workspace/*.docx but none contained all of: Alpha, Beta, Gamma, 125000, delayed
+  [pass] sales-clean-to-xlsx-pipeline   run 1/1  all 5 checks passed
+  [pass] count-gmail-contacts           run 1/1  all 3 checks passed
+  [pass] reach-by-link-not-by-guessing  run 1/1  all 2 checks passed
+  [pass] extract-and-count-log-errors   run 1/1  all 4 checks passed
+  [pass] make-and-run-script            run 1/1  all 2 checks passed
+  [pass] revenue-script                 run 1/1  all 3 checks passed
+  [FAIL] top-three-scorers              run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [pass] weekly-failure-tally           run 1/1  all 3 checks passed
+  [pass] portal-find-across-pagination  run 1/1  finished without stalling
+  [pass] portal-extract-quiz-password   run 1/1  reply contains APOLLO-5
+  [pass] portal-wait-for-content        run 1/1  reply contains Unit 1
+  [pass] reorganise-inbox-by-type       run 1/1  all 7 checks passed
+  [pass] sprint-review-both-formats     run 1/1  all 4 checks passed
+  [pass] combine-three-notes            run 1/1  all 2 checks passed
+  [pass] dedupe-email-list              run 1/1  all 3 checks passed
+  [FAIL] dedupe-and-file-receipts       run 1/1  no file matched workspace/travel/*.txt
+  [pass] merge-csv-parts                run 1/1  all 3 checks passed
+  [pass] board-game-collection-count    run 1/1  all 3 checks passed
+  [pass] rename-invoices-by-rule        run 1/1  all 4 checks passed
+  [pass] surgical-config-edit           run 1/1  all 3 checks passed
+  [FAIL] mileage-reimbursement-xlsx     run 1/1  a file matched workspace/*.xlsx but none contained all of: Acme, Globex, Initech, Umbrella, 32, 47, 28, 55, 105.3
+  [pass] dinner-party-budget-recall     run 1/1  all 3 checks passed
+  [pass] split-orders-by-region         run 1/1  all 5 checks passed
+  [pass] filter-transactions-over-100   run 1/1  all 4 checks passed
+  [pass] csv-to-xlsx-total-and-average  run 1/1  all 3 checks passed
+  [pass] csv-to-xlsx-with-total         run 1/1  all 2 checks passed
+  [pass] data-to-xlsx                   run 1/1  all 2 checks passed
+  [FAIL] markdown-table-to-xlsx         run 1/1  a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Sprocket, Bolt, 12, 25, 15, 40, 60, 200, 90, 280, 630
+  [pass] markdown-to-pdf-notes          run 1/1  all 3 checks passed
+  [pass] combine-quarterly-sales-report run 1/1  all 4 checks passed
+  [pass] one-source-to-xlsx-and-docx    run 1/1  all 4 checks passed
+  [pass] content-in-an-iframe           run 1/1  reply contains IFRAME-6058
+  [pass] content-below-the-fold         run 1/1  reply contains SCROLL-7731
+  [pass] content-revealed-on-click      run 1/1  reply contains REVEAL-4412
+  [pass] content-in-a-modal             run 1/1  reply contains MODAL-9925
+  [pass] odometer-trip-miles            run 1/1  all 3 checks passed
+  [pass] content-behind-search          run 1/1  reply contains SEARCH-8827
+  [pass] content-in-an-accordion        run 1/1  reply contains ACCORD-2276
+  [FAIL] content-behind-a-tab           run 1/1  reply does not contain TABS-3140 — did not read the page
+  [pass] region-sales-totals-xlsx       run 1/1  all 3 checks passed
+  [pass] min-max-average-readings       run 1/1  all 3 checks passed
+  [pass] rank-scores-leaderboard        run 1/1  all 4 checks passed
+  [FAIL] order-revenue-xlsx             run 1/1  a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Gizmo, Doohickey, Sprocket, 60, 75, 100, 80, 120, 435
+  [pass] expense-report-docx            run 1/1  all 2 checks passed
+  [pass] sum-and-average-sales          run 1/1  all 3 checks passed
+  [pass] content-after-an-action        run 1/1  reply contains ACTION-5590
+  [pass] inventory-value-report         run 1/1  all 2 checks passed
+  [pass] profit-loss-report             run 1/1  all 3 checks passed
+  [pass] signups-report-pdf             run 1/1  all 3 checks passed
+
+FREYA AGENTIC BENCHMARKS — pass-rate over runs
+=============================================
+
+BROWSER
+  portal-extract-quiz-password     ★★★★   1/1
+  portal-find-across-pagination    ★★★★★  1/1
+  portal-wait-for-content          ★★★    1/1
+
+BROWSER-EDGE
+  content-after-an-action          ★★★★   1/1
+  content-behind-a-tab             ★★★★   0/1  — reply does not contain TABS-3140 — did not read the page
+  content-behind-search            ★★★★   1/1
+  content-below-the-fold           ★★★★   1/1
+  content-in-a-modal               ★★★★   1/1
+  content-in-an-accordion          ★★★    1/1
+  content-in-an-iframe             ★★★★★  1/1
+  content-revealed-on-click        ★★★    1/1
+  control-inside-a-wrapper         ★★★★★  1/1
+  reach-by-link-not-by-guessing    ★★★★★  1/1
+
+CONVERSION
+  csv-to-docx-revenue-table        ★★★★   1/1
+  csv-to-xlsx-total-and-average    ★★★    1/1
+  csv-to-xlsx-with-total           ★★     1/1
+  data-to-xlsx                     ★★★    1/1
+  markdown-table-to-xlsx           ★★★★   0/1  — a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Sprocket, Bolt, 12, 25, 15, 40, 60, 200, 90, 280, 630
+  markdown-to-pdf-notes            ★★★    1/1
+  one-source-to-xlsx-and-docx      ★★★★★  1/1
+
+DATA-PROCESSING
+  combine-quarterly-sales-report   ★★★★★  1/1
+  filter-transactions-over-100     ★★★    1/1
+  min-max-average-readings         ★★     1/1
+  order-revenue-xlsx               ★★★★   0/1  — a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Gizmo, Doohickey, Sprocket, 60, 75, 100, 80, 120, 435
+  rank-scores-leaderboard          ★★★    1/1
+  region-sales-totals-xlsx         ★★★★   1/1
+  sum-and-average-sales            ★★     1/1
+
+DOC-GENERATION
+  expense-report-docx              ★★     1/1
+  inventory-value-report           ★★★★   1/1
+  profit-loss-report               ★★★★★  1/1
+  regional-revenue-docx            ★★★    1/1
+  report-docx-with-table           ★★★    1/1
+  signups-report-pdf               ★★★    1/1
+  sprint-review-both-formats       ★★★★★  1/1
+
+FILE-OPS
+  combine-three-notes              ★★     1/1
+  dedupe-and-file-receipts         ★★★★★  0/1  — no file matched workspace/travel/*.txt
+  dedupe-email-list                ★★★    1/1
+  merge-csv-parts                  ★★★    1/1
+  rename-invoices-by-rule          ★★     1/1
+  reorganise-inbox-by-type         ★★★    1/1
+  split-orders-by-region           ★★★★   1/1
+  surgical-config-edit             ★★★    1/1
+
+MEMORY
+  board-game-collection-count      ★★     1/1
+  dinner-party-budget-recall       ★★★    1/1
+  mileage-reimbursement-xlsx       ★★★★   0/1  — a file matched workspace/*.xlsx but none contained all of: Acme, Globex, Initech, Umbrella, 32, 47, 28, 55, 105.3
+  odometer-trip-miles              ★★     1/1
+  recall-within-task               ★★     1/1
+  rental-reserve-reconcile         ★★★★★  0/1  — a file matched workspace/*.docx but none contained all of: 1800, 270, 460
+  savings-goals-remaining-docx     ★★★★   0/1  — a file matched workspace/*.docx but none contained all of: Vacation, Laptop, Emergency, 1150, 450, 1800, 3400
+  weekly-paystub-overtime          ★★★    0/1  — paystub.txt is missing: 1120, 1204
+
+ORCHESTRATION
+  filter-critical-servers          ★★★    1/1
+  headcount-memo-and-sheet         ★★★    1/1
+  join-prices-revenue-report       ★★★★   0/1  — a file matched workspace/*.xlsx but none contained all of: Widget, Gadget, Sprocket, Bolt, 60, 200, 90, 280, 630
+  q3-business-review-pipeline      ★★★★★  0/1  — a file matched workspace/*.xlsx but none contained all of: Hardware, Software, Services, 750, 720, 600, 2070
+  weekly-error-report-cleanup      ★★★★   1/1
+  weekly-spend-roundup             ★★     1/1
+
+PERSISTENCE
+  five-step-pipeline               ★★★★   1/1
+  inventory-restock-pipeline       ★★★    1/1
+  log-triage-pipeline              ★★★    1/1
+  monthly-close-pipeline           ★★★★★  1/1
+  numeric-relay-chain              ★★     1/1
+  sales-clean-to-xlsx-pipeline     ★★★★   1/1
+  status-report-assembly-pipeline  ★★★★   0/1  — a file matched workspace/*.docx but none contained all of: Alpha, Beta, Gamma, 125000, delayed
+
+TERMINAL
+  count-gmail-contacts             ★★     1/1
+  dedupe-colour-tags               ★★     1/1
+  extract-and-count-log-errors     ★★★    1/1
+  make-and-run-script              ★★★    1/1
+  revenue-script                   ★★★★   1/1
+  top-three-scorers                ★★★★   0/1  — used [terminal_run run_shell] 0 times, needed 1
+  weekly-failure-tally             ★★★★★  1/1
+
+---------------------------------------------
+WEIGHTED PASS-RATE  80%  (harder benchmarks count more)
+
+RELIABILITY  (how she worked, not just what landed)
+  ran out of rounds      0/70 runs (0%)
+  runs that thrashed     0/70  (>3 identical failing calls in a row)
+  worst repeat run       1 × run_shell  (in extract-and-count-log-errors)
+  wasted rounds          30  (every tool call in the round failed)
+  failed tool calls      35
+  silent no-ops          0  (succeeded and returned nothing)
+
+(suite took 15m35s)
+
+real	15m35.188s
+user	0m9.989s
+sys	0m3.492s
+XLSXFIX-DONE
