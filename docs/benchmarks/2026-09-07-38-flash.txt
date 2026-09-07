@@ -1,0 +1,184 @@
+AFTER: model=gemini-3.8-flash maxToolRounds=120
+running 70 benchmarks × 1 runs against /run/media/akins/Akins Drive1/Development/JARVIS/bin/freya (parallel 2)
+
+  [pass] recall-within-task             run 1/1  all 1 checks passed
+  [pass] control-inside-a-wrapper       run 1/1  reply contains WRAPPER-3390
+  [pass] merge-csv-parts                run 1/1  all 3 checks passed
+  [pass] profit-loss-report             run 1/1  all 3 checks passed
+  [FAIL] inventory-value-report         run 1/1  timed out after 5m0s (20 tools used)
+  [pass] regional-revenue-docx          run 1/1  all 2 checks passed
+  [pass] report-docx-with-table         run 1/1  all 1 checks passed
+  [pass] signups-report-pdf             run 1/1  all 3 checks passed
+  [pass] combine-three-notes            run 1/1  all 2 checks passed
+  [pass] sprint-review-both-formats     run 1/1  all 4 checks passed
+  [pass] dedupe-email-list              run 1/1  all 3 checks passed
+  [FAIL] dedupe-and-file-receipts       run 1/1  timed out after 5m0s (11 tools used)
+  [FAIL] rental-reserve-reconcile       run 1/1  a file matched workspace/*.docx but none contained all of: 1800, 270, 460
+  [pass] dedupe-colour-tags             run 1/1  all 4 checks passed
+  [FAIL] weekly-paystub-overtime        run 1/1  paystub.txt is missing: 1120, 1204
+  [FAIL] savings-goals-remaining-docx   run 1/1  a file matched workspace/*.docx but none contained all of: Vacation, Laptop, Emergency, 1150, 450, 1800, 3400
+  [pass] filter-critical-servers        run 1/1  all 4 checks passed
+  [FAIL] headcount-memo-and-sheet       run 1/1  a file matched workspace/*.xlsx but none contained all of: Engineering, Sales, Support, Operations, 30, 24, 18, 12, 84
+  [FAIL] q3-business-review-pipeline    run 1/1  a file matched workspace/*.docx but none contained all of: Q3 Business Review, Hardware, 2070, 690
+  [pass] join-prices-revenue-report     run 1/1  all 4 checks passed
+  [pass] weekly-spend-roundup           run 1/1  all 3 checks passed
+  [pass] weekly-error-report-cleanup    run 1/1  all 4 checks passed
+  [FAIL] five-step-pipeline             run 1/1  timed out after 5m0s (23 tools used)
+  [FAIL] log-triage-pipeline            run 1/1  only 0 tool calls — did not drive the work (needed 5)
+  [FAIL] monthly-close-pipeline         run 1/1  only 0 tool calls — did not drive the work (needed 6)
+  [FAIL] numeric-relay-chain            run 1/1  only 0 tool calls — did not drive the work (needed 4)
+  [FAIL] sales-clean-to-xlsx-pipeline   run 1/1  only 0 tool calls — did not drive the work (needed 3)
+  [FAIL] status-report-assembly-pipeline run 1/1  only 0 tool calls — did not drive the work (needed 4)
+  [FAIL] count-gmail-contacts           run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [FAIL] reach-by-link-not-by-guessing  run 1/1  reply does not contain CATALOG-5512 — did not read the page
+  [FAIL] extract-and-count-log-errors   run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [FAIL] make-and-run-script            run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] revenue-script                 run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [FAIL] top-three-scorers              run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [FAIL] weekly-failure-tally           run 1/1  used [terminal_run run_shell] 0 times, needed 1
+  [FAIL] portal-find-across-pagination  run 1/1  never reached any quiz page — did not work through to the target
+  [FAIL] portal-wait-for-content        run 1/1  reply does not contain Unit 1 — did not read the page
+  [FAIL] inventory-restock-pipeline     run 1/1  report.txt was not created
+  [FAIL] portal-extract-quiz-password   run 1/1  reply does not contain APOLLO-5 — did not read the page
+  [FAIL] rename-invoices-by-rule        run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] surgical-config-edit           run 1/1  only 0 tool calls — did not drive the work (needed 1)
+  [FAIL] reorganise-inbox-by-type       run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] split-orders-by-region         run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] one-source-to-xlsx-and-docx    run 1/1  only 0 tool calls — did not drive the work (needed 3)
+  [FAIL] csv-to-docx-revenue-table      run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] csv-to-xlsx-total-and-average  run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] csv-to-xlsx-with-total         run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] data-to-xlsx                   run 1/1  no file matched workspace/*.xlsx
+  [FAIL] markdown-table-to-xlsx         run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] markdown-to-pdf-notes          run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] content-in-an-iframe           run 1/1  reply does not contain IFRAME-6058 — did not read the page
+  [FAIL] content-below-the-fold         run 1/1  reply does not contain SCROLL-7731 — did not read the page
+  [FAIL] content-revealed-on-click      run 1/1  reply does not contain REVEAL-4412 — did not read the page
+  [FAIL] content-in-a-modal             run 1/1  reply does not contain MODAL-9925 — did not read the page
+  [FAIL] dinner-party-budget-recall     run 1/1  only 0 tool calls — did not drive the work (needed 1)
+  [FAIL] mileage-reimbursement-xlsx     run 1/1  only 0 tool calls — did not drive the work (needed 1)
+  [FAIL] board-game-collection-count    run 1/1  only 0 tool calls — did not drive the work (needed 1)
+  [FAIL] order-revenue-xlsx             run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] combine-quarterly-sales-report run 1/1  only 0 tool calls — did not drive the work (needed 3)
+  [FAIL] filter-transactions-over-100   run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] min-max-average-readings       run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] content-behind-search          run 1/1  reply does not contain SEARCH-8827 — did not read the page
+  [FAIL] content-behind-a-tab           run 1/1  reply does not contain TABS-3140 — did not read the page
+  [FAIL] odometer-trip-miles            run 1/1  only 0 tool calls — did not drive the work (needed 1)
+  [FAIL] content-in-an-accordion        run 1/1  reply does not contain ACCORD-2276 — did not read the page
+  [FAIL] region-sales-totals-xlsx       run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] rank-scores-leaderboard        run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] content-after-an-action        run 1/1  reply does not contain ACTION-5590 — did not read the page
+  [FAIL] sum-and-average-sales          run 1/1  only 0 tool calls — did not drive the work (needed 2)
+  [FAIL] expense-report-docx            run 1/1  only 0 tool calls — did not drive the work (needed 2)
+
+FREYA AGENTIC BENCHMARKS — pass-rate over runs
+=============================================
+
+BROWSER
+  portal-extract-quiz-password     ★★★★   0/1  — reply does not contain APOLLO-5 — did not read the page
+  portal-find-across-pagination    ★★★★★  0/1  — never reached any quiz page — did not work through to the target
+  portal-wait-for-content          ★★★    0/1  — reply does not contain Unit 1 — did not read the page
+
+BROWSER-EDGE
+  content-after-an-action          ★★★★   0/1  — reply does not contain ACTION-5590 — did not read the page
+  content-behind-a-tab             ★★★★   0/1  — reply does not contain TABS-3140 — did not read the page
+  content-behind-search            ★★★★   0/1  — reply does not contain SEARCH-8827 — did not read the page
+  content-below-the-fold           ★★★★   0/1  — reply does not contain SCROLL-7731 — did not read the page
+  content-in-a-modal               ★★★★   0/1  — reply does not contain MODAL-9925 — did not read the page
+  content-in-an-accordion          ★★★    0/1  — reply does not contain ACCORD-2276 — did not read the page
+  content-in-an-iframe             ★★★★★  0/1  — reply does not contain IFRAME-6058 — did not read the page
+  content-revealed-on-click        ★★★    0/1  — reply does not contain REVEAL-4412 — did not read the page
+  control-inside-a-wrapper         ★★★★★  1/1
+  reach-by-link-not-by-guessing    ★★★★★  0/1  — reply does not contain CATALOG-5512 — did not read the page
+
+CONVERSION
+  csv-to-docx-revenue-table        ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 2)
+  csv-to-xlsx-total-and-average    ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  csv-to-xlsx-with-total           ★★     0/1  — only 0 tool calls — did not drive the work (needed 2)
+  data-to-xlsx                     ★★★    0/1  — no file matched workspace/*.xlsx
+  markdown-table-to-xlsx           ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 2)
+  markdown-to-pdf-notes            ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  one-source-to-xlsx-and-docx      ★★★★★  0/1  — only 0 tool calls — did not drive the work (needed 3)
+
+DATA-PROCESSING
+  combine-quarterly-sales-report   ★★★★★  0/1  — only 0 tool calls — did not drive the work (needed 3)
+  filter-transactions-over-100     ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  min-max-average-readings         ★★     0/1  — only 0 tool calls — did not drive the work (needed 2)
+  order-revenue-xlsx               ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 2)
+  rank-scores-leaderboard          ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  region-sales-totals-xlsx         ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 2)
+  sum-and-average-sales            ★★     0/1  — only 0 tool calls — did not drive the work (needed 2)
+
+DOC-GENERATION
+  expense-report-docx              ★★     0/1  — only 0 tool calls — did not drive the work (needed 2)
+  inventory-value-report           ★★★★   0/1  — timed out after 5m0s (20 tools used)
+  profit-loss-report               ★★★★★  1/1
+  regional-revenue-docx            ★★★    1/1
+  report-docx-with-table           ★★★    1/1
+  signups-report-pdf               ★★★    1/1
+  sprint-review-both-formats       ★★★★★  1/1
+
+FILE-OPS
+  combine-three-notes              ★★     1/1
+  dedupe-and-file-receipts         ★★★★★  0/1  — timed out after 5m0s (11 tools used)
+  dedupe-email-list                ★★★    1/1
+  merge-csv-parts                  ★★★    1/1
+  rename-invoices-by-rule          ★★     0/1  — only 0 tool calls — did not drive the work (needed 2)
+  reorganise-inbox-by-type         ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  split-orders-by-region           ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 2)
+  surgical-config-edit             ★★★    0/1  — only 0 tool calls — did not drive the work (needed 1)
+
+MEMORY
+  board-game-collection-count      ★★     0/1  — only 0 tool calls — did not drive the work (needed 1)
+  dinner-party-budget-recall       ★★★    0/1  — only 0 tool calls — did not drive the work (needed 1)
+  mileage-reimbursement-xlsx       ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 1)
+  odometer-trip-miles              ★★     0/1  — only 0 tool calls — did not drive the work (needed 1)
+  recall-within-task               ★★     1/1
+  rental-reserve-reconcile         ★★★★★  0/1  — a file matched workspace/*.docx but none contained all of: 1800, 270, 460
+  savings-goals-remaining-docx     ★★★★   0/1  — a file matched workspace/*.docx but none contained all of: Vacation, Laptop, Emergency, 1150, 450, 1800, 3400
+  weekly-paystub-overtime          ★★★    0/1  — paystub.txt is missing: 1120, 1204
+
+ORCHESTRATION
+  filter-critical-servers          ★★★    1/1
+  headcount-memo-and-sheet         ★★★    0/1  — a file matched workspace/*.xlsx but none contained all of: Engineering, Sales, Support, Operations, 30, 24, 18, 12, 84
+  join-prices-revenue-report       ★★★★   1/1
+  q3-business-review-pipeline      ★★★★★  0/1  — a file matched workspace/*.docx but none contained all of: Q3 Business Review, Hardware, 2070, 690
+  weekly-error-report-cleanup      ★★★★   1/1
+  weekly-spend-roundup             ★★     1/1
+
+PERSISTENCE
+  five-step-pipeline               ★★★★   0/1  — timed out after 5m0s (23 tools used)
+  inventory-restock-pipeline       ★★★    0/1  — report.txt was not created
+  log-triage-pipeline              ★★★    0/1  — only 0 tool calls — did not drive the work (needed 5)
+  monthly-close-pipeline           ★★★★★  0/1  — only 0 tool calls — did not drive the work (needed 6)
+  numeric-relay-chain              ★★     0/1  — only 0 tool calls — did not drive the work (needed 4)
+  sales-clean-to-xlsx-pipeline     ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 3)
+  status-report-assembly-pipeline  ★★★★   0/1  — only 0 tool calls — did not drive the work (needed 4)
+
+TERMINAL
+  count-gmail-contacts             ★★     0/1  — used [terminal_run run_shell] 0 times, needed 1
+  dedupe-colour-tags               ★★     1/1
+  extract-and-count-log-errors     ★★★    0/1  — used [terminal_run run_shell] 0 times, needed 1
+  make-and-run-script              ★★★    0/1  — only 0 tool calls — did not drive the work (needed 2)
+  revenue-script                   ★★★★   0/1  — used [terminal_run run_shell] 0 times, needed 1
+  top-three-scorers                ★★★★   0/1  — used [terminal_run run_shell] 0 times, needed 1
+  weekly-failure-tally             ★★★★★  0/1  — used [terminal_run run_shell] 0 times, needed 1
+
+---------------------------------------------
+WEIGHTED PASS-RATE  20%  (harder benchmarks count more)
+
+RELIABILITY  (how she worked, not just what landed)
+  ran out of rounds      0/70 runs (0%)
+  runs that thrashed     0/70  (>3 identical failing calls in a row)
+  worst repeat run       1 × run_command  (in headcount-memo-and-sheet)
+  wasted rounds          15  (every tool call in the round failed)
+  failed tool calls      15
+  silent no-ops          0  (succeeded and returned nothing)
+
+(suite took 30m6s)
+
+real	30m5.965s
+user	0m9.645s
+sys	0m4.058s
+AFTER-DONE

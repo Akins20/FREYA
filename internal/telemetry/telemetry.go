@@ -442,6 +442,17 @@ type rate struct {
 // rates is keyed by model-name substring, longest match winning so that
 // "flash-lite" is never mistaken for "flash".
 var rates = map[string]rate{
+	// 3.6, 3.7 and 3.8 flash share one price schedule. Google is charging half
+	// of these through 31 December 2026 — $0.75/$3.75/$0.075 — and these are the
+	// standard rates it returns to on 1 January 2027.
+	//
+	// The higher figure is stored on purpose. A promotional rate that expires
+	// silently would understate every cost she reports from New Year's Day, and
+	// the rule this file is built on is that an overstated cost prompts a
+	// question while an understated one does not. Running 2x high until then is
+	// the cheap side of that trade, and it needs no diary entry.
+	"gemini-3.8-flash":      {input: 1.50, output: 7.50, cached: 0.15},
+	"gemini-3.7-flash":      {input: 1.50, output: 7.50, cached: 0.15},
 	"gemini-3.6-flash":      {input: 1.50, output: 7.50, cached: 0.15},
 	"gemini-3.5-flash":      {input: 1.50, output: 9.00, cached: 0.15},
 	"gemini-3.5-flash-lite": {input: 0.30, output: 2.50, cached: 0.03},

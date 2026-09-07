@@ -40,7 +40,19 @@ import (
 // rather than failing — which is the salvage path working and is still a task
 // not finished. Anything that builds several files and checks each one spends
 // rounds faster than a browsing task does.
-const maxToolRounds = 60
+//
+// Doubled to 120, and unlike the raises above this one is headroom rather than a
+// fix. The measurement says so plainly: the full 70-benchmark suite on
+// gemini-3.5-flash-lite ran 0 of 70 out of rounds, and 0 of 70 thrashed. Nothing
+// in that suite was being cut off at 60, so nothing in it gets better at 120.
+//
+// What it does change is the worst case. This ceiling exists for a runaway
+// model, and the runaway now gets twice as far before the backstop catches it —
+// on a model that costs five times more per token than the one that figure was
+// measured on. That is a few dollars for one pathological exchange rather than
+// one, which is a price worth paying for a real long task that the suite does
+// not represent, and worth knowing about.
+const maxToolRounds = 120
 
 // Agent is one configured assistant.
 type Agent struct {

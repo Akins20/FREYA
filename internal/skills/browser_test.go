@@ -68,16 +68,35 @@ func TestSideEffectsIsSafeWithoutATab(t *testing.T) {
 // Indeed bug inverted: the same tool, inventing a side effect instead of missing
 // one.
 func TestAFailedTabReadingClaimsNothing(t *testing.T) {
-	// An unreachable context: Targets cannot answer, so the reading is not ok.
-	snap := pageIDs(browser.Context("nonexistent-context-for-this-test"))
+	// The failed reading is constructed, not provoked.
+	//
+	// This used to call pageIDs with a made-up context name and assert the
+	// reading came back not-ok. That is not a property of the code: Context.Port
+	// maps every context that is not "guest" to the auth port, so the made-up
+	// name was really port 9222 — and the test passed only while no browser
+	// happened to be listening there. Run it with a Chrome open, as the benchmark
+	// suite leaves one, and the precondition failed and took the real assertions
+	// with it. A test whose outcome depends on what else is running on the
+	// machine is not testing the thing it names.
+	//
+	// What actually matters is below: a reading that failed carries no ids and
+	// claims no tabs. That is the Indeed bug inverted — the same tool inventing a
+	// side effect instead of missing one — and it holds regardless of the port.
+	snap := tabSet{}
 	if snap.ok {
-		t.Fatal("precondition: a context that does not exist should not read as ok")
+		t.Fatal("the zero tabSet must read as a failed reading")
 	}
 	if len(snap.ids) != 0 {
 		t.Errorf("a failed reading carried %d ids", len(snap.ids))
 	}
 	if got := openedTabs(browser.ContextGuest, snap); got != "" {
 		t.Errorf("a failed baseline still claimed tabs opened: %q", got)
+	}
+
+	// And the shape pageIDs really returns when Targets errors, so the two
+	// cannot drift apart: the zero value IS the failure value.
+	if got := (tabSet{}); got.ok || got.ids != nil {
+		t.Errorf("pageIDs signals failure with the zero tabSet; that changed: %+v", got)
 	}
 }
 

@@ -14,6 +14,31 @@ import (
 )
 
 // DefaultGeminiModel is used when no model is configured.
+//
+// # Why this is not the newest model
+//
+// gemini-3.8-flash was tried as the default and reverted on the measurement.
+// The full 70-benchmark suite, same day, same flags, same machine:
+//
+//	gemini-3.5-flash-lite   70% weighted, 52/70 passed, 18m40s
+//	gemini-3.8-flash        20% weighted, 15/70 passed, 30m06s
+//
+// Not a slightly worse model — a collapse, and concentrated where she does most
+// of her work: terminal 7/7 to 1/7, browser-edge 9/10 to 1/10, persistence 4/7
+// to 0/7, conversion and data-processing to zero. Orchestration was the only
+// category that improved. The dominant failure was "only 0 tool calls — did not
+// drive the work", 28 of them.
+//
+// It is not a wire-format break: 3.8-flash calls tools fine. It is behaviour
+// under THIS system prompt. Asked to find the top three scores in a CSV and
+// write them to a file, flash-lite consulted the shell skill, had its pipeline
+// refused, adapted, wrote the file. 3.8-flash read the CSV, listed the folder,
+// ran `ls -la ..` "to check if git repo exists", read a path that did not exist,
+// and never wrote the file. It explores where the older model acts.
+//
+// So a newer model is not a free upgrade here: four thousand words of procedural
+// prompt were tuned against this one. Moving up means re-tuning and re-measuring,
+// not changing a string. See docs/benchmarks/model-comparison-2026-09-07.md.
 const DefaultGeminiModel = "gemini-3.5-flash-lite"
 
 const geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
