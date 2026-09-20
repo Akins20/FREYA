@@ -2106,3 +2106,36 @@ bordered table, saved, and read the lot back off disk.
 What is still keystrokes rather than a tool: backspace, delete, tab characters
 and cursor movement. She has `desktop_key` for all of them; what is missing is a
 document-aware wrapper so she does not have to reason about focus.
+
+### Opening the window from the desktop
+
+`freya -gui` is the whole command, and typing it means opening a terminal first —
+which is the one thing a window is for not doing. `freya -install-service` now
+writes `~/.local/share/applications/freya.desktop` and her mark as an icon, so
+she starts from the applications menu like everything else on the machine.
+
+Two details were measured rather than assumed, and both would have been wrong:
+
+- **`Exec=` names the binary by absolute path.** A .desktop is run by the desktop
+  environment, whose PATH is the session's rather than a login shell's.
+  `~/.local/bin` is on the latter and missing from the former on some
+  distributions, and the failure mode is a menu entry that does nothing at all
+  with no error anywhere.
+- **`StartupWMClass=127.0.0.1`.** The obvious assumption is that Chrome names an
+  `--app` frame after its profile directory. It does not — it uses the **host of
+  the app URL**. `xprop` on a live window reports
+  `WM_CLASS = "127.0.0.1", "Google-chrome"`, and the instance is the half to
+  match: matching the class would group her window with every other Chrome window
+  on the machine, which is the opposite of what the key is for.
+
+The icon is her own hexagon mark, redrawn with explicit colours on a dark tile.
+The window's copy strokes with `currentColor`, which resolves to the page's text
+colour and to nothing at all outside a page — and it sits on its own tile rather
+than transparency because an amber line vanishes on a light panel.
+
+Verified the way the menu does it: `gtk-launch freya.desktop` opened the window,
+and `wmctrl -lx` confirmed the class matches what the entry claims.
+
+One test needed the same fix app.css did: searching the icon for `currentColor`
+found the sentence in its own comment explaining why the window's copy uses one.
+Comments are stripped before the check now.

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Freya's mark, the one the window wears, as a standalone icon.
+
+     The window's copy strokes with currentColor, which resolves to whatever the
+     page's text colour is. A desktop icon has no page and no inherited colour,
+     so every stroke here is explicit — and it sits on its own dark tile rather
+     than on transparency, because a panel may be light or dark and an amber
+     line on a light panel disappears. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#1a1712"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="12.25"
+        fill="none" stroke="#322b22" stroke-width="1.5"/>
+  <g transform="translate(12 12) scale(1)">
+    <path d="M20 4 L34 12 L34 28 L20 36 L6 28 L6 12 Z" fill="none"
+          stroke="#f0a437" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M14 26 L14 14 L26 14 M14 20 L23 20" fill="none"
+          stroke="#f0a437" stroke-width="2.8" stroke-linecap="round"/>
+  </g>
+</svg>

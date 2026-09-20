@@ -184,6 +184,17 @@ Three constraints hold this together and each has a test:
   there" — so the prompt read EOF and refused on behalf of a user who was never
   asked. `isTerminal` is a real `TCGETS` now (`cmd/freya/tty_unix.go`).
 
+`freya -install-service` also writes a desktop launcher
+(`~/.local/share/applications/freya.desktop`) and her icon, so the window opens
+from the applications menu. Two details are measured rather than assumed: the
+`Exec=` names the binary by absolute path, because a .desktop is run with the
+session's PATH and not a login shell's — `~/.local/bin` is missing from it on
+some distributions and the failure is a menu entry that does nothing at all; and
+`StartupWMClass=127.0.0.1`, because Chrome derives an `--app` window's class from
+the URL **host**, not the profile directory (`xprop` reports
+`WM_CLASS = "127.0.0.1", "Google-chrome"`). Matching the class instead would
+group her window with every other Chrome window.
+
 The window's address is a **one-shot handoff nonce**, not the token: Chrome keeps
 its argv, `/proc/<pid>/cmdline` is world-readable, and loopback is reachable by
 every local uid — a token there would leave an endpoint that runs shell commands

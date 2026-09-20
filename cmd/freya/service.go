@@ -167,12 +167,22 @@ func installService() error {
 	}
 
 	fmt.Println("enabled and started freya.service")
+
+	// The launcher, so the window opens from the menu rather than a terminal.
+	// A machine with no desktop environment is one where the daemon still works
+	// perfectly, so a failure here is a warning and not a failed install.
+	if err := installDesktopEntry(exe); err != nil {
+		fmt.Fprintf(os.Stderr, "could not install the desktop launcher (%v) — "+
+			"`freya -gui` still opens the window\n", err)
+	}
+
 	fmt.Println()
 	fmt.Println("  status:  systemctl --user status freya")
 	fmt.Println("  logs:    journalctl --user -u freya -f")
 	fmt.Println("  stop:    systemctl --user stop freya")
 	fmt.Println()
-	fmt.Println("It starts when you log in from now on.")
+	fmt.Println("It starts when you log in from now on, and \"Freya\" in the")
+	fmt.Println("applications menu opens her window.")
 	fmt.Println()
 	fmt.Println("To have it start at boot without logging in:")
 	fmt.Println("  loginctl enable-linger $USER")
